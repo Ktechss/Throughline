@@ -8,13 +8,15 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from fastapi import Body, FastAPI, HTTPException
+import shutil
+
+from fastapi import Body, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
 from . import gate, generate, prompt as promptlib, skeleton
-from .config import IMAGES, PARTS_PATH, POSES, ROOT
+from .config import IMAGES, PARTS_PATH, POSES, REFS, ROOT
 
 app = FastAPI(title="eve1")
 
@@ -152,12 +154,14 @@ class GenReq(BaseModel):
 
 
 def _resolve_ref(name: str) -> Path:
+    """A reference may be an imported identity ref or a previous generation."""
     p = Path(name)
     if p.is_absolute() and p.exists():
         return p
-    q = IMAGES / name
-    if q.exists():
-        return q
+    for base in (REFS, IMAGES):
+        q = base / Path(name).name
+        if q.exists():
+            return q
     raise HTTPException(400, f"no such reference: {name}")
 
 
@@ -255,6 +259,101 @@ def add_gallery(req: GalleryReq):
     except gate.NoFaceFound as exc:
         raise HTTPException(400, str(exc)) from None
     return {"name": req.name, "yaw": round(face.yaw, 1),
+            "face_px": face.width, "pose_class": face.pose_class}
+
+
+# ---------------------------------------------------------------- references
+
+def _ref_info(p: Path) -> dict:
+    """A reference is only useful if ArcFace can see a face in it — report that
+    up front rather than letting a faceless reference fail silently at
+    generation time."""
+    row = {"name": p.name, "bytes": p.stat().st_size}
+    try:
+        f = gate.analyze(p)
+        row |= {"face_px": f.width, "yaw": round(f.yaw, 1),
+                "pose_class": f.pose_class, "usable": True}
+    except (gate.NoFaceFound, ValueError) as exc:
+        row |= {"usable": False, "reason": str(exc)[:100]}
+    return row
+
+
+@app.get("/api/refs")
+def list_refs():
+    return {"refs": [_ref_info(p) for p in sorted(REFS.iterdir())
+                     if p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp")]}
+
+
+class ImportReq(BaseModel):
+    path: str
+
+
+@app.post("/api/refs/import")
+def import_ref(req: ImportReq):
+    """Copy a local image in as an identity reference.
+
+    Copied, not linked: a reference that can move or be deleted out from under
+    the pipeline is a reference that will silently change who she is.
+    """
+    src = Path(req.path)
+    if not src.exists() or not src.is_file():
+        raise HTTPException(400, f"no such file: {req.path}")
+    dest = REFS / src.name
+    shutil.copy2(src, dest)
+    info = _ref_info(dest)
+    if not info["usable"]:
+        dest.unlink(missing_ok=True)
+        raise HTTPException(400, f"no face detected in {src.name} — not a usable "
+                                 f"identity reference")
+    return info
+
+
+@app.post("/api/refs/upload")
+async def upload_ref(file: UploadFile = File(...)):
+    dest = REFS / Path(file.filename).name
+    dest.write_bytes(await file.read())
+    info = _ref_info(dest)
+    if not info["usable"]:
+        dest.unlink(missing_ok=True)
+        raise HTTPException(400, f"no face detected in {file.filename}")
+    return info
+
+
+@app.delete("/api/refs/{name}")
+def delete_ref(name: str):
+    (REFS / Path(name).name).unlink(missing_ok=True)
+    return {"ok": True}
+
+
+@app.get("/api/refs/{name}/file")
+def ref_file(name: str):
+    p = REFS / Path(name).name
+    if not p.exists():
+        raise HTTPException(404, name)
+    return FileResponse(p)
+
+
+class GalleryFromRefReq(BaseModel):
+    name: str            # file in data/refs
+    view: str = "front"  # gallery entry name
+
+
+@app.post("/api/gallery/from-ref")
+def gallery_from_ref(req: GalleryFromRefReq):
+    """Make an identity reference the thing we MEASURE against.
+
+    The generation reference and the gallery are different jobs: one tells the
+    model who to draw, the other tells us whether it obeyed. Using the same
+    image for both is how you find out.
+    """
+    p = REFS / Path(req.name).name
+    if not p.exists():
+        raise HTTPException(404, req.name)
+    try:
+        face = gate.add_to_gallery(p, req.view)
+    except gate.NoFaceFound as exc:
+        raise HTTPException(400, str(exc)) from None
+    return {"view": req.view, "yaw": round(face.yaw, 1),
             "face_px": face.width, "pose_class": face.pose_class}
 
 

@@ -100,3 +100,8 @@ h4 { margin: 8px 0 4px; font-size: 12px; text-transform: uppercase;
 select, input[type=text], .row input:not([type=checkbox]) {
   background: #0e0e13; color: var(--fg); border: 1px solid var(--line);
   border-radius: 6px; padding: 6px 8px; font-size: 13px; }
+
+.grow { flex: 1; min-width: 260px; }
+.upl { background: var(--panel); border: 1px solid var(--line); padding: 6px 12px;
+  border-radius: 6px; cursor: pointer; font-size: 13px; }
+.upl:hover { border-color: var(--acc); }

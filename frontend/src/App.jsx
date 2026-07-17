@@ -33,16 +33,19 @@ export default function App() {
   const [hasRef, setHasRef] = useState(false)
   const [usePoseImg, setUsePoseImg] = useState(true)
   const [refs, setRefs] = useState([])
+  const [availRefs, setAvailRefs] = useState([])
+  const [importPath, setImportPath] = useState('')
   const [stamp, setStamp] = useState(0)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState(null)
 
   const refresh = useCallback(async () => {
-    const [p, r, g, pl] = await Promise.all([
+    const [p, r, g, pl, rf] = await Promise.all([
       api.get('/api/parts'), api.get('/api/runs'),
-      api.get('/api/gallery'), api.get('/api/poses'),
+      api.get('/api/gallery'), api.get('/api/poses'), api.get('/api/refs'),
     ])
     setParts(p.parts); setRuns(r.runs); setGallery(g); setPoses(pl.poses)
+    setAvailRefs(rf.refs)
   }, [])
 
   useEffect(() => { refresh().catch((e) => setErr(String(e))) }, [refresh])
@@ -104,7 +107,7 @@ export default function App() {
       <header>
         <h1>eve1</h1>
         <nav>
-          {['parts', 'pose', 'prompt', 'review'].map((t) => (
+          {['face', 'parts', 'pose', 'prompt', 'review'].map((t) => (
             <button key={t} className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>
               {t}{t === 'review' && runs.length ? ` (${runs.length})` : ''}
             </button>
@@ -116,6 +119,69 @@ export default function App() {
       </header>
 
       {err && <div className="err" onClick={() => setErr(null)}>{err}</div>}
+
+      {tab === 'face' && (
+        <div className="pane">
+          <p className="help">
+            An identity reference does two different jobs. As a <b>generation
+            ref</b> it tells the model who to draw. In the <b>gallery</b> it
+            tells the gate whether the model obeyed. Set both from the same
+            image and you find out.
+          </p>
+          <div className="row">
+            <input className="grow" placeholder="C:\path\to\face.png" value={importPath}
+              onChange={(e) => setImportPath(e.target.value)} />
+            <button onClick={async () => {
+              try { await api.send('/api/refs/import', 'POST', { path: importPath }); setImportPath(''); await refresh() }
+              catch (e) { setErr(String(e)) }
+            }}>import</button>
+            <label className="upl">
+              upload
+              <input type="file" accept="image/*" hidden onChange={async (e) => {
+                const f = e.target.files?.[0]; if (!f) return
+                const fd = new FormData(); fd.append('file', f)
+                const r = await fetch('/api/refs/upload', { method: 'POST', body: fd })
+                if (!r.ok) setErr((await r.text()).slice(0, 200)); else await refresh()
+                e.target.value = ''
+              }} />
+            </label>
+          </div>
+          <div className="grid">
+            {availRefs.map((r) => (
+              <div key={r.name} className={`card ${refs.includes(r.name) ? 'approve' : ''}`}>
+                <img alt={r.name} src={`/api/refs/${r.name}/file`} />
+                <div className="verdict">
+                  <span className={`st ${r.usable ? 'kept' : 'rejected'}`}>
+                    {r.usable ? r.pose_class : 'no face'}
+                  </span>
+                  {r.face_px != null && <span className="meta">{r.face_px}px</span>}
+                  {r.yaw != null && <span className="meta">yaw {r.yaw > 0 ? '+' : ''}{r.yaw}°</span>}
+                </div>
+                <div className="acts">
+                  <button className={refs.includes(r.name) ? 'on' : ''}
+                    onClick={() => { setRefs([r.name]); setHasRef(true) }}>
+                    use as face ref
+                  </button>
+                  <button onClick={async () => {
+                    const view = window.prompt('Gallery view (front / side / three_quarter):', r.pose_class || 'front')
+                    if (!view) return
+                    try { await api.send('/api/gallery/from-ref', 'POST', { name: r.name, view }); await refresh() }
+                    catch (e) { setErr(String(e)) }
+                  }}>→ gallery</button>
+                  <button className="ghost" onClick={async () => {
+                    await fetch(`/api/refs/${r.name}`, { method: 'DELETE' }); await refresh()
+                  }}>delete</button>
+                </div>
+              </div>
+            ))}
+            {!availRefs.length && <p className="note">
+              No identity references yet. Import one — until then every generation
+              invents a face from the text, which is what "words cannot specify a
+              person" means in practice.
+            </p>}
+          </div>
+        </div>
+      )}
 
       {tab === 'parts' && (
         <div className="pane">
@@ -204,10 +270,25 @@ export default function App() {
               send pose as a reference image</label>
             <button disabled={busy} onClick={generate}>{busy ? 'generating…' : 'generate'}</button>
             <span className="note">
-              refs: {refs.length ? refs.join(', ') : 'none'}
-              {refs.length > 0 && <button className="ghost" onClick={() => setRefs([])}>clear</button>}
+              face ref: {refs.length ? <b>{refs.join(', ')}</b> : 'none'}
+              {refs.length > 0 && <button className="ghost" onClick={() => { setRefs([]); setHasRef(false) }}>clear</button>}
             </span>
           </div>
+          {!refs.length && (
+            <div className="lint warn">
+              No face reference — the model will invent a face from the text
+              description, and it will invent a different one on every seed.
+              Set one on the <b>face</b> tab.
+            </div>
+          )}
+          {refs.length > 0 && usePoseImg && (
+            <div className="lint info">
+              Two references in play (face + pose). Three references measured
+              0.547 against one reference's 0.811, so the pose image may be
+              costing identity. Unmeasured here — check the score against a
+              pose-off run before trusting it.
+            </div>
+          )}
           <div className="grid">
             {runs.map((r) => {
               const v = r.verdict || {}
