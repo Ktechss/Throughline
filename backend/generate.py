@@ -31,9 +31,24 @@ def upload(path: Path) -> str:
     return fal_client.upload_file(str(path))
 
 
+def new_session(label: str = "") -> dict:
+    """One trigger = one session.
+
+    A session groups the images produced by a single decision, so the review
+    grid shows "these four came from the same config" instead of a wall of
+    undifferentiated output. Comparing two images from different sessions
+    without knowing it is how you conclude a model is better when you actually
+    changed the reference.
+    """
+    return {"id": uuid.uuid4().hex[:8], "label": label,
+            "started": time.strftime("%Y-%m-%dT%H:%M:%S")}
+
+
 def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
              aspect: str = "4:5", seed: int | None = None,
-             pose_file: Path | None = None, meta: dict | None = None) -> dict:
+             pose_file: Path | None = None, meta: dict | None = None,
+             session: dict | None = None, endpoint: str | None = None,
+             extra: dict | None = None) -> dict:
     """One generation, gated and recorded.
 
     refs order matters and is the caller's responsibility. Measured on the
@@ -57,13 +72,14 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
     if seed is not None:
         args["seed"] = seed
 
-    endpoint = TEXT2IMG
-    if refs:
-        endpoint = EDIT
+    ep = endpoint or (EDIT if refs else TEXT2IMG)
+    if refs and not endpoint:
         args["image_urls"] = [upload(p) for p in refs]
+    if extra:
+        args |= extra
 
     t0 = time.time()
-    r = fal_client.subscribe(endpoint, arguments=args, with_logs=False)
+    r = fal_client.subscribe(ep, arguments=args, with_logs=False)
     urllib.request.urlretrieve(r["images"][0]["url"], dest)
 
     # A truncated download gates as no_face, which looks identical to identity
@@ -74,8 +90,12 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
 
     row = {
         "id": rid,
+        # Every image belongs to exactly one session. Defaulting to a fresh one
+        # means a caller that forgets still gets grouping, never a merge with
+        # someone else's run.
+        "session": session or new_session("ad-hoc"),
         "file": dest.name,
-        "endpoint": endpoint,
+        "endpoint": ep,
         "prompt": prompt,
         "system": system,
         "refs": [p.name for p in refs],

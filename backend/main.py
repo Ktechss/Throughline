@@ -170,6 +170,11 @@ def do_generate(req: GenReq):
     parts = _load_parts()
     refs = [_resolve_ref(r) for r in req.refs]
     has_ref = bool(refs)
+    # One trigger, one session — even though this endpoint makes a single image
+    # today. When it fans out (a re-roll loop, a model bakeoff), the grouping is
+    # already correct rather than needing to be retrofitted.
+    session = generate.new_session(
+        req.note or ", ".join(Path(r).stem for r in req.refs) or "no reference")
 
     pose_file = None
     pose_note = ""
@@ -188,6 +193,7 @@ def do_generate(req: GenReq):
         row = generate.generate(
             prompt=text, system=promptlib.SYSTEM, refs=refs,
             aspect=req.aspect, seed=req.seed, pose_file=pose_file,
+            session=session,
             meta={"note": req.note, "pose": req.pose_name,
                   "pose_as_image": req.use_pose_image},
         )

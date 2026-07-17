@@ -93,6 +93,13 @@ export default function App() {
 
   const sections = [...new Set(parts.map((p) => p.section))]
 
+  // Group runs into sessions, newest first. /api/runs is already newest-first,
+  // so insertion order preserves that and Map keeps it.
+  const sessions = [...runs.reduce((m, r) => {
+    const id = r.session?.id || 'ungrouped'
+    return m.set(id, [...(m.get(id) || []), r])
+  }, new Map())]
+
   return (
     <div className="app">
       <header>
@@ -280,42 +287,63 @@ export default function App() {
               pose-off run before trusting it.
             </div>
           )}
-          <div className="grid">
-            {runs.map((r) => {
-              const v = r.verdict || {}
-              return (
-                <div key={r.id} className={`card ${r.mark || ''}`}>
-                  <img alt={r.id} src={`/api/images/${r.file}`} />
-                  <div className="verdict">
-                    <span className={`st ${v.status}`}>{v.status}</span>
-                    {/* struck through when the comparison isn't fair: the number
-                        is real, it just isn't about identity */}
-                    {v.similarity != null && (
-                      <b className={v.pose_mismatch ? 'void' : ''}>{v.similarity.toFixed(3)}</b>
-                    )}
-                    {v.yaw != null && (
-                      <span className="meta">
-                        yaw {v.yaw > 0 ? '+' : ''}{v.yaw}°
-                        {v.source_yaw != null && <> vs ref {v.source_yaw > 0 ? '+' : ''}{v.source_yaw}°</>}
-                      </span>
-                    )}
-                    {v.face_px != null && <span className="meta">{v.face_px}px</span>}
-                    {v.low_confidence && <span className="tag warn">low signal</span>}
-                    {v.pose_mismatch && <span className="tag warn">pose mismatch</span>}
-                  </div>
-                  {v.reason && <p className="why">{v.reason}</p>}
-                  <div className="acts">
-                    <button className={r.mark === 'approve' ? 'on' : ''} onClick={() => mark(r.id, 'approve')}>approve</button>
-                    <button className={r.mark === 'reject' ? 'on' : ''} onClick={() => mark(r.id, 'reject')}>reject</button>
-                    {/* No "-> gallery" here on purpose: the gallery is seeded
-                        only from data/refs, so our own output can never become
-                        the yardstick it is measured against. */}
-                  </div>
+          {sessions.map(([sid, group]) => {
+            const s = group[0].session || {}
+            const scored = group.filter((r) => r.verdict?.similarity != null)
+            const best = scored.length
+              ? Math.max(...scored.map((r) => r.verdict.similarity)) : null
+            return (
+              <section key={sid} className="session">
+                <div className="session-head">
+                  <strong>{s.label || 'untitled run'}</strong>
+                  <span className="meta">{group.length} image{group.length > 1 ? 's' : ''}</span>
+                  {best != null && <span className="meta">best {best.toFixed(3)}</span>}
+                  <span className="meta">{(s.started || '').replace('T', ' ').slice(0, 16)}</span>
+                  <code>{sid}</code>
                 </div>
-              )
-            })}
-            {!runs.length && <p className="note">No generations yet.</p>}
-          </div>
+                <div className="grid">
+                  {group.map((r) => {
+                    const v = r.verdict || {}
+                    return (
+                      <div key={r.id} className={`card ${r.mark || ''}`}>
+                        <img alt={r.id} src={`/api/images/${r.file}`} />
+                        <div className="verdict">
+                          <span className={`st ${v.status}`}>{v.status}</span>
+                          {/* struck through when the comparison isn't fair: the
+                              number is real, it just isn't about identity */}
+                          {v.similarity != null && (
+                            <b className={v.pose_mismatch ? 'void' : ''}>{v.similarity.toFixed(3)}</b>
+                          )}
+                          {v.yaw != null && (
+                            <span className="meta">
+                              yaw {v.yaw > 0 ? '+' : ''}{v.yaw}°
+                              {v.source_yaw != null && <> vs ref {v.source_yaw > 0 ? '+' : ''}{v.source_yaw}°</>}
+                            </span>
+                          )}
+                          {v.face_px != null && <span className="meta">{v.face_px}px</span>}
+                          {v.low_confidence && <span className="tag warn">low signal</span>}
+                          {v.pose_mismatch && <span className="tag warn">pose mismatch</span>}
+                        </div>
+                        {v.reason && <p className="why">{v.reason}</p>}
+                        <p className="prov">
+                          {(r.endpoint || '').replace('fal-ai/', '')}
+                          {r.refs?.length ? ` · ${r.refs.join(' + ')}` : ' · no ref'}
+                        </p>
+                        <div className="acts">
+                          <button className={r.mark === 'approve' ? 'on' : ''} onClick={() => mark(r.id, 'approve')}>approve</button>
+                          <button className={r.mark === 'reject' ? 'on' : ''} onClick={() => mark(r.id, 'reject')}>reject</button>
+                          {/* No "-> gallery" here on purpose: the gallery is
+                              seeded only from data/refs, so our own output can
+                              never become the yardstick it is measured against. */}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </section>
+            )
+          })}
+          {!runs.length && <p className="note">No generations yet.</p>}
         </div>
       )}
     </div>
