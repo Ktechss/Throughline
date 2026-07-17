@@ -19,9 +19,23 @@ from backend.config import GALLERY_META, GALLERY_PATH, REFS   # noqa: E402
 from backend.gate import add_to_gallery, analyze, similarity   # noqa: E402
 
 INBOX = Path("data/inbox")
-# Priority order: the sheet has the biggest faces (185-222px), so it wins any
-# bucket it covers. The facial sheet fills the angles the sheet lacks.
-SOURCES = ["Kiara-Sheet.png", "Kiara-Facial-Data.png", "Kiara-Body-Data.png"]
+# Priority order = biggest real faces first; each source only claims buckets the
+# ones above it left empty.
+#   face close-up.png  227-231px, and the only usable three_quarter_right
+#   Kiara-Sheet.png    184-223px, the only true profiles (+-70)
+# Everything else is listed so the report shows WHY it contributed nothing.
+SOURCES = [
+    "face close-up.png",
+    "Kiara-Sheet.png",
+    "camera and lens consistency sheet.png",
+    "Makeup-Reference-Sheet.png",
+    "Kiara-Facial-Data.png",
+    "Facial-Expression.png",
+    "Lighting reference sheet.png",
+    "Kiara-Body-Data.png",
+    "Body proportion reference.png",
+    "Pose library.png",
+]
 
 
 def main() -> int:
@@ -45,7 +59,10 @@ def main() -> int:
             if p.bucket in chosen and chosen[p.bucket][0].source != name:
                 continue
             if p.bucket not in chosen or p.face_px > chosen[p.bucket][0].face_px:
-                chosen[p.bucket] = (p, ingest.crop(src, p, REFS / "gallery"))
+                try:
+                    chosen[p.bucket] = (p, ingest.crop(src, p, REFS / "gallery"))
+                except ingest.CropFailed as exc:
+                    print(f"{'':<24} {'':>7} {'':>7} {'':>5}  ⚠ dropped: {exc}")
 
     print(f"\n{len(chosen)} gallery entries selected:")
     for b, (p, path) in sorted(chosen.items()):
@@ -74,9 +91,19 @@ def main() -> int:
 
     GALLERY_PATH.unlink(missing_ok=True)
     GALLERY_META.unlink(missing_ok=True)
-    for b, (_, path) in sorted(chosen.items()):
+    bad = 0
+    for b, (panel, path) in sorted(chosen.items()):
         f = add_to_gallery(path, b)
-        print(f"  + {b:<22} yaw {f.yaw:>+6.1f}  {f.width}px")
+        # Belt and braces: crop() already verified this, but the gallery is the
+        # one artefact where a silent mismatch poisons everything downstream.
+        drift = abs(f.yaw - panel.yaw)
+        flag = "" if drift <= ingest.YAW_TOLERANCE else f"  ⚠ MISMATCH (picked {panel.yaw:+.1f})"
+        bad += bool(flag)
+        print(f"  + {b:<22} yaw {f.yaw:>+6.1f}  {f.width}px{flag}")
+    if bad:
+        print(f"\n⚠ {bad} entries do not match the panel they came from — gallery "
+              f"is NOT trustworthy")
+        return 1
     print(f"\ngallery rebuilt: {len(chosen)} entries -> {GALLERY_PATH}")
     return 0
 
