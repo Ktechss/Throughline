@@ -15,7 +15,8 @@ from pathlib import Path
 import fal_client
 
 from . import gate
-from .config import EDIT, IMAGES, RESOLUTION, RUNS_PATH, TEXT2IMG
+from .config import (EDIT, GPT_IMAGE, GPT_IMAGE_SIZE, IMAGES, RESOLUTION,
+                     RUNS_PATH, TEXT2IMG)
 
 
 def _runs() -> list[dict]:
@@ -59,22 +60,34 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
     refs = refs or []
     rid = uuid.uuid4().hex[:10]
     dest = IMAGES / f"{rid}.png"
+    ep = endpoint or (EDIT if refs else TEXT2IMG)
 
-    args = {
-        "prompt": prompt,
-        "aspect_ratio": aspect,
-        "resolution": RESOLUTION,
-        "num_images": 1,
-        "output_format": "png",
-    }
-    if system:
-        args["system_prompt"] = system
+    # Arguments are per-endpoint. fal ignores foreign fields rather than
+    # rejecting them, which is worse than an error: send nano-banana's
+    # aspect_ratio/resolution to gpt-image-2 and you get a default-sized image
+    # while believing you asked for 4K, and the face-pixel count silently drops
+    # below the gate's floor.
+    if ep in GPT_IMAGE:
+        # gpt-image takes prompt + image_urls. It has no system_prompt: the
+        # realism rules have to ride inside the prompt itself.
+        args = {"prompt": f"{system}\n\n{prompt}" if system else prompt,
+                "image_size": GPT_IMAGE_SIZE}
+        if refs:
+            args["image_urls"] = [upload(p) for p in refs]
+    else:
+        args = {
+            "prompt": prompt,
+            "aspect_ratio": aspect,
+            "resolution": RESOLUTION,
+            "num_images": 1,
+            "output_format": "png",
+        }
+        if system:
+            args["system_prompt"] = system
+        if refs:
+            args["image_urls"] = [upload(p) for p in refs]
     if seed is not None:
         args["seed"] = seed
-
-    ep = endpoint or (EDIT if refs else TEXT2IMG)
-    if refs and not endpoint:
-        args["image_urls"] = [upload(p) for p in refs]
     if extra:
         args |= extra
 

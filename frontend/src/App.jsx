@@ -35,17 +35,22 @@ export default function App() {
   const [refs, setRefs] = useState([])
   const [availRefs, setAvailRefs] = useState([])
   const [importPath, setImportPath] = useState('')
+  const [bio, setBio] = useState(null)
+  const [brief, setBrief] = useState('')
+  const [shotPrompt, setShotPrompt] = useState(null)
+  const [withPose, setWithPose] = useState(false)
   const [stamp, setStamp] = useState(0)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState(null)
 
   const refresh = useCallback(async () => {
-    const [p, r, g, pl, rf] = await Promise.all([
+    const [p, r, g, pl, rf, b] = await Promise.all([
       api.get('/api/parts'), api.get('/api/runs'),
       api.get('/api/gallery'), api.get('/api/poses'), api.get('/api/refs'),
+      api.get('/api/bio'),
     ])
     setParts(p.parts); setRuns(r.runs); setGallery(g); setPoses(pl.poses)
-    setAvailRefs(rf.refs)
+    setAvailRefs(rf.refs); setBio(b)
   }, [])
 
   useEffect(() => { refresh().catch((e) => setErr(String(e))) }, [refresh])
@@ -86,6 +91,19 @@ export default function App() {
     } catch (e) { setErr(String(e)) } finally { setBusy(false) }
   }
 
+  const shoot = async () => {
+    setBusy(true); setErr(null)
+    try {
+      if (withPose) await savePose()
+      await api.send('/api/shot', 'POST', {
+        brief, pose_name: withPose ? poseName : null,
+        use_pose_image: withPose, aspect: '3:4',
+      })
+      await refresh()
+      setTab('review')
+    } catch (e) { setErr(String(e)) } finally { setBusy(false) }
+  }
+
   const mark = async (id, decision) => {
     await api.send(`/api/runs/${id}/mark`, 'POST', { decision })
     await refresh()
@@ -105,7 +123,7 @@ export default function App() {
       <header>
         <h1>eve1</h1>
         <nav>
-          {['face', 'parts', 'pose', 'prompt', 'review'].map((t) => (
+          {['shoot', 'bio', 'face', 'parts', 'pose', 'review'].map((t) => (
             <button key={t} className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>
               {t}{t === 'review' && runs.length ? ` (${runs.length})` : ''}
             </button>
@@ -117,6 +135,111 @@ export default function App() {
       </header>
 
       {err && <div className="err" onClick={() => setErr(null)}>{err}</div>}
+
+      {tab === 'shoot' && (
+        <div className="pane">
+          <div className="bio-chip">
+            <span>BIO</span>
+            {bio?.reference
+              ? <><img alt="ref" src={`/api/refs/${bio.reference}/file`} />
+                  <b>{bio.reference}</b>
+                  <span className="meta">
+                    {bio.reference_face?.face_px}px · {bio.gallery?.entries.length} gallery angles
+                    · gate {bio.gallery?.threshold}
+                  </span>
+                  <span className="meta">attached to every shot</span></>
+              : <b className="warnfg">no BIO reference — set one on the face tab</b>}
+          </div>
+
+          <textarea
+            className="brief" rows={5} value={brief}
+            placeholder={"What's the shot? Place, moment, pose, wardrobe, light.\n\n" +
+              "e.g. Walking through Shahpur Jat late morning, caught mid-stride " +
+              "glancing back over her shoulder, fabric swatches under one arm. " +
+              "Rust linen kurta, indigo jeans. The lane is in shadow but the wall " +
+              "above catches hard sun."}
+            onChange={(e) => setBrief(e.target.value)}
+          />
+          <div className="row">
+            <button disabled={busy || !bio?.reference} onClick={shoot}>
+              {busy ? 'generating…' : 'generate'}
+            </button>
+            <label><input type="checkbox" checked={withPose}
+              onChange={(e) => setWithPose(e.target.checked)} /> use pose rig ({poseName})</label>
+            <button className="ghost" onClick={async () => {
+              const p = await api.send('/api/shot/preview', 'POST',
+                { brief, pose_name: withPose ? poseName : null })
+              setShotPrompt(p)
+            }}>preview prompt</button>
+          </div>
+          <p className="note">
+            You write the shot. Who she is comes from the BIO and the reference
+            image, identically every time — so two photos a month apart differ
+            only in the ways you meant them to.
+          </p>
+          {shotPrompt && (
+            <>
+              <h4>final prompt ({shotPrompt.chars} chars)</h4>
+              <pre className="final">{shotPrompt.prompt}</pre>
+            </>
+          )}
+        </div>
+      )}
+
+      {tab === 'bio' && bio && (
+        <div className="pane">
+          <p className="help">
+            Locked. This is who Kiara is, attached to every generation. Her face
+            is carried by the reference image, not by words — {bio.dropped_identity_parts?.length}{' '}
+            description parts are dropped automatically, because describing a
+            face measured 0.834 against 0.860 for a terse "don't change her".
+            Edit these on the <b>parts</b> tab only if you mean to change the
+            character.
+          </p>
+          <div className="row top">
+            {bio.reference && (
+              <div className="rendered">
+                <h4>identity reference</h4>
+                <img alt="bio ref" src={`/api/refs/${bio.reference}/file`} />
+                <p className="note">
+                  {bio.reference} · {bio.reference_face?.face_px}px ·{' '}
+                  {bio.reference_face?.pose_class}
+                </p>
+              </div>
+            )}
+            <div style={{ flex: 1, minWidth: 320 }}>
+              <h4>identity lock</h4>
+              <pre className="final sys">{bio.identity_lock}</pre>
+              <h4>gate</h4>
+              <p className="note">
+                {bio.gallery.entries.map((e) => (
+                  <span key={e} className="tag ident" style={{ marginRight: 6 }}>
+                    {e} {bio.gallery.meta?.[e]?.yaw > 0 ? '+' : ''}
+                    {bio.gallery.meta?.[e]?.yaw?.toFixed?.(0)}°
+                  </span>
+                ))}
+                <br />threshold {bio.gallery.threshold} — her own frontals agree at 0.797
+              </p>
+            </div>
+          </div>
+          {Object.entries(bio.sections).map(([sec, ps]) => (
+            <section key={sec}>
+              <h3>{sec}</h3>
+              {ps.map((p) => (
+                <div key={p.id} className="part locked">
+                  <div className="part-head">
+                    <strong>{p.label}</strong>
+                    {p.critical && <span className="tag crit">load-bearing</span>}
+                    <code>{p.id}</code>
+                  </div>
+                  <pre className="biotext">{p.text}</pre>
+                  {p.note && <p className="note">{p.note}</p>}
+                </div>
+              ))}
+            </section>
+          ))}
+        </div>
+      )}
 
       {tab === 'face' && (
         <div className="pane">

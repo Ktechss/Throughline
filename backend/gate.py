@@ -223,25 +223,48 @@ def load_threshold() -> float:
 
 
 def check(path: str | Path, threshold: float | None = None) -> Verdict:
-    """Score against the source of truth.
+    """Score against the POSE-MATCHED entry in the source of truth.
 
-    Nearest entry wins, but "nearest" is chosen by similarity, which is itself
-    yaw-contaminated — so the yaw delta against the winner is reported and the
-    verdict abstains when it's too wide. With a single frontal reference every
-    profile will abstain. That is correct: we genuinely cannot judge a profile
-    against a frontal photo, and saying so is better than a confident wrong
-    number.
+    ## Why nearest-by-pose and not nearest-by-similarity
+
+    The obvious implementation picks the highest-scoring gallery entry. That is
+    wrong twice over: it picks whichever reference flatters the candidate, and
+    because similarity tracks head angle (corr(|yaw|,sim) = -0.761) the winner
+    tends to be whichever entry happens to share the candidate's pose *by
+    accident* — or, worse, a mismatched one that scored high anyway.
+
+    Measured here: a shot at yaw +27.0 scored highest against the FRONT entry
+    (-1.1) and was therefore judged 28 degrees out of pose and abstained — while
+    a three_quarter_right entry sat at +25.6, a 1.4 degree delta and a perfectly
+    fair comparison, unused. The multi-angle gallery exists precisely so that
+    shot can be judged; choosing by similarity threw that away.
+
+    So: choose the entry closest in yaw, then report what it scores. Fairness
+    first, verdict second. If even the closest entry is too far, `Verdict`
+    abstains — we genuinely cannot judge that pose and should say so rather than
+    return a confident number about head angle.
     """
     g = load_gallery()
     if not g:
         raise FileNotFoundError("gallery is empty — import an identity reference "
                                 "and seed it from data/refs")
     face = analyze(path)
-    scores = {n: similarity(face.vector, v) for n, v in g.items()}
-    name = max(scores, key=scores.get)
+    meta = load_meta()
+
+    posed = {n: meta[n]["yaw"] for n in g if n in meta and "yaw" in meta[n]}
+    if posed:
+        name = min(posed, key=lambda n: abs(posed[n] - face.yaw))
+        src_yaw = posed[name]
+    else:
+        # No recorded yaws (a hand-seeded gallery). Fall back to similarity and
+        # report no source yaw, so the verdict cannot claim a fairness it has
+        # not checked.
+        name = max(g, key=lambda n: similarity(face.vector, g[n]))
+        src_yaw = None
+
     thr = threshold if threshold is not None else load_threshold()
-    src_yaw = load_meta().get(name, {}).get("yaw")
-    return Verdict(scores[name], name, thr, face, source_yaw=src_yaw)
+    return Verdict(similarity(face.vector, g[name]), name, thr, face,
+                   source_yaw=src_yaw)
 
 
 def calibrate(paths: list[Path], sigma: float = 2.0) -> dict:

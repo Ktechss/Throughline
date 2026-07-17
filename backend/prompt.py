@@ -54,17 +54,37 @@ class Part:
     identity: bool = False
     # True = load-bearing; the UI shows a warning before disabling it.
     critical: bool = False
+    # True = part of the BIO: who she is, not what this shot is. Locked in the
+    # UI and attached to EVERY generation. See BIO_SECTIONS.
+    bio: bool = False
     note: str = ""
 
     def dict(self) -> dict:
         return asdict(self)
 
 
+# The BIO is who she IS — carried into every generation, never retyped, and not
+# casually editable. The shot is what she's DOING, and that is all the user
+# should have to write.
+#
+# The split is not cosmetic. Everything in the BIO has been measured or decided:
+# the body numbers come from her own spec sheet, the skin block is photographic
+# facts, the camera line is the highest-leverage realism control there is. Left
+# in a free-text prompt box they would get paraphrased away one shot at a time,
+# and the drift would be invisible because each individual edit looks harmless.
+BIO_SECTIONS = ("subject", "face", "body", "hair", "skin", "camera", "constraints")
+SHOT_SECTIONS = ("scene", "pose", "wardrobe", "lighting")
+
+
 def default_parts() -> list[Part]:
-    """The starting tree. Everything is editable; nothing here is sacred except
-    where `critical` says otherwise."""
+    """The starting tree.
+
+    `bio=True` parts are stamped automatically from BIO_SECTIONS below, so a new
+    part lands on the right side of the line by virtue of its section rather
+    than by someone remembering to flag it.
+    """
     P = Part
-    return [
+    parts = [
         # -- subject ---------------------------------------------------------
         P("subject.age", "subject", "Age & who", "A 26-year-old South Asian woman",
           identity=True),
@@ -177,6 +197,9 @@ def default_parts() -> list[Part]:
           "visible. This image must be indistinguishable from a real photo a "
           "friend posted on Instagram.", critical=True),
     ]
+    for p in parts:
+        p.bio = p.section in BIO_SECTIONS
+    return parts
 
 
 SYSTEM = (
@@ -271,6 +294,46 @@ def _slop_hits(text: str) -> list[str]:
             hits.append(w)
             break
     return hits
+
+
+def compose_shot(parts: list[Part], brief: str, *, has_reference: bool = True,
+                 pose_note: str = "") -> str:
+    """BIO + one shot brief. This is the whole prompting surface.
+
+    The user writes the place, the moment and the pose. Everything about WHO she
+    is comes from the BIO and the reference image, identically every time — so
+    two photos taken a month apart differ only in the ways they were meant to.
+
+    `brief` is free text and is appended to the Scene section rather than
+    replacing it: the scene parts carry constraints that must survive a
+    careless brief ("the location is empty of other people" is not something to
+    re-type and not something to forget).
+    """
+    live = [p for p in parts if p.enabled]
+    if has_reference:
+        live = [p for p in live if not p.identity]
+
+    if brief.strip():
+        live = live + [Part(id="shot.brief", section="scene", label="Shot",
+                            text=brief.strip())]
+    return compose(live, has_reference=has_reference, pose_note=pose_note)
+
+
+def bio_summary(parts: list[Part], *, has_reference: bool = True) -> dict:
+    """What the BIO commits to, for display. Read-only by intent."""
+    bio = [p for p in parts if p.bio and p.enabled]
+    if has_reference:
+        bio = [p for p in bio if not p.identity]
+    groups: dict[str, list[dict]] = {}
+    for p in bio:
+        groups.setdefault(p.section, []).append(
+            {"id": p.id, "label": p.label, "text": p.text,
+             "critical": p.critical, "note": p.note})
+    return {"sections": groups,
+            "identity_lock": IDENTITY_LOCK if has_reference else None,
+            "dropped_identity_parts": [p.id for p in parts
+                                       if p.bio and p.identity and p.enabled
+                                       and has_reference]}
 
 
 def lint(parts: list[Part], *, has_reference: bool = False) -> list[dict]:

@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
 from . import gate, generate, prompt as promptlib, skeleton
-from .config import IMAGES, PARTS_PATH, POSES, REFS, ROOT
+from .config import IMAGES, PARTS_PATH, POSES, REFS, ROOT, STATE
 
 app = FastAPI(title="eve1")
 
@@ -348,6 +348,120 @@ def gallery_from_ref(req: GalleryFromRefReq):
         raise HTTPException(400, str(exc)) from None
     return {"view": req.view, "yaw": round(face.yaw, 1),
             "face_px": face.width, "pose_class": face.pose_class}
+
+
+# ---------------------------------------------------------------- bio
+
+BIO_REF_PATH = STATE / "bio.json"
+
+# The BIO's identity reference. Every generation attaches it — the whole point
+# of a locked BIO is that you cannot forget who she is. The first run of this
+# project had no reference attached and invented a stranger; that failure should
+# not be reachable from the UI.
+DEFAULT_BIO_REF = "Kiara.png"
+
+
+def _bio_ref() -> str:
+    if BIO_REF_PATH.exists():
+        return json.loads(BIO_REF_PATH.read_text()).get("reference", DEFAULT_BIO_REF)
+    return DEFAULT_BIO_REF
+
+
+@app.get("/api/bio")
+def get_bio():
+    """Who Kiara is. Locked, and attached to every shot."""
+    parts = _load_parts()
+    ref = _bio_ref()
+    ref_path = REFS / ref
+    out = promptlib.bio_summary(parts, has_reference=ref_path.exists())
+    out["reference"] = ref if ref_path.exists() else None
+    if ref_path.exists():
+        try:
+            f = gate.analyze(ref_path)
+            out["reference_face"] = {"face_px": f.width, "yaw": round(f.yaw, 1),
+                                     "pose_class": f.pose_class}
+        except (gate.NoFaceFound, ValueError):
+            out["reference_face"] = None
+    g = gate.load_gallery()
+    out["gallery"] = {"entries": sorted(g), "meta": gate.load_meta(),
+                      "threshold": gate.load_threshold()}
+    return out
+
+
+class BioRefReq(BaseModel):
+    reference: str
+
+
+@app.put("/api/bio/reference")
+def set_bio_ref(req: BioRefReq):
+    """Changing this changes who Kiara is for every future generation."""
+    if not (REFS / Path(req.reference).name).exists():
+        raise HTTPException(400, f"no such reference: {req.reference}")
+    BIO_REF_PATH.write_text(json.dumps({"reference": Path(req.reference).name},
+                                       indent=2) + "\n")
+    return {"reference": Path(req.reference).name}
+
+
+class ShotReq(BaseModel):
+    brief: str = ""              # the ONLY thing the user writes
+    pose_name: str | None = None
+    use_pose_image: bool = False
+    aspect: str = "3:4"
+    seed: int | None = None
+
+
+@app.post("/api/shot")
+def shot(req: ShotReq):
+    """Generate one shot: locked BIO + the user's brief.
+
+    The BIO's reference is attached unconditionally. There is deliberately no
+    way to generate without it — a shot with no identity reference is a photo of
+    a stranger, and that should not be one forgotten checkbox away.
+    """
+    parts = _load_parts()
+    ref = REFS / _bio_ref()
+    if not ref.exists():
+        raise HTTPException(400, "no BIO reference set — import one on the face tab")
+
+    refs = [ref]
+    pose_file, pose_note = None, ""
+    if req.pose_name:
+        pose = _load_pose(req.pose_name)
+        pose_note = skeleton.describe(pose)
+        if req.use_pose_image:
+            pose_file = POSES / f"{pose.name}.png"
+            skeleton.save(pose, pose_file)
+            refs.append(pose_file)
+
+    text = promptlib.compose_shot(parts, req.brief, has_reference=True,
+                                  pose_note=pose_note)
+    session = generate.new_session(req.brief.strip()[:60] or "untitled shot")
+    try:
+        return generate.generate(
+            prompt=text, system=promptlib.SYSTEM, refs=refs, aspect=req.aspect,
+            seed=req.seed, pose_file=pose_file, session=session,
+            meta={"brief": req.brief, "bio_reference": ref.name,
+                  "pose": req.pose_name},
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(500, str(exc)[:300]) from exc
+
+
+class ShotPreviewReq(BaseModel):
+    brief: str = ""
+    pose_name: str | None = None
+
+
+@app.post("/api/shot/preview")
+def shot_preview(req: ShotPreviewReq):
+    parts = _load_parts()
+    pose_note = skeleton.describe(_load_pose(req.pose_name)) if req.pose_name else ""
+    has_ref = (REFS / _bio_ref()).exists()
+    text = promptlib.compose_shot(parts, req.brief, has_reference=has_ref,
+                                  pose_note=pose_note)
+    return {"prompt": text, "system": promptlib.SYSTEM, "chars": len(text),
+            "reference": _bio_ref() if has_ref else None,
+            "lint": promptlib.lint(parts, has_reference=has_ref)}
 
 
 @app.get("/api/health")
