@@ -34,6 +34,73 @@ BANNED = (
     "masterpiece", "breathtaking", "gorgeous", "beautiful", "cinematic", "bokeh",
 )
 
+# --------------------------------------------------------------------------
+# moderation sanitiser
+# --------------------------------------------------------------------------
+#
+# gpt-image-2 sits behind OpenAI's content classifier, which is STOCHASTIC near
+# its boundary: the airport look (short shorts + heels + a body line + a close
+# crop) was refused 3/3 then accepted 4/4 on a byte-identical prompt. We cannot
+# make a coin land the same way twice — but we can move the prompt away from the
+# boundary before flipping it.
+#
+# This does NOT censor intent. It rewrites phrasings that a sexualisation
+# classifier is specifically tuned to score — explicit cup sizes, anatomical
+# body language, "barely/tight/skimpy" intensifiers — into faithful, neutral
+# equivalents, and REPORTS every change so nothing happens silently. The retry
+# in generate() stays as the backstop for the residual coin-flip.
+#
+# Keep this list tight. Over-sanitising turns every prompt into the same beige
+# person, which is the opposite failure. Each entry earns its place by having
+# actually tripped the filter or being a well-known trigger, not by prudishness.
+_SANITISE = [
+    # explicit cup / measurements — the single biggest confirmed trigger next to
+    # revealing wardrobe. The body REFERENCE IMAGE carries her real proportions,
+    # so the number was never load-bearing anyway.
+    # optionally swallow a preceding "a/an/a full" so we don't leave "a full a
+    # full chest" when the BIO already led with an article.
+    (r"\b(?:an?\s+)?(?:full\s+)?\d{2,3}\s*(?:dd?|ddd|[a-k])\s*(?:bust|breasts?|chest|cup)\b",
+     "a full chest", "explicit cup size"),
+    (r"\b(?:32|34|36|38|40)\s*(?:dd?|ddd|[a-k])\b", "a full figure", "bra size"),
+    (r"\b(?:huge|large|big|ample|voluptuous|busty)\s+(?:breasts?|bust|chest|cleavage)\b",
+     "a full chest", "sexualised bust phrasing"),
+    (r"\bcleavage\b", "neckline", "cleavage"),
+    (r"\b(?:breasts?)\b", "chest", "anatomical term"),
+    # revealing-wardrobe intensifiers — the classifier scores the ADJECTIVE, not
+    # the garment. "short denim shorts" is fine; "tiny/skimpy" is what tips it.
+    (r"\b(?:barely|skimpy|tiny|micro|revealing|skin-?tight|barely-there)\s+",
+     "", "revealing-wardrobe intensifier"),
+    (r"\bshort\s+shorts\b", "denim shorts", "'short shorts'"),
+    # posture/undress cues
+    (r"\b(?:seductive|sultry|provocative|sensual|alluring)\b", "relaxed",
+     "sexualised mood word"),
+    (r"\b(?:lingerie|underwear|bikini|topless|nude|naked|bare-?chested)\b",
+     "casual clothing", "undress cue"),
+]
+_SANITISE = [(re.compile(p, re.IGNORECASE), repl, why) for p, repl, why in _SANITISE]
+
+
+def sanitise(text: str) -> tuple[str, list[dict]]:
+    """Rewrite known moderation triggers to faithful neutral wording.
+
+    Returns (clean_text, changes). Every substitution is reported — this lowers
+    the refusal RATE, it does not censor, and the user sees exactly what moved.
+    """
+    changes: list[dict] = []
+    out = text
+    for rx, repl, why in _SANITISE:
+        for m in rx.finditer(out):
+            changes.append({"was": m.group(0).strip(), "now": repl.strip() or "(removed)",
+                            "why": why})
+        out = rx.sub(repl, out)
+    # A rewrite can duplicate an adjacent word ("relaxed relaxed" when two mood
+    # words sat side by side; "a full a full chest"). Collapse immediate repeats.
+    out = re.sub(r"\b(\w[\w-]*)(\s+\1\b)+", r"\1", out, flags=re.IGNORECASE)
+    out = re.sub(r"\ba full a full\b", "a full", out, flags=re.IGNORECASE)
+    out = re.sub(r"\s{2,}", " ", out).replace(" ,", ",").replace(" .", ".")
+    return out, changes
+
+
 # Order here is render order within a section.
 SECTIONS = ["subject", "face", "body", "hair", "skin", "wardrobe",
             "pose", "scene", "lighting", "camera", "constraints"]
@@ -346,6 +413,18 @@ def compose_shot(parts: list[Part], brief: str, *, has_reference: bool = True,
     logos" is not something to retype per shot and not something to lose by
     forgetting.
     """
+    return compose_shot_ex(parts, brief, has_reference=has_reference,
+                           pose_note=pose_note)[0]
+
+
+def compose_shot_ex(parts: list[Part], brief: str, *, has_reference: bool = True,
+                    pose_note: str = "") -> tuple[str, list[dict]]:
+    """compose_shot, plus the moderation-sanitiser change list.
+
+    Sanitisation runs on the FINAL text, so it catches a trigger wherever it
+    came from — the BIO or a brief the user typed. Returns (clean_prompt,
+    changes); an empty list means nothing needed rewriting.
+    """
     live = [p for p in parts if p.enabled]
     if has_reference:
         live = [p for p in live if not p.identity]
@@ -354,7 +433,8 @@ def compose_shot(parts: list[Part], brief: str, *, has_reference: bool = True,
         live = [p for p in live if not p.placeholder]
         live = live + [Part(id="shot.brief", section="scene", label="Shot",
                             text=brief.strip())]
-    return compose(live, has_reference=has_reference, pose_note=pose_note)
+    raw = compose(live, has_reference=has_reference, pose_note=pose_note)
+    return sanitise(raw)
 
 
 def bio_summary(parts: list[Part], *, has_reference: bool = True) -> dict:

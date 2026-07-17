@@ -464,8 +464,8 @@ def shot(req: ShotReq):
             skeleton.save(pose, pose_file)
             refs.append(pose_file)
 
-    text = promptlib.compose_shot(parts, req.brief, has_reference=True,
-                                  pose_note=pose_note)
+    text, sanitised = promptlib.compose_shot_ex(parts, req.brief, has_reference=True,
+                                                pose_note=pose_note)
     session = generate.new_session(req.brief.strip()[:60] or "untitled shot")
     try:
         return generate.generate(
@@ -473,7 +473,8 @@ def shot(req: ShotReq):
             seed=req.seed, pose_file=pose_file, session=session,
             meta={"brief": req.brief,
                   "bio_references": [p.name for p in refs],
-                  "pose": req.pose_name},
+                  "pose": req.pose_name,
+                  "sanitised": sanitised},
         )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(500, str(exc)[:300]) from exc
@@ -489,10 +490,11 @@ def shot_preview(req: ShotPreviewReq):
     parts = _load_parts()
     pose_note = skeleton.describe(_load_pose(req.pose_name)) if req.pose_name else ""
     has_ref = (REFS / _bio_ref()).exists()
-    text = promptlib.compose_shot(parts, req.brief, has_reference=has_ref,
-                                  pose_note=pose_note)
+    text, sanitised = promptlib.compose_shot_ex(parts, req.brief, has_reference=has_ref,
+                                                pose_note=pose_note)
     return {"prompt": text, "system": promptlib.SYSTEM, "chars": len(text),
             "reference": _bio_ref() if has_ref else None,
+            "sanitised": sanitised,
             "lint": promptlib.lint(parts, has_reference=has_ref)}
 
 

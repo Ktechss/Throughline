@@ -177,6 +177,17 @@ export default function App() {
             image, identically every time — so two photos a month apart differ
             only in the ways you meant them to.
           </p>
+          {shotPrompt?.sanitised?.length > 0 && (
+            <div className="lint info">
+              Sanitised {shotPrompt.sanitised.length} phrase{shotPrompt.sanitised.length > 1 ? 's' : ''} before
+              sending, to lower the chance of a moderation refusal:
+              <ul className="san">
+                {shotPrompt.sanitised.map((c, i) => (
+                  <li key={i}><code>{c.was}</code> → <code>{c.now}</code> <span className="meta">({c.why})</span></li>
+                ))}
+              </ul>
+            </div>
+          )}
           {shotPrompt && (
             <>
               <h4>final prompt ({shotPrompt.chars} chars)</h4>

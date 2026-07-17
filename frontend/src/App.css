@@ -136,3 +136,7 @@ select, input[type=text], .row input:not([type=checkbox]) {
 .part.locked { opacity: .9; border-style: dashed; }
 .biotext { margin: 0; background: #0e0e13; border-radius: 6px; padding: 8px;
   white-space: pre-wrap; font: 12px/1.5 ui-monospace, monospace; color: var(--dim); }
+
+.san { margin: 6px 0 0; padding-left: 18px; }
+.san li { margin: 2px 0; }
+.san code { background: #0e0e13; padding: 1px 4px; border-radius: 3px; }
