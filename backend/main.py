@@ -225,15 +225,12 @@ def image(name: str):
 
 # ---------------------------------------------------------------- gallery
 
-class GalleryReq(BaseModel):
-    run_id: str
-    name: str          # "front" | "side" | "three_quarter" | ...
-
-
 @app.get("/api/gallery")
 def get_gallery():
     g = gate.load_gallery()
-    out = {"entries": sorted(g), "threshold": gate.load_threshold()}
+    meta = gate.load_meta()
+    out = {"entries": sorted(g), "threshold": gate.load_threshold(),
+           "meta": meta, "pose_delta_max": gate.POSE_DELTA_MAX}
     if len(g) > 1:
         import itertools
         out["pairwise"] = [
@@ -243,23 +240,13 @@ def get_gallery():
     return out
 
 
-@app.post("/api/gallery")
-def add_gallery(req: GalleryReq):
-    """Seed the gallery from an approved run.
-
-    Only ever from an image a human confirmed. The gallery is the ground truth
-    everything downstream trusts; a wrong entry silently widens the character to
-    include someone else.
-    """
-    row = next((r for r in generate.all_runs() if r["id"] == req.run_id), None)
-    if not row:
-        raise HTTPException(404, req.run_id)
-    try:
-        face = gate.add_to_gallery(IMAGES / row["file"], req.name)
-    except gate.NoFaceFound as exc:
-        raise HTTPException(400, str(exc)) from None
-    return {"name": req.name, "yaw": round(face.yaw, 1),
-            "face_px": face.width, "pose_class": face.pose_class}
+# NOTE: there is deliberately no endpoint to promote a GENERATED image into the
+# gallery. The gallery is the source of truth and is seeded only from
+# data/refs (see /api/gallery/from-ref). Admitting our own output would let the
+# yardstick drift with the thing it measures — the previous project's namesake
+# sheet ended up disagreeing with ten of its own descendants that way. If you
+# want a generated image to become a reference, import it deliberately as a ref
+# first; that way it is a decision with a filename, not a side effect.
 
 
 # ---------------------------------------------------------------- references

@@ -91,15 +91,6 @@ export default function App() {
     await refresh()
   }
 
-  const addToGallery = async (id) => {
-    const name = window.prompt('Gallery view name (front / side / three_quarter):', 'front')
-    if (!name) return
-    try {
-      await api.send('/api/gallery', 'POST', { run_id: id, name })
-      await refresh()
-    } catch (e) { setErr(String(e)) }
-  }
-
   const sections = [...new Set(parts.map((p) => p.section))]
 
   return (
@@ -297,16 +288,28 @@ export default function App() {
                   <img alt={r.id} src={`/api/images/${r.file}`} />
                   <div className="verdict">
                     <span className={`st ${v.status}`}>{v.status}</span>
-                    {v.similarity != null && <b>{v.similarity.toFixed(3)}</b>}
-                    {v.yaw != null && <span className="meta">yaw {v.yaw > 0 ? '+' : ''}{v.yaw}°</span>}
+                    {/* struck through when the comparison isn't fair: the number
+                        is real, it just isn't about identity */}
+                    {v.similarity != null && (
+                      <b className={v.pose_mismatch ? 'void' : ''}>{v.similarity.toFixed(3)}</b>
+                    )}
+                    {v.yaw != null && (
+                      <span className="meta">
+                        yaw {v.yaw > 0 ? '+' : ''}{v.yaw}°
+                        {v.source_yaw != null && <> vs ref {v.source_yaw > 0 ? '+' : ''}{v.source_yaw}°</>}
+                      </span>
+                    )}
                     {v.face_px != null && <span className="meta">{v.face_px}px</span>}
                     {v.low_confidence && <span className="tag warn">low signal</span>}
+                    {v.pose_mismatch && <span className="tag warn">pose mismatch</span>}
                   </div>
+                  {v.reason && <p className="why">{v.reason}</p>}
                   <div className="acts">
                     <button className={r.mark === 'approve' ? 'on' : ''} onClick={() => mark(r.id, 'approve')}>approve</button>
                     <button className={r.mark === 'reject' ? 'on' : ''} onClick={() => mark(r.id, 'reject')}>reject</button>
-                    <button onClick={() => setRefs([r.file])}>use as ref</button>
-                    <button onClick={() => addToGallery(r.id)}>→ gallery</button>
+                    {/* No "-> gallery" here on purpose: the gallery is seeded
+                        only from data/refs, so our own output can never become
+                        the yardstick it is measured against. */}
                   </div>
                 </div>
               )

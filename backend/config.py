@@ -16,6 +16,8 @@ POSES = DATA / "poses"            # saved skeletons
 STATE = DATA / "state"            # part tree, gallery, threshold
 
 GALLERY_PATH = STATE / "gallery.npz"
+GALLERY_META = STATE / "gallery.json"   # per-entry yaw/face_px — needed to know
+                                        # whether a comparison is even fair
 THRESHOLD_PATH = STATE / "threshold.json"
 PARTS_PATH = STATE / "parts.json"
 RUNS_PATH = STATE / "runs.json"
