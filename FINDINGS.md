@@ -80,6 +80,44 @@ order-of-magnitude only:
   practical ceiling: nothing generated beat how much her references agreed with
   each other.
 
+## Scenes don't break identity. Briefs do.
+
+The most useful measurement this project has. Same stadium, same crowd, same
+floodlights, same references, same generator — only the brief changed:
+
+| brief | similarity | |
+|---|---|---|
+| mid-shout, off-frontal, backlit, small face | **0.550** | REJECTED |
+| the same, generated in ChatGPT instead | 0.558 | tied — the tool is not the variable |
+| **quiet beat: mouth closed, near-frontal, close framing, face lit** | **0.817** | KEPT |
+| *studio close-up, no scene at all* | *0.813* | |
+
+**0.817 in a packed night stadium beats the studio close-up.** The location, the
+crowd and the floodlights cost nothing. Removing four confounds bought back
+**0.267** — larger than the gap between any two generators we tested.
+
+The four, each independently measured elsewhere in this file:
+
+1. **Off-frontal** — corr(|yaw|, sim) = -0.761.
+2. **Small face** — same woman, same yaw: 660px scored 0.635, 298px scored 0.450.
+3. **Backlight** — floodlights behind, eye sockets in shadow, which is where
+   ArcFace reads identity.
+4. **Extreme expression** — a mouth wide open mid-shout deforms the geometry the
+   embedding is built on.
+
+Stack all four and you get ~0.55 from *every* generator, including ChatGPT.
+That is not a pipeline failure, it is four known confounds compounding.
+
+**So: write briefs that let the gate see her.** Face toward the camera-ish,
+framed close enough for a 350px+ face, lit on the face rather than behind it,
+and not mid-scream. A hard shot is not forbidden — just expect the number to
+fall and don't read it as drift.
+
+⚠ **The gate is blind to her body.** ArcFace embeds a face crop. The 0.558
+ChatGPT stadium shot has a visibly inflated bust versus her references —
+spherical and lifted, the exact default `body.bust` pushes back on — and scored
+the same as ours. Body drift is a human judgement, by design and by necessity.
+
 ## Which generator holds her — measured 2026-07-17, THIS project
 
 One face reference (`Kiara.png`, 429px frontal), the same close-up prompt, every
