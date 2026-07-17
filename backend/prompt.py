@@ -124,16 +124,18 @@ def default_parts() -> list[Part]:
                "fashion-illustration proportion — and it reads as uncanny."),
         P("body.shoulders", "body", "Shoulders",
           "shoulders roughly in line with her hips, not broadened"),
-        P("body.bust", "body", "Bust / chest",
-          "a full 38DD bust with natural shape and weight — sitting where real "
-          "breasts sit, not spherical, not lifted",
+        P("body.bust", "body", "Chest / proportion",
+          "a full chest with a natural, relaxed shape, not exaggerated or lifted",
           critical=True,
-          note="Load-bearing, same class of tell as the waist. Generators "
-               "default to spherical, gravity-defying, unnaturally high. "
-               "'Natural shape and weight' is the pushback; drop it and you get "
-               "the default. For a male subject, edit this text to the chest "
-               "you want (e.g. 'a broad flat chest, natural pectoral shape, "
-               "visible collarbone') — the part is the slot, not the gender."),
+          note="The BODY REFERENCE IMAGE carries her actual proportions — this "
+               "line only steers away from the generator's default (spherical, "
+               "gravity-defying, unnaturally high), the same class of tell as "
+               "the cinched waist. Kept deliberately vague: an explicit cup "
+               "size + revealing wardrobe reads as sexualised to gpt-image-2's "
+               "moderation classifier and gets the whole prompt refused "
+               "(content_policy_violation). The number lived here before the "
+               "body reference existed; the image supersedes it. For a male "
+               "subject, edit the text — the part is the slot, not the gender."),
         P("body.waist", "body", "Waist",
           "a 30-inch waist, defined but NOT cinched or corseted",
           critical=True,

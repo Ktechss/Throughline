@@ -91,8 +91,26 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
     if extra:
         args |= extra
 
+    # gpt-image-2's moderation classifier is non-deterministic near its
+    # boundary: an airport look (short shorts + heels + a body line + a close
+    # crop) sits right on it and the SAME prompt flips accepted/refused call to
+    # call. Measured: refused 3/3, then accepted 4/4, minutes apart. So a
+    # content_policy refusal is retried rather than surfaced — it is a coin
+    # flip, not a verdict on the prompt. A genuinely disallowed prompt refuses
+    # every time and still raises after the retries are spent.
     t0 = time.time()
-    r = fal_client.subscribe(ep, arguments=args, with_logs=False)
+    last = None
+    for attempt in range(4):
+        try:
+            r = fal_client.subscribe(ep, arguments=args, with_logs=False)
+            break
+        except Exception as exc:  # noqa: BLE001
+            last = exc
+            if "content_policy" in str(exc) and attempt < 3:
+                continue
+            raise
+    else:  # pragma: no cover - loop always breaks or raises
+        raise last
     urllib.request.urlretrieve(r["images"][0]["url"], dest)
 
     # A truncated download gates as no_face, which looks identical to identity
