@@ -7,6 +7,7 @@ gate's verdict. A generation you can't reproduce is an anecdote.
 from __future__ import annotations
 
 import json
+import subprocess
 import time
 import urllib.request
 import uuid
@@ -15,8 +16,8 @@ from pathlib import Path
 import fal_client
 
 from . import gate
-from .config import (EDIT, GPT_IMAGE, GPT_IMAGE_SIZE, IMAGES, RESOLUTION,
-                     RUNS_PATH, TEXT2IMG)
+from .config import (EDIT, GPT_IMAGE, GPT_IMAGE_SIZE, IMAGES, LOCAL_ENDPOINT,
+                     LOCAL_PY, LOCAL_WORKER, RESOLUTION, RUNS_PATH, TEXT2IMG)
 
 
 def _runs() -> list[dict]:
@@ -61,6 +62,11 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
     rid = uuid.uuid4().hex[:10]
     dest = IMAGES / f"{rid}.png"
     ep = endpoint or (EDIT if refs else TEXT2IMG)
+
+    if ep == LOCAL_ENDPOINT:
+        return _generate_local(rid, dest, prompt=prompt, system=system,
+                               refs=refs, seed=seed, session=session,
+                               pose_file=pose_file, meta=meta, extra=extra)
 
     # Arguments are per-endpoint. fal ignores foreign fields rather than
     # rejecting them, which is worse than an error: send nano-banana's
@@ -142,6 +148,66 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
 
     # Gate it if a gallery exists. No gallery yet is the normal state during a
     # seed hunt — that is not an error, it is the phase before there is a her.
+    try:
+        row["verdict"] = gate.check(dest).dict()
+    except FileNotFoundError:
+        row["verdict"] = {"status": "ungated", "reason": "gallery is empty"}
+    except gate.NoFaceFound as exc:
+        row["verdict"] = {"status": "no_face", "reason": str(exc)[:120]}
+    except ValueError as exc:
+        row["verdict"] = {"status": "error", "reason": str(exc)[:120]}
+
+    rows = _runs()
+    rows.append(row)
+    _save_runs(rows)
+    return row
+
+
+def _generate_local(rid, dest, *, prompt, system, refs, seed, session,
+                    pose_file, meta, extra) -> dict:
+    """Drive the local SDXL worker in its own venv as a subprocess.
+
+    The identity reference is the FIRST ref — IP-Adapter takes one face image.
+    A pose image, if present, is ignored here (SDXL IP-Adapter has no pose slot
+    yet); that is a known gap, not a silent drop — recorded in the row.
+    """
+    if not refs:
+        raise RuntimeError("local generation needs a face reference")
+    face = refs[0]
+    job = {"prompt": f"{system}\n\n{prompt}" if system else prompt,
+           "face": str(face), "out": str(dest),
+           "width": GPT_IMAGE_SIZE["width"], "height": GPT_IMAGE_SIZE["height"],
+           "seed": seed}
+    if extra:
+        job |= {k: v for k, v in extra.items()
+                if k in ("steps", "ip_scale", "cfg", "width", "height")}
+
+    job_path = dest.with_suffix(".job.json")
+    job_path.write_text(json.dumps(job))
+    t0 = time.time()
+    proc = subprocess.run([str(LOCAL_PY), str(LOCAL_WORKER), str(job_path)],
+                          capture_output=True, text=True, cwd=str(LOCAL_WORKER.parent.parent))
+    job_path.unlink(missing_ok=True)
+    if proc.returncode != 0 or not dest.exists():
+        tail = (proc.stderr or proc.stdout or "")[-400:]
+        raise RuntimeError(f"local worker failed: {tail}")
+
+    worker = {}
+    for line in proc.stdout.splitlines():
+        if line.startswith("RESULT "):
+            worker = json.loads(line[7:])
+
+    row = {
+        "id": rid, "session": session or new_session("local"),
+        "file": dest.name, "endpoint": LOCAL_ENDPOINT, "prompt": prompt,
+        "system": system, "refs": [p.name for p in refs],
+        "pose": pose_file.name if pose_file else None, "seed": seed,
+        "aspect": f"{job['width']}x{job['height']}",
+        "resolution": f"{job['width']}x{job['height']}",
+        "seconds": worker.get("seconds", round(time.time() - t0, 1)),
+        "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "cost_usd": 0.0, "mark": None, "meta": meta or {},
+    }
     try:
         row["verdict"] = gate.check(dest).dict()
     except FileNotFoundError:

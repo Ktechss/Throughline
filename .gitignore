@@ -4,6 +4,7 @@ data/
 # Python
 .venv/
 .venv-win/
+.venv-gen/
 __pycache__/
 *.py[cod]
 

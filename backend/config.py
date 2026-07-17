@@ -71,3 +71,18 @@ GPT_IMAGE_SIZE = {"width": 1024, "height": 1536}
 # 160px abstain floor and the gate reports "I can't tell" on exactly the shots
 # that most need checking. Applies to nano-banana; gpt-image sizes itself.
 RESOLUTION = "4K"
+
+# --------------------------------------------------------------------------
+# Local generation — $0 per image, on the 8GB RTX 5070 (Blackwell, sm_120).
+# --------------------------------------------------------------------------
+# The project long assumed local inference was impossible here. It is not:
+# torch 2.11+cu128 runs on this card, and SDXL fits with model CPU offload.
+# gpt-image-2 (0.813) still leads on quality; this trades quality for zero
+# marginal cost. The gate scores both the same way, so the trade is measured.
+#
+# The torch/diffusers stack lives in a SEPARATE venv (.venv-gen) and runs as a
+# subprocess — the web backend never imports torch. LOCAL_ENDPOINT is the
+# sentinel generate() keys off to shell out instead of calling fal.
+LOCAL_ENDPOINT = "local/sdxl-ip-adapter"
+LOCAL_PY = ROOT / ".venv-gen" / "Scripts" / "python.exe"
+LOCAL_WORKER = ROOT / "local" / "generate_local.py"
