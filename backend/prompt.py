@@ -66,8 +66,8 @@ def default_parts() -> list[Part]:
     P = Part
     return [
         # -- subject ---------------------------------------------------------
-        P("subject.age", "subject", "Age & frame",
-          "A 26-year-old South Asian woman, 167cm", identity=True),
+        P("subject.age", "subject", "Age & who", "A 26-year-old South Asian woman",
+          identity=True),
         P("subject.energy", "subject", "Energy",
           "a working fashion stylist in South Delhi; carries the end-of-day "
           "energy of someone who has been on her feet since six. Real person, "
@@ -86,13 +86,33 @@ def default_parts() -> list[Part]:
                "but only during the seed hunt."),
 
         # -- body ------------------------------------------------------------
-        P("body.build", "body", "Build",
-          "natural hourglass build — full bust, hips balancing the bust, "
-          "notably long legs, elegant posture with a long neck"),
+        # Granular on purpose. "Athletic build" is a wish; a generator resolves
+        # it into whatever its training data thinks that means, which is a
+        # 8.5-head fashion plate with a corseted waist. Each part below is a
+        # place to push back against a specific default.
+        P("body.height", "body", "Height", "167cm"),
+        P("body.frame", "body", "Frame", "natural hourglass, roughly 7.5 heads tall",
+          note="7.5 heads is a real adult. Generators drift to 8.5 — the "
+               "fashion-illustration proportion — and it reads as uncanny."),
+        P("body.shoulders", "body", "Shoulders",
+          "shoulders roughly in line with her hips, not broadened"),
+        P("body.bust", "body", "Bust / chest",
+          "a full bust, 36D, with natural shape and weight — sitting where real "
+          "breasts sit, not spherical, not lifted",
+          critical=True,
+          note="Load-bearing, same class of tell as the waist. Generators "
+               "default to spherical, gravity-defying, unnaturally high. "
+               "'Natural shape and weight' is the pushback; drop it and you get "
+               "the default. For a male subject, edit this text to the chest "
+               "you want (e.g. 'a broad flat chest, natural pectoral shape, "
+               "visible collarbone') — the part is the slot, not the gender."),
         P("body.waist", "body", "Waist", "a defined but NOT cinched or corseted waist",
           critical=True,
           note="Load-bearing. The over-snatched waist is one of the clearest AI "
                "tells and generators default to it. Push back every time."),
+        P("body.hips", "body", "Hips", "hips balancing the bust, natural width"),
+        P("body.legs", "body", "Legs", "notably long legs, a high leg-to-torso ratio"),
+        P("body.posture", "body", "Posture", "elegant posture, a long neck"),
 
         # -- hair / skin -----------------------------------------------------
         P("hair.base", "hair", "Hair",
