@@ -1,0 +1,12 @@
+﻿# Python 3.11 (.venv-win) — NOT 3.14, which has no onnxruntime wheels.
+insightface==1.0.1
+onnx==1.22.0
+onnxruntime==1.27.0
+opencv-python-headless>=4.10
+numpy>=2.0
+pillow>=10
+fastapi>=0.115
+uvicorn[standard]>=0.30
+pydantic>=2.7
+python-dotenv>=1.0
+fal-client>=0.5
