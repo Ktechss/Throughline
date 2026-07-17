@@ -265,13 +265,15 @@ def default_parts() -> list[Part]:
         P("lighting.main", "lighting", "Light (default)",
           "soft neutral studio lighting, flat and even, no colour cast",
           placeholder=True),
-        P("camera.framing", "camera", "Framing", "head and shoulders, waist up",
-          critical=True,
-          note="Framing IS an identity setting, not an aesthetic one. Measured: "
-               "the same woman at the same yaw scored 0.635 at a 660px face and "
-               "0.450 at 298px. Full-body framing shrinks the face ~8x and the "
-               "gate loses the signal it needs. If you ask for full body, expect "
-               "a weaker number and don't read it as drift."),
+        P("camera.framing", "camera", "Framing (default)", "head and shoulders, waist up",
+          placeholder=True,
+          note="A DEFAULT, not a constraint — a brief that asks for full body "
+               "must be able to override it, or 'full body' is silently ignored "
+               "and the shot comes back waist-up. Why waist-up is the default: "
+               "framing is an identity setting. Same woman, same yaw, scored "
+               "0.635 at a 660px face and 0.450 at 298px; full-body shrinks the "
+               "face ~8x and the gate loses signal. Ask for full body freely — "
+               "just expect a weaker number and don't read it as drift."),
         # No brand, no model number — a handset dates the character and pins her
         # to a product. What actually carries the realism is the OPTICS and the
         # "not a professional camera" clause, so those stay as concrete facts.
