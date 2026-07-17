@@ -154,6 +154,13 @@ def default_parts() -> list[Part]:
         # -- lighting / camera ----------------------------------------------
         P("lighting.main", "lighting", "Light",
           "soft neutral studio lighting, flat and even, no colour cast"),
+        P("camera.framing", "camera", "Framing", "head and shoulders, waist up",
+          critical=True,
+          note="Framing IS an identity setting, not an aesthetic one. Measured: "
+               "the same woman at the same yaw scored 0.635 at a 660px face and "
+               "0.450 at 298px. Full-body framing shrinks the face ~8x and the "
+               "gate loses the signal it needs. If you ask for full body, expect "
+               "a weaker number and don't read it as drift."),
         P("camera.body", "camera", "Camera",
           "iPhone 16 Pro, 24mm main lens, f/1.78, handheld, automatic settings, "
           "natural sensor noise in shadows. Never a professional camera.",
