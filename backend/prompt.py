@@ -90,14 +90,16 @@ def default_parts() -> list[Part]:
         # it into whatever its training data thinks that means, which is a
         # 8.5-head fashion plate with a corseted waist. Each part below is a
         # place to push back against a specific default.
-        P("body.height", "body", "Height", "167cm"),
+        # Measurements are from Kiara-Body-Data.png's own spec table — the
+        # owner's source of truth, not invented here. Change them there first.
+        P("body.height", "body", "Height", "168cm (5'6\"), 58kg"),
         P("body.frame", "body", "Frame", "natural hourglass, roughly 7.5 heads tall",
           note="7.5 heads is a real adult. Generators drift to 8.5 — the "
                "fashion-illustration proportion — and it reads as uncanny."),
         P("body.shoulders", "body", "Shoulders",
           "shoulders roughly in line with her hips, not broadened"),
         P("body.bust", "body", "Bust / chest",
-          "a full bust, 36D, with natural shape and weight — sitting where real "
+          "a full 38DD bust with natural shape and weight — sitting where real "
           "breasts sit, not spherical, not lifted",
           critical=True,
           note="Load-bearing, same class of tell as the waist. Generators "
@@ -106,11 +108,14 @@ def default_parts() -> list[Part]:
                "the default. For a male subject, edit this text to the chest "
                "you want (e.g. 'a broad flat chest, natural pectoral shape, "
                "visible collarbone') — the part is the slot, not the gender."),
-        P("body.waist", "body", "Waist", "a defined but NOT cinched or corseted waist",
+        P("body.waist", "body", "Waist",
+          "a 30-inch waist, defined but NOT cinched or corseted",
           critical=True,
-          note="Load-bearing. The over-snatched waist is one of the clearest AI "
-               "tells and generators default to it. Push back every time."),
-        P("body.hips", "body", "Hips", "hips balancing the bust, natural width"),
+          note="Load-bearing. 30in against 40in hips is already a strong "
+               "hourglass; the generator will try to exaggerate it further into "
+               "a corset, which is one of the clearest AI tells. The number sets "
+               "the shape, 'not cinched' stops the exaggeration. Both needed."),
+        P("body.hips", "body", "Hips", "40-inch hips, balancing the bust"),
         P("body.legs", "body", "Legs", "notably long legs, a high leg-to-torso ratio"),
         P("body.posture", "body", "Posture", "elegant posture, a long neck"),
 
