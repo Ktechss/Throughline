@@ -80,6 +80,65 @@ order-of-magnitude only:
   practical ceiling: nothing generated beat how much her references agreed with
   each other.
 
+## Which generator holds her — measured 2026-07-17, THIS project
+
+One face reference (`Kiara.png`, 429px frontal), the same close-up prompt, every
+result scored against the same 5-angle gallery. Every row is a fair comparison:
+yaw deltas 0.3-4.2, faces 300-600px, no confound to explain any of it away.
+
+| generator | similarity | |
+|---|---|---|
+| **openai/gpt-image-2/edit** | **0.813** | **above her own sheets** |
+| *her own ChatGPT reference sheets* | *0.797* | *the bar* |
+| fal-ai/ideogram/character | 0.750 | |
+| FLUX LoRA @1000, 52 real refs | 0.742 | |
+| fal-ai/flux-pulid | 0.713 | |
+| fal-ai/nano-banana-pro/edit | 0.678 | |
+| fal-ai/gpt-image-1/edit, medium | 0.591 | |
+| fal-ai/instant-character | 0.485 | below the stranger floor |
+| fal-ai/gpt-image-1/edit, high | 0.466 | below the stranger floor |
+
+**gpt-image-2 holds her better than her own references agree with each other.**
+Identity transfer is, for frontal close-ups, solved. Use it.
+
+Notes that cost something to learn:
+
+- **gpt-image-1 is not gpt-image-2.** The 0.47-0.59 rows above led to a
+  confident, wrong conclusion — that ChatGPT's consistency came from its
+  conversation context and could not be scripted. It was just the old model.
+  If a model name has a version number, check the version before theorising.
+- **`quality: high` scored WORSE than `medium`** on gpt-image-1 (0.466 vs
+  0.591). More compute went into redrawing her, not preserving her. Don't
+  assume the expensive tier is the faithful one.
+- **Schema differs across versions**: gpt-image-1 wants `image_size` as an enum
+  (`'1024x1536'`), gpt-image-2 wants an object. The bare call — prompt +
+  image_urls — is what scored 0.813.
+- **`instant-character` produced a different woman** at a 599px face and 2.1
+  yaw delta. Nothing to blame but the model.
+
+⚠ **Every row above is a frontal studio close-up.** Off-frontal, full-body and
+real scenes are UNMEASURED for gpt-image-2. The gap that killed the LoRA
+(full body: 108px face, 43.9 off-angle, abstain) has not been tested here.
+
+⚠ **n=1 per row.** The 0.05 spread between neighbours is inside the re-roll
+variance measured this morning (four rolls of one config: 0.704-0.756). The
+*tiers* are real; the exact ordering of adjacent rows is not.
+
+## LoRA: the old finding was wrong, and why
+
+`FINDINGS` originally carried "LoRA @4000 steps = 0.517, the worst approach".
+Trained on 52 crops of real reference sheets it scored **0.742** — competitive
+with the best identity-transfer model available.
+
+The old LoRA had been trained on **the pipeline's own generations**. It learned
+the drift and compounded it. The correct lesson is *"a LoRA trained on your own
+output is worthless"*, not *"LoRA is worthless"*.
+
+Its failure mode was predicted before the run, from the training set alone: 63%
+frontal, **zero** body images (the body sheets' faces are 24-66px, under even a
+relaxed 100px training floor). Result: close-up 0.742, full body 0.522/abstain.
+It learned her face and knows nothing about her body.
+
 ## Approach comparison (previous project, its own measurement)
 
 | approach | front-to-front | floor |
