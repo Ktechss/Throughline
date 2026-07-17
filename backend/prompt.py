@@ -57,6 +57,9 @@ class Part:
     # True = part of the BIO: who she is, not what this shot is. Locked in the
     # UI and attached to EVERY generation. See BIO_SECTIONS.
     bio: bool = False
+    # True = a stand-in used only when no brief is given. A brief REPLACES these
+    # rather than arguing with them. See compose_shot.
+    placeholder: bool = False
     note: str = ""
 
     def dict(self) -> dict:
@@ -88,10 +91,13 @@ def default_parts() -> list[Part]:
         # -- subject ---------------------------------------------------------
         P("subject.age", "subject", "Age & who", "A 26-year-old South Asian woman",
           identity=True),
+        # Deliberately place-agnostic and job-agnostic. The BIO says who she IS,
+        # not where she lives or what she does today — pin those here and every
+        # shot drags a home city into a stadium. Where she is belongs in the
+        # brief, which is the thing that changes.
         P("subject.energy", "subject", "Energy",
-          "a working fashion stylist in South Delhi; carries the end-of-day "
-          "energy of someone who has been on her feet since six. Real person, "
-          "not a model on a shoot. Lived-in."),
+          "a real person, not a model on a shoot. Unposed, lived-in, caught "
+          "mid-moment rather than styled for a camera."),
 
         # -- face (SEED HUNT ONLY) -------------------------------------------
         P("face.eyes", "face", "Eyes", "large almond dark-brown eyes", identity=True),
@@ -158,22 +164,38 @@ def default_parts() -> list[Part]:
                "direction' beats 'realistic skin' every time."),
 
         # -- wardrobe / pose / scene ----------------------------------------
-        P("wardrobe.main", "wardrobe", "Outfit",
+        # placeholder=True: these are what you get with an EMPTY brief. The
+        # moment a brief exists it replaces them outright — a prompt saying both
+        # "a plain white studio cyclorama" AND "in the stands at a World Cup
+        # match" is not a richer prompt, it is a contradiction, and the model
+        # resolves it by picking one. Measured: it picked the studio, produced a
+        # cream-kurta portrait, and scored 0.857 — high precisely BECAUSE the
+        # brief was ignored and a frontal studio shot is the easiest case there
+        # is. A confident number for a failed instruction.
+        P("wardrobe.main", "wardrobe", "Outfit (default)",
           "a plain fitted cream cotton kurta with slim charcoal trousers and "
-          "flat leather sandals"),
+          "flat leather sandals", placeholder=True),
         P("wardrobe.logos", "wardrobe", "No logos", "No visible brand logos on any item.",
           critical=True),
-        P("pose.ref", "pose", "Pose", "standing, weight on one hip, not posing",
+        P("pose.ref", "pose", "Pose (default)", "standing, weight on one hip, not posing",
+          placeholder=True,
           note="The pose REFERENCE IMAGE is what actually carries this. Text "
                "pose control returned frontal on 3 of 4 probes — see FINDINGS."),
-        P("scene.place", "scene", "Place", "a plain white studio cyclorama"),
-        P("scene.empty", "scene", "Emptiness",
-          "The location is empty of other people.", critical=True,
-          note="Other people are a consistency liability, not realism."),
+        P("scene.place", "scene", "Place (default)", "a plain white studio cyclorama",
+          placeholder=True),
+        # placeholder: who else is in frame is a SCENE decision, not a fact about
+        # her. Hard-wiring "empty of other people" into every prompt made a
+        # stadium-crowd brief contradict itself. If you want her alone, say so in
+        # the brief.
+        P("scene.empty", "scene", "Alone (default)",
+          "The location is empty of other people.", placeholder=True,
+          note="Only applies when the brief is empty. Recurring background "
+               "people are a consistency liability — an anonymous crowd is not."),
 
         # -- lighting / camera ----------------------------------------------
-        P("lighting.main", "lighting", "Light",
-          "soft neutral studio lighting, flat and even, no colour cast"),
+        P("lighting.main", "lighting", "Light (default)",
+          "soft neutral studio lighting, flat and even, no colour cast",
+          placeholder=True),
         P("camera.framing", "camera", "Framing", "head and shoulders, waist up",
           critical=True,
           note="Framing IS an identity setting, not an aesthetic one. Measured: "
@@ -181,21 +203,27 @@ def default_parts() -> list[Part]:
                "0.450 at 298px. Full-body framing shrinks the face ~8x and the "
                "gate loses the signal it needs. If you ask for full body, expect "
                "a weaker number and don't read it as drift."),
+        # No brand, no model number — a handset dates the character and pins her
+        # to a product. What actually carries the realism is the OPTICS and the
+        # "not a professional camera" clause, so those stay as concrete facts.
         P("camera.body", "camera", "Camera",
-          "iPhone 16 Pro, 24mm main lens, f/1.78, handheld, automatic settings, "
-          "natural sensor noise in shadows. Never a professional camera.",
+          "a handheld phone camera — wide 24mm-equivalent lens, automatic "
+          "exposure, natural sensor noise in the shadows. Never a professional "
+          "camera, never a lighting setup, never a photoshoot.",
           critical=True,
           note="The single highest-leverage line in the prompt. Shallow depth of "
                "field and studio lighting are the tells that make an image read "
                "as AI or as an ad."),
 
         # -- constraints -----------------------------------------------------
+        # "No people in the background" used to live here and did not belong: the
+        # BIO is about HER, and who else is in frame changes shot to shot. It now
+        # sits in scene.empty as a default the brief can override.
         P("constraints.main", "constraints", "Constraints",
-          "No people anywhere in the background. The subject is the clear focal "
-          "point. Phone photo — no bokeh, no professional lighting setup, no "
-          "beauty retouching. Real pore texture and skin imperfections must be "
-          "visible. This image must be indistinguishable from a real photo a "
-          "friend posted on Instagram.", critical=True),
+          "She is the clear focal point. Phone photo — no bokeh, no professional "
+          "lighting setup, no beauty retouching. Real pore texture and skin "
+          "imperfections must be visible. This image must be indistinguishable "
+          "from a real photo a friend posted online.", critical=True),
     ]
     for p in parts:
         p.bio = p.section in BIO_SECTIONS
@@ -304,16 +332,24 @@ def compose_shot(parts: list[Part], brief: str, *, has_reference: bool = True,
     is comes from the BIO and the reference image, identically every time — so
     two photos taken a month apart differ only in the ways they were meant to.
 
-    `brief` is free text and is appended to the Scene section rather than
-    replacing it: the scene parts carry constraints that must survive a
-    careless brief ("the location is empty of other people" is not something to
-    re-type and not something to forget).
+    A brief REPLACES the placeholder shot parts rather than joining them.
+    Appending was measured and it fails silently: a prompt carrying both "a
+    plain white studio cyclorama" and "in the stands at a World Cup match" is a
+    contradiction, and the model resolved it by rendering the studio. The result
+    scored 0.857 — the highest of the day — because a frontal studio portrait is
+    the easiest shot for the gate. A confident number for an ignored
+    instruction, which is this project's signature failure.
+
+    Constraints (`placeholder=False`) survive regardless: "no visible brand
+    logos" is not something to retype per shot and not something to lose by
+    forgetting.
     """
     live = [p for p in parts if p.enabled]
     if has_reference:
         live = [p for p in live if not p.identity]
 
     if brief.strip():
+        live = [p for p in live if not p.placeholder]
         live = live + [Part(id="shot.brief", section="scene", label="Shot",
                             text=brief.strip())]
     return compose(live, has_reference=has_reference, pose_note=pose_note)

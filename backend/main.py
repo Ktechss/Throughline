@@ -354,27 +354,59 @@ def gallery_from_ref(req: GalleryFromRefReq):
 
 BIO_REF_PATH = STATE / "bio.json"
 
-# The BIO's identity reference. Every generation attaches it — the whole point
-# of a locked BIO is that you cannot forget who she is. The first run of this
-# project had no reference attached and invented a stranger; that failure should
-# not be reachable from the UI.
+# The BIO's references. Every generation attaches them — the whole point of a
+# locked BIO is that you cannot forget who she is. The first run of this project
+# had no reference attached and invented a stranger; that failure should not be
+# reachable from the UI.
+#
+# TWO references, doing two jobs:
+#   face — her identity. Words cannot specify a person; measured 0.860 with a
+#          reference against 0.531 with a description.
+#   body — her build. Same argument, applied to proportions: "38DD, 30in waist"
+#          is a description, and the generator resolves descriptions into its
+#          own defaults (corseted waist, spherical bust). An image is not a
+#          description.
+#
+# ⚠ They must come from the SAME generation or they disagree about her before
+# the model starts. Measured on nano-banana: mismatched body+face refs scored
+# 0.562, a matched pair 0.588. cd-body/cd-face are both cropped from
+# 'Close and Distance shot.png' — one pass, one commitment to her.
 DEFAULT_BIO_REF = "Kiara.png"
+DEFAULT_BODY_REF = "cd-body.png"
+
+
+def _bio_cfg() -> dict:
+    cfg = json.loads(BIO_REF_PATH.read_text()) if BIO_REF_PATH.exists() else {}
+    return {"reference": cfg.get("reference", DEFAULT_BIO_REF),
+            "body_reference": cfg.get("body_reference", DEFAULT_BODY_REF)}
 
 
 def _bio_ref() -> str:
-    if BIO_REF_PATH.exists():
-        return json.loads(BIO_REF_PATH.read_text()).get("reference", DEFAULT_BIO_REF)
-    return DEFAULT_BIO_REF
+    return _bio_cfg()["reference"]
+
+
+def _bio_refs() -> list[Path]:
+    """Face first, body second. Order is not arbitrary — the first reference
+    dominates, and identity matters more than proportion."""
+    cfg = _bio_cfg()
+    out = []
+    for key in ("reference", "body_reference"):
+        p = REFS / Path(cfg[key]).name
+        if p.exists():
+            out.append(p)
+    return out
 
 
 @app.get("/api/bio")
 def get_bio():
     """Who Kiara is. Locked, and attached to every shot."""
     parts = _load_parts()
-    ref = _bio_ref()
-    ref_path = REFS / ref
+    cfg = _bio_cfg()
+    ref_path = REFS / cfg["reference"]
+    body_path = REFS / cfg["body_reference"]
     out = promptlib.bio_summary(parts, has_reference=ref_path.exists())
-    out["reference"] = ref if ref_path.exists() else None
+    out["reference"] = cfg["reference"] if ref_path.exists() else None
+    out["body_reference"] = cfg["body_reference"] if body_path.exists() else None
     if ref_path.exists():
         try:
             f = gate.analyze(ref_path)
@@ -419,11 +451,10 @@ def shot(req: ShotReq):
     a stranger, and that should not be one forgotten checkbox away.
     """
     parts = _load_parts()
-    ref = REFS / _bio_ref()
-    if not ref.exists():
+    refs = _bio_refs()
+    if not refs:
         raise HTTPException(400, "no BIO reference set — import one on the face tab")
-
-    refs = [ref]
+    ref = refs[0]
     pose_file, pose_note = None, ""
     if req.pose_name:
         pose = _load_pose(req.pose_name)
@@ -440,7 +471,8 @@ def shot(req: ShotReq):
         return generate.generate(
             prompt=text, system=promptlib.SYSTEM, refs=refs, aspect=req.aspect,
             seed=req.seed, pose_file=pose_file, session=session,
-            meta={"brief": req.brief, "bio_reference": ref.name,
+            meta={"brief": req.brief,
+                  "bio_references": [p.name for p in refs],
                   "pose": req.pose_name},
         )
     except Exception as exc:  # noqa: BLE001
