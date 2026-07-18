@@ -53,29 +53,16 @@ AUTOLEVEL_CLEANUP_MAX = 3.5  # above this, do NOT rotate — flag for regen inst
 
 
 def auto_level(dest: Path) -> float:
-    """Gently clean up a near-level head. Returns degrees applied (0 if none).
+    """DISABLED. Returns 0 — the image is never rotated or cropped.
 
-    Only corrects tilts small enough that rotating the scene is invisible. A
-    genuinely tilted output is left as-is and surfaces via the gate's `tilted`
-    flag, because the honest fix there is a fresh generation off the level
-    reference, not tilting the horizon to fake it.
+    Rotating to level the face tilts the scene and crops the frame, which the
+    owner (rightly) rejected. We do NOT touch the delivered image. Head tilt is
+    handled where it belongs — at generation, via the upright reference — and
+    reported by the gate's roll/`tilted` fields so a too-tilted shot can be
+    regenerated. Left here as a no-op so the call sites and the recorded
+    `auto_leveled: 0` stay stable; re-enable only behind an explicit opt-in.
     """
-    from PIL import Image
-    try:
-        face = gate.analyze(dest)
-    except (gate.NoFaceFound, ValueError):
-        return 0.0
-    roll = face.roll
-    if abs(roll) <= AUTOLEVEL_DEADBAND or abs(roll) > AUTOLEVEL_CLEANUP_MAX:
-        return 0.0
-
-    im = Image.open(dest).convert("RGB")
-    w, h = im.size
-    rot = im.rotate(roll, resample=Image.BICUBIC, expand=True)
-    rw, rh = rot.size
-    left, top = (rw - w) // 2, (rh - h) // 2
-    rot.crop((left, top, left + w, top + h)).save(dest)
-    return round(roll, 1)
+    return 0.0
 
 
 def new_session(label: str = "") -> dict:
