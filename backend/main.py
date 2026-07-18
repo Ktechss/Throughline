@@ -444,17 +444,21 @@ class ShotReq(BaseModel):
 
 @app.post("/api/shot")
 def shot(req: ShotReq):
-    """Generate one shot: locked BIO + the user's brief.
+    """Start one shot in the background; return a job id to poll.
 
-    The BIO's reference is attached unconditionally. There is deliberately no
-    way to generate without it — a shot with no identity reference is a photo of
-    a stranger, and that should not be one forgotten checkbox away.
+    Async on purpose: fal is a ~70s blocking call (local ~5 min). A synchronous
+    endpoint leaves the UI with no signal that anything is happening — the exact
+    complaint this replaces. The work runs in a thread reporting stages into
+    JOBS; the client polls /api/jobs/{id}.
+
+    The BIO's reference is attached unconditionally — a shot with no identity
+    reference is a photo of a stranger, and that should not be one forgotten
+    checkbox away.
     """
     parts = _load_parts()
     refs = _bio_refs()
     if not refs:
         raise HTTPException(400, "no BIO reference set — import one on the face tab")
-    ref = refs[0]
     pose_file, pose_note = None, ""
     if req.pose_name:
         pose = _load_pose(req.pose_name)
@@ -467,17 +471,25 @@ def shot(req: ShotReq):
     text, sanitised = promptlib.compose_shot_ex(parts, req.brief, has_reference=True,
                                                 pose_note=pose_note)
     session = generate.new_session(req.brief.strip()[:60] or "untitled shot")
-    try:
+
+    def run(job: dict) -> dict:
         return generate.generate(
             prompt=text, system=promptlib.SYSTEM, refs=refs, aspect=req.aspect,
-            seed=req.seed, pose_file=pose_file, session=session,
-            meta={"brief": req.brief,
-                  "bio_references": [p.name for p in refs],
-                  "pose": req.pose_name,
-                  "sanitised": sanitised},
+            seed=req.seed, pose_file=pose_file, session=session, progress=job,
+            meta={"brief": req.brief, "bio_references": [p.name for p in refs],
+                  "pose": req.pose_name, "sanitised": sanitised},
         )
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(500, str(exc)[:300]) from exc
+
+    jid = generate.start_job(req.brief.strip()[:60] or "untitled shot", run)
+    return {"job": jid, "sanitised": sanitised}
+
+
+@app.get("/api/jobs/{jid}")
+def job(jid: str):
+    st = generate.job_status(jid)
+    if st is None:
+        raise HTTPException(404, jid)
+    return st
 
 
 class ShotPreviewReq(BaseModel):

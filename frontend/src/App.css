@@ -140,3 +140,16 @@ select, input[type=text], .row input:not([type=checkbox]) {
 .san { margin: 6px 0 0; padding-left: 18px; }
 .san li { margin: 2px 0; }
 .san code { background: #0e0e13; padding: 1px 4px; border-radius: 3px; }
+
+/* live generation progress */
+.progress { display: flex; align-items: center; gap: 14px; padding: 16px 18px;
+  border: 1px solid var(--acc); border-radius: 10px; background: #0d1622; }
+.spinner { width: 26px; height: 26px; border: 3px solid var(--line);
+  border-top-color: var(--acc); border-radius: 50%; animation: spin 0.9s linear infinite;
+  flex: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.pstage b { font-size: 14px; }
+.pstage .note { margin-top: 3px; }
+.gen { background: var(--acc); color: #04101f; border-color: var(--acc);
+  font-weight: 600; padding: 8px 20px; }
+.gen:disabled { opacity: .6; cursor: default; }

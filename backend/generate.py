@@ -33,6 +33,46 @@ def upload(path: Path) -> str:
     return fal_client.upload_file(str(path))
 
 
+# Below this residual tilt we leave the image alone — rotating by a degree or
+# two costs a crop for no visible gain. The leveled reference already brings
+# most shots under this; auto-level is the deterministic backstop for the rest.
+AUTOLEVEL_DEADBAND = 2.5
+
+
+def auto_level(dest: Path) -> float:
+    """Rotate a finished image so her head is level. Returns degrees applied.
+
+    This is the DETERMINISTIC half of tilt control. The leveled reference only
+    nudges the model (it dropped roll from -14 avg to -3.5, not to 0); this
+    measures the actual roll of the OUTPUT and corrects it, so the delivered
+    image is level regardless of what the model chose to do.
+
+    Rotating introduces empty corners, so we expand-rotate then centre-crop back
+    to the original size. With a near-level input the crop is a sliver; that is
+    why it runs AFTER the leveled reference rather than instead of it.
+    """
+    from PIL import Image
+    try:
+        face = gate.analyze(dest)
+    except (gate.NoFaceFound, ValueError):
+        return 0.0
+    roll = face.roll
+    if abs(roll) <= AUTOLEVEL_DEADBAND:
+        return 0.0
+
+    im = Image.open(dest).convert("RGB")
+    w, h = im.size
+    rot = im.rotate(roll, resample=Image.BICUBIC, expand=True)
+    # Centre-crop the expanded image back to the original w x h. The valid
+    # (corner-free) region after an expand-rotate is smaller than the original
+    # frame; a centre crop to the original size keeps well inside it for the
+    # small angles we correct here.
+    rw, rh = rot.size
+    left, top = (rw - w) // 2, (rh - h) // 2
+    rot.crop((left, top, left + w, top + h)).save(dest)
+    return round(roll, 1)
+
+
 def new_session(label: str = "") -> dict:
     """One trigger = one session.
 
@@ -50,7 +90,7 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
              aspect: str = "4:5", seed: int | None = None,
              pose_file: Path | None = None, meta: dict | None = None,
              session: dict | None = None, endpoint: str | None = None,
-             extra: dict | None = None) -> dict:
+             extra: dict | None = None, progress: dict | None = None) -> dict:
     """One generation, gated and recorded.
 
     refs order matters and is the caller's responsibility. Measured on the
@@ -113,10 +153,17 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
         except Exception as exc:  # noqa: BLE001
             last = exc
             if "content_policy" in str(exc) and attempt < 3:
+                # Surface the moderation retry so it reads as "retrying", not a
+                # silent hang — the confusion the user hit before.
+                if progress is not None:
+                    progress["retry"] = attempt + 1
+                    progress["stage"] = "moderation retry"
                 continue
             raise
     else:  # pragma: no cover - loop always breaks or raises
         raise last
+    if progress is not None:
+        progress["stage"] = "downloading"
     urllib.request.urlretrieve(r["images"][0]["url"], dest)
 
     # A truncated download gates as no_face, which looks identical to identity
@@ -124,6 +171,10 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
     if dest.stat().st_size < 10_000:
         dest.unlink(missing_ok=True)
         raise RuntimeError(f"truncated download ({rid})")
+
+    if progress is not None:
+        progress["stage"] = "leveling & gating"
+    leveled = auto_level(dest)   # deterministic tilt correction, before gating
 
     row = {
         "id": rid,
@@ -142,6 +193,7 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
         "resolution": RESOLUTION,
         "seconds": round(time.time() - t0, 1),
         "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "auto_leveled": leveled,   # degrees rotated to straighten her head
         "mark": None,          # human decision: approve / reject / None
         "meta": meta or {},
     }
@@ -197,8 +249,11 @@ def _generate_local(rid, dest, *, prompt, system, refs, seed, session,
         if line.startswith("RESULT "):
             worker = json.loads(line[7:])
 
+    leveled = auto_level(dest)
+
     row = {
         "id": rid, "session": session or new_session("local"),
+        "auto_leveled": leveled,
         "file": dest.name, "endpoint": LOCAL_ENDPOINT, "prompt": prompt,
         "system": system, "refs": [p.name for p in refs],
         "pose": pose_file.name if pose_file else None, "seed": seed,
@@ -238,3 +293,58 @@ def mark(run_id: str, decision: str | None) -> dict:
 
 def all_runs() -> list[dict]:
     return list(reversed(_runs()))
+
+
+# --------------------------------------------------------------------------
+# async jobs — so the UI knows a generation is alive and how long it's taken
+# --------------------------------------------------------------------------
+#
+# fal is a single blocking ~70s call (local is ~5 min); a synchronous endpoint
+# leaves the UI staring at a dead button with no idea if anything is happening.
+# generate() runs in a thread and reports coarse stages into JOBS; the frontend
+# polls and shows an elapsed timer + stage, so "is it working?" always has an
+# answer. The stages are honest — we cannot see inside fal's call, so it is
+# generating -> gating -> done, plus explicit retry visibility for the
+# moderation coin-flip that used to look like a silent hang.
+
+import threading  # noqa: E402
+
+JOBS: dict[str, dict] = {}
+
+
+def _now() -> float:
+    return time.time()
+
+
+def start_job(label: str, fn) -> str:
+    """Run fn() (which returns a run row) in a thread, tracked in JOBS."""
+    jid = uuid.uuid4().hex[:8]
+    JOBS[jid] = {"id": jid, "label": label, "stage": "starting",
+                 "started": _now(), "done": False, "error": None, "run": None}
+
+    def worker():
+        j = JOBS[jid]
+        try:
+            j["stage"] = "generating"
+            row = fn(j)          # fn may update j["stage"] / j["retry"]
+            j["run"] = row
+            j["stage"] = "done"
+        except Exception as exc:  # noqa: BLE001
+            j["error"] = str(exc)[:300]
+            j["stage"] = "failed"
+        finally:
+            j["done"] = True
+            j["elapsed"] = round(_now() - j["started"], 1)
+
+    threading.Thread(target=worker, daemon=True).start()
+    return jid
+
+
+def job_status(jid: str) -> dict | None:
+    j = JOBS.get(jid)
+    if not j:
+        return None
+    out = {k: j[k] for k in ("id", "label", "stage", "done", "error", "run")}
+    out["retry"] = j.get("retry")
+    out["elapsed"] = j.get("elapsed", round(_now() - j["started"], 1))
+    return out

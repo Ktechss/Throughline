@@ -14,6 +14,16 @@ const api = {
   },
 }
 
+const PROG_LABEL = {
+  starting: 'Starting…',
+  generating: 'Generating the image…',
+  'moderation retry': 'Moderation flagged it — retrying automatically…',
+  downloading: 'Downloading…',
+  'leveling & gating': 'Straightening & checking identity…',
+  done: 'Done',
+  failed: 'Failed',
+}
+
 const SECTION_HELP = {
   face: 'Seed hunt only. Once a reference image exists these are dropped automatically — describing a face measured 0.834 against 0.860 for a terse "don\'t change her".',
   skin: 'Photographic facts, never adjectives. A model can render a fact; it cannot render a wish.',
@@ -39,6 +49,7 @@ export default function App() {
   const [brief, setBrief] = useState('')
   const [shotPrompt, setShotPrompt] = useState(null)
   const [withPose, setWithPose] = useState(false)
+  const [job, setJob] = useState(null)
   const [stamp, setStamp] = useState(0)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState(null)
@@ -93,15 +104,27 @@ export default function App() {
 
   const shoot = async () => {
     setBusy(true); setErr(null)
+    setJob({ stage: 'starting', elapsed: 0 })
     try {
       if (withPose) await savePose()
-      await api.send('/api/shot', 'POST', {
+      const { job: jid } = await api.send('/api/shot', 'POST', {
         brief, pose_name: withPose ? poseName : null,
         use_pose_image: withPose, aspect: '3:4',
       })
-      await refresh()
-      setTab('review')
-    } catch (e) { setErr(String(e)) } finally { setBusy(false) }
+      // Poll live status until done, so the user sees stage + elapsed time
+      // instead of a dead button.
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 1500))
+        const st = await api.get(`/api/jobs/${jid}`)
+        setJob(st)
+        if (st.done) {
+          if (st.error) setErr(st.error)
+          await refresh()
+          if (!st.error) setTab('review')
+          break
+        }
+      }
+    } catch (e) { setErr(String(e)) } finally { setBusy(false); setJob(null) }
   }
 
   const mark = async (id, decision) => {
@@ -161,7 +184,7 @@ export default function App() {
             onChange={(e) => setBrief(e.target.value)}
           />
           <div className="row">
-            <button disabled={busy || !bio?.reference} onClick={shoot}>
+            <button className="gen" disabled={busy || !bio?.reference} onClick={shoot}>
               {busy ? 'generating…' : 'generate'}
             </button>
             <label><input type="checkbox" checked={withPose}
@@ -172,10 +195,26 @@ export default function App() {
               setShotPrompt(p)
             }}>preview prompt</button>
           </div>
+
+          {job && (
+            <div className="progress">
+              <div className="spinner" />
+              <div className="pstage">
+                <b>{PROG_LABEL[job.stage] || job.stage}</b>
+                {job.retry ? <span className="tag warn">moderation retry {job.retry}/4</span> : null}
+                <div className="note">
+                  {Math.round(job.elapsed || 0)}s elapsed
+                  {' · '}gpt-image-2 usually takes 60–150s
+                </div>
+              </div>
+            </div>
+          )}
+
           <p className="note">
             You write the shot. Who she is comes from the BIO and the reference
             image, identically every time — so two photos a month apart differ
-            only in the ways you meant them to.
+            only in the ways you meant them to. Every shot is straightened and
+            identity-checked before you see it.
           </p>
           {shotPrompt?.sanitised?.length > 0 && (
             <div className="lint info">
@@ -455,6 +494,12 @@ export default function App() {
                             </span>
                           )}
                           {v.face_px != null && <span className="meta">{v.face_px}px</span>}
+                          {v.roll != null && (
+                            <span className="meta" title="head tilt after auto-leveling">
+                              tilt {v.roll > 0 ? '+' : ''}{v.roll}°{v.tilted ? ' ⚠' : ''}
+                            </span>
+                          )}
+                          {r.auto_leveled ? <span className="meta" title="straightened automatically">leveled {r.auto_leveled}°</span> : null}
                           {v.low_confidence && <span className="tag warn">low signal</span>}
                           {v.pose_mismatch && <span className="tag warn">pose mismatch</span>}
                         </div>
