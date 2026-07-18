@@ -244,8 +244,13 @@ def default_parts() -> list[Part]:
         P("wardrobe.main", "wardrobe", "Outfit (default)",
           "a plain fitted cream cotton kurta with slim charcoal trousers and "
           "flat leather sandals", placeholder=True),
-        P("wardrobe.logos", "wardrobe", "No logos", "No visible brand logos on any item.",
-          critical=True),
+        # placeholder: a guard for the DEFAULT outfit only. It used to be a
+        # standing constraint and it silently overrode briefs — "Argentina
+        # football jersey" in a brief lost to "No visible brand logos" sitting
+        # earlier in the prompt. When the user names an outfit, the brief owns
+        # the wardrobe, logos and all.
+        P("wardrobe.logos", "wardrobe", "No logos (default)",
+          "No visible brand logos on any item.", placeholder=True),
         P("pose.ref", "pose", "Pose (default)", "standing, weight on one hip, not posing",
           placeholder=True,
           note="The pose REFERENCE IMAGE is what actually carries this. Text "
@@ -423,20 +428,67 @@ def compose_shot_ex(parts: list[Part], brief: str, *, has_reference: bool = True
                     pose_note: str = "") -> tuple[str, list[dict]]:
     """compose_shot, plus the moderation-sanitiser change list.
 
-    Sanitisation runs on the FINAL text, so it catches a trigger wherever it
-    came from — the BIO or a brief the user typed. Returns (clean_prompt,
-    changes); an empty list means nothing needed rewriting.
+    ## Why the brief LEADS when one is given
+
+    The old layout appended the brief as one clause inside a fixed section order,
+    so it landed in the MIDDLE of ~200 words of BIO boilerplate. Two failures
+    measured directly: an instruction-following model (gpt-image-2) weights what
+    comes first, so a buried brief was under-followed; and a standing constraint
+    that sat BEFORE the brief ("No visible brand logos") silently overrode it
+    ("Argentina football jersey"). Both are the brief being discarded.
+
+    So when a brief exists it leads the prompt, and the BIO follows framed as
+    "keep her consistent while doing the above." Placeholder parts (the default
+    scene/wardrobe/pose/light AND the default no-logos guard) drop out entirely —
+    the brief owns everything it touches.
+
+    Sanitisation runs on the final text, catching a trigger from the BIO or the
+    brief. Returns (clean_prompt, changes).
     """
     live = [p for p in parts if p.enabled]
     if has_reference:
         live = [p for p in live if not p.identity]
 
-    if brief.strip():
-        live = [p for p in live if not p.placeholder]
-        live = live + [Part(id="shot.brief", section="scene", label="Shot",
-                            text=brief.strip())]
-    raw = compose(live, has_reference=has_reference, pose_note=pose_note)
-    return sanitise(raw)
+    if not brief.strip():
+        # No brief: the structured, placeholder-driven default (seed hunt / base).
+        return sanitise(compose(live, has_reference=has_reference, pose_note=pose_note))
+
+    # Brief present: it leads; defaults it would fight are dropped.
+    live = [p for p in live if not p.placeholder]
+
+    def txt(section: str, sep: str = "; ") -> str:
+        got = [p for p in live if p.section == section]
+        return sep.join(p.text.strip() for p in got)
+
+    shot = brief.strip()
+    if pose_note:
+        shot = f"{shot} {pose_note}"
+
+    blocks = [f"Candid photograph. {shot}"]
+
+    # Identity + why she must not change, then the physical facts to hold steady.
+    lock = IDENTITY_LOCK if has_reference else ""
+    energy = txt("subject")
+    ident = " ".join(s for s in (lock, energy) if s).strip()
+    if ident:
+        blocks.append(ident if ident.endswith(".") else ident + ".")
+
+    build = txt("body")
+    if build:
+        blocks.append(f"Keep her build consistent with the reference: {build}.")
+
+    skin = txt("skin", sep="\n")
+    if skin:
+        blocks.append("Skin — real photographic detail, no retouching:\n" + skin)
+
+    # Wardrobe here holds only NON-placeholder wardrobe parts (none by default,
+    # since the brief owns the outfit). Realism tail last.
+    tail = " ".join(s for s in (txt("wardrobe", " "), txt("camera", " "),
+                                txt("constraints", "\n")) if s).strip()
+    if tail:
+        blocks.append(tail)
+
+    return sanitise("\n\n".join(blocks))
 
 
 def bio_summary(parts: list[Part], *, has_reference: bool = True) -> dict:
