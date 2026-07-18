@@ -89,17 +89,29 @@ class NoFaceFound(Exception):
     """No face detected. For a generated image this is itself a failure."""
 
 
+# Head tilt (roll) beyond this reads as a deliberate lean rather than a level
+# head. The reference Kiara.png sits at -11.3, and generations inherited and
+# amplified it to -14 avg. Surfacing it is what turns "every photo is annoyingly
+# tilted" from an invisible drift into a number you can act on.
+ROLL_LEVEL_MAX = 8.0
+
+
 @dataclass
 class Face:
     vector: np.ndarray  # L2-normalised, 512-dim -> cosine == dot
     yaw: float
     pitch: float
+    roll: float          # in-plane tilt; 0 = level, +/- = ear toward shoulder
     width: int
 
     @property
     def pose_class(self) -> str:
         a = abs(self.yaw)
         return "frontal" if a < 20 else "three_quarter" if a < 45 else "profile"
+
+    @property
+    def tilted(self) -> bool:
+        return abs(self.roll) > ROLL_LEVEL_MAX
 
 
 @dataclass
@@ -153,6 +165,7 @@ class Verdict:
         return {"similarity": round(self.similarity, 4), "matched": self.matched,
                 "threshold": self.threshold, "status": self.status,
                 "yaw": round(self.face.yaw, 1), "pitch": round(self.face.pitch, 1),
+                "roll": round(self.face.roll, 1), "tilted": self.face.tilted,
                 "face_px": self.face.width, "pose_class": self.face.pose_class,
                 "low_confidence": self.low_confidence,
                 "source_yaw": None if self.source_yaw is None else round(self.source_yaw, 1),
@@ -170,8 +183,10 @@ def analyze(path: str | Path) -> Face:
     if not faces:
         raise NoFaceFound(f"no face detected in {Path(path).name}")
     f = max(faces, key=lambda x: (x.bbox[2] - x.bbox[0]) * (x.bbox[3] - x.bbox[1]))
-    return Face(vector=f.normed_embedding, yaw=float(f.pose[1]),
-                pitch=float(f.pose[0]), width=int(f.bbox[2] - f.bbox[0]))
+    # insightface pose is [pitch, yaw, roll].
+    return Face(vector=f.normed_embedding, pitch=float(f.pose[0]),
+                yaw=float(f.pose[1]), roll=float(f.pose[2]),
+                width=int(f.bbox[2] - f.bbox[0]))
 
 
 def similarity(a: np.ndarray, b: np.ndarray) -> float:
