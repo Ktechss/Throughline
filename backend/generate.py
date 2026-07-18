@@ -33,23 +33,32 @@ def upload(path: Path) -> str:
     return fal_client.upload_file(str(path))
 
 
-# Below this residual tilt we leave the image alone — rotating by a degree or
-# two costs a crop for no visible gain. The leveled reference already brings
-# most shots under this; auto-level is the deterministic backstop for the rest.
-AUTOLEVEL_DEADBAND = 2.5
+# Rotating the finished image levels the FACE by tilting the whole SCENE the
+# other way — the floor, the horizon, her body all lean. That is a cheat, not a
+# straight-head POSE, and on any shot with a visible horizon it reads as a
+# mistake. So we do NOT do it as a real correction.
+#
+# The legitimate lever for an upright head is the LEVELED REFERENCE: the model
+# copies the reference's head orientation, so a level reference yields a level
+# head in a level scene. That is probabilistic (it lands ~3 deg, which is a
+# natural head, not a tilt), and gpt-image-2 has no pose input to make it exact.
+# True deterministic head-pose control needs the local ControlNet/OpenPose path.
+#
+# We keep ONE tiny use of rotation: cleaning up a sub-CLEANUP_MAX residual, where
+# the scene tilt is genuinely imperceptible even against a horizon. Anything
+# larger is LEFT ALONE and flagged `tilted` (see gate) — regenerate rather than
+# tilt the world.
+AUTOLEVEL_DEADBAND = 1.5     # below this, not worth touching
+AUTOLEVEL_CLEANUP_MAX = 3.5  # above this, do NOT rotate — flag for regen instead
 
 
 def auto_level(dest: Path) -> float:
-    """Rotate a finished image so her head is level. Returns degrees applied.
+    """Gently clean up a near-level head. Returns degrees applied (0 if none).
 
-    This is the DETERMINISTIC half of tilt control. The leveled reference only
-    nudges the model (it dropped roll from -14 avg to -3.5, not to 0); this
-    measures the actual roll of the OUTPUT and corrects it, so the delivered
-    image is level regardless of what the model chose to do.
-
-    Rotating introduces empty corners, so we expand-rotate then centre-crop back
-    to the original size. With a near-level input the crop is a sliver; that is
-    why it runs AFTER the leveled reference rather than instead of it.
+    Only corrects tilts small enough that rotating the scene is invisible. A
+    genuinely tilted output is left as-is and surfaces via the gate's `tilted`
+    flag, because the honest fix there is a fresh generation off the level
+    reference, not tilting the horizon to fake it.
     """
     from PIL import Image
     try:
@@ -57,16 +66,12 @@ def auto_level(dest: Path) -> float:
     except (gate.NoFaceFound, ValueError):
         return 0.0
     roll = face.roll
-    if abs(roll) <= AUTOLEVEL_DEADBAND:
+    if abs(roll) <= AUTOLEVEL_DEADBAND or abs(roll) > AUTOLEVEL_CLEANUP_MAX:
         return 0.0
 
     im = Image.open(dest).convert("RGB")
     w, h = im.size
     rot = im.rotate(roll, resample=Image.BICUBIC, expand=True)
-    # Centre-crop the expanded image back to the original w x h. The valid
-    # (corner-free) region after an expand-rotate is smaller than the original
-    # frame; a centre crop to the original size keeps well inside it for the
-    # small angles we correct here.
     rw, rh = rot.size
     left, top = (rw - w) // 2, (rh - h) // 2
     rot.crop((left, top, left + w, top + h)).save(dest)
