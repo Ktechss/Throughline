@@ -434,7 +434,7 @@ POSES_LIBRARY = {
 
 
 def compose_tagged(brief: str, *, pose_text: str = "", has_wardrobe: bool = False,
-                   n_skin: int = 0, shot_type: str = "candid",
+                   pose_ref_tag: str = "", n_skin: int = 0, shot_type: str = "candid",
                    realism: bool = True) -> tuple[str, list[dict]]:
     """The ai-influencer technique, ported and validated on fal gpt-image-2.
 
@@ -456,7 +456,14 @@ def compose_tagged(brief: str, *, pose_text: str = "", has_wardrobe: bool = Fals
     opener = SHOT_TYPES.get(shot_type, SHOT_TYPES["candid"])
     parts_out = [f"{opener} of @image1. {brief.strip()}"]
 
-    if pose_text:
+    if pose_ref_tag:
+        # A pose REFERENCE IMAGE of her. References leak pose strongly, so this
+        # steers head orientation and body pose harder than text ever could —
+        # the user's idea, and the honest alternative to rotating the output.
+        parts_out.append(
+            f"Match her body pose and head orientation to {pose_ref_tag} — same "
+            f"stance, same head angle, head held the same way.")
+    elif pose_text:
         parts_out.append(pose_text.strip().rstrip(".") + ".")
 
     if has_wardrobe:

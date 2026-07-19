@@ -16,7 +16,8 @@ from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
 from . import gate, generate, prompt as promptlib, skeleton
-from .config import IMAGES, PARTS_PATH, POSES, REFS, ROOT, STATE, WARDROBE
+from .config import (IMAGES, PARTS_PATH, POSE_REFS, POSES, REFS, ROOT, STATE,
+                     WARDROBE)
 
 app = FastAPI(title="eve1")
 
@@ -518,6 +519,65 @@ def list_pose_library():
     return {"poses": [{"id": k, "text": v} for k, v in promptlib.POSES_LIBRARY.items()]}
 
 
+# --------------- pose REFERENCE library (images of her, keyword-selected) -----
+# Validated: a straight-head pose reference dropped a shot from roll -8.5 to
+# -2.1 (level) AND raised identity 0.757 -> 0.845, because the reference is her.
+# Steers pose at the source instead of rotating the output. Must be HER — a
+# stranger's pose photo would blend into her face.
+
+def _pose_refs() -> list[dict]:
+    out = []
+    for p in sorted(POSE_REFS.iterdir()) if POSE_REFS.exists() else []:
+        if p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
+            out.append({"id": p.stem, "file": p.name})
+    return out
+
+
+@app.get("/api/pose-refs")
+def list_pose_refs():
+    return {"pose_refs": _pose_refs()}
+
+
+@app.post("/api/pose-refs/upload")
+async def pose_ref_upload(file: UploadFile = File(...)):
+    dest = POSE_REFS / Path(file.filename).name
+    dest.write_bytes(await file.read())
+    # Verify it's her with a detectable face; a poseref with no face is useless
+    # and one of a stranger would corrupt identity.
+    try:
+        gate.analyze(dest)
+    except (gate.NoFaceFound, ValueError):
+        dest.unlink(missing_ok=True)
+        raise HTTPException(400, "no face in the pose reference — it must show her") from None
+    return {"id": dest.stem, "file": dest.name}
+
+
+@app.post("/api/pose-refs/from-run")
+def pose_ref_from_run(payload: dict = Body(...)):
+    run_id, name = payload["run_id"], payload["name"]
+    row = next((r for r in generate.all_runs() if r["id"] == run_id), None)
+    if not row:
+        raise HTTPException(404, run_id)
+    safe = "".join(c for c in name if c.isalnum() or c in "-_") or run_id
+    dest = POSE_REFS / f"{safe}.png"
+    shutil.copy2(IMAGES / row["file"], dest)
+    return {"id": dest.stem, "file": dest.name}
+
+
+@app.get("/api/pose-refs/{name}/file")
+def pose_ref_file(name: str):
+    p = POSE_REFS / Path(name).name
+    if not p.exists():
+        raise HTTPException(404, name)
+    return FileResponse(p)
+
+
+@app.delete("/api/pose-refs/{name}")
+def pose_ref_delete(name: str):
+    (POSE_REFS / Path(name).name).unlink(missing_ok=True)
+    return {"ok": True}
+
+
 class ShotReq(BaseModel):
     brief: str = ""              # the ONLY thing the user writes
     pose_name: str | None = None
@@ -525,7 +585,8 @@ class ShotReq(BaseModel):
     aspect: str = "3:4"
     seed: int | None = None
     wardrobe_id: str | None = None   # attach this saved outfit as @image2
-    pose_id: str | None = None       # a pose from the library
+    pose_id: str | None = None       # a pose from the text library
+    pose_ref_id: str | None = None   # a pose REFERENCE image, attached as @image3
     shot_type: str = "candid"
 
 
@@ -562,10 +623,19 @@ def shot(req: ShotReq):
         if body.exists():
             refs.append(body)
 
+    # @image3 = pose reference (her, in the desired pose/head orientation).
+    pose_ref_tag = ""
+    if req.pose_ref_id:
+        pr = POSE_REFS / f"{req.pose_ref_id}.png"
+        if not pr.exists():
+            raise HTTPException(400, f"no such pose reference: {req.pose_ref_id}")
+        refs.append(pr)
+        pose_ref_tag = "@image3"
+
     pose_text = promptlib.POSES_LIBRARY.get(req.pose_id or "", "")
     text, sanitised = promptlib.compose_tagged(
         req.brief, pose_text=pose_text, has_wardrobe=has_wardrobe,
-        shot_type=req.shot_type)
+        pose_ref_tag=pose_ref_tag, shot_type=req.shot_type)
     label = req.brief.strip()[:60] or "untitled shot"
     session = generate.new_session(label)
 
@@ -575,7 +645,7 @@ def shot(req: ShotReq):
             seed=req.seed, session=session, progress=job,
             meta={"brief": req.brief, "bio_references": [p.name for p in refs],
                   "wardrobe": req.wardrobe_id, "pose_id": req.pose_id,
-                  "sanitised": sanitised},
+                  "pose_ref": req.pose_ref_id, "sanitised": sanitised},
         )
 
     jid = generate.start_job(label, run)

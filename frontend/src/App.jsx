@@ -51,22 +51,22 @@ export default function App() {
   const [withPose, setWithPose] = useState(false)
   const [job, setJob] = useState(null)
   const [wardrobe, setWardrobe] = useState([])
-  const [poseLib, setPoseLib] = useState([])
+  const [poseRefs, setPoseRefs] = useState([])
   const [outfit, setOutfit] = useState('')     // selected wardrobe id
-  const [poseId, setPoseId] = useState('')      // selected pose id
+  const [poseRef, setPoseRef] = useState('')    // selected pose-reference id
   const [stamp, setStamp] = useState(0)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState(null)
 
   const refresh = useCallback(async () => {
-    const [p, r, g, pl, rf, b, wd, plib] = await Promise.all([
+    const [p, r, g, pl, rf, b, wd, pr] = await Promise.all([
       api.get('/api/parts'), api.get('/api/runs'),
       api.get('/api/gallery'), api.get('/api/poses'), api.get('/api/refs'),
-      api.get('/api/bio'), api.get('/api/wardrobe'), api.get('/api/pose-library'),
+      api.get('/api/bio'), api.get('/api/wardrobe'), api.get('/api/pose-refs'),
     ])
     setParts(p.parts); setRuns(r.runs); setGallery(g); setPoses(pl.poses)
     setAvailRefs(rf.refs); setBio(b)
-    setWardrobe(wd.wardrobe); setPoseLib(plib.poses)
+    setWardrobe(wd.wardrobe); setPoseRefs(pr.pose_refs)
   }, [])
 
   useEffect(() => { refresh().catch((e) => setErr(String(e))) }, [refresh])
@@ -114,7 +114,7 @@ export default function App() {
       if (withPose) await savePose()
       const { job: jid } = await api.send('/api/shot', 'POST', {
         brief, aspect: '3:4',
-        wardrobe_id: outfit || null, pose_id: poseId || null,
+        wardrobe_id: outfit || null, pose_ref_id: poseRef || null,
       })
       // Poll live status until done, so the user sees stage + elapsed time
       // instead of a dead button.
@@ -189,40 +189,55 @@ export default function App() {
             onChange={(e) => setBrief(e.target.value)}
           />
 
-          <div className="controls">
-            <div className="ctl">
-              <label className="clab">Pose</label>
-              <select value={poseId} onChange={(e) => setPoseId(e.target.value)}>
-                <option value="">— from the brief —</option>
-                {poseLib.filter((p) => p.id).map((p) => (
-                  <option key={p.id} value={p.id}>{p.id.replace(/-/g, ' ')}</option>
-                ))}
-              </select>
-            </div>
-            <div className="ctl grow">
-              <label className="clab">Wardrobe (outfit reference → @image2)</label>
-              <div className="wardrobe-strip">
-                <button className={`wcard ${!outfit ? 'on' : ''}`} onClick={() => setOutfit('')}>
-                  <div className="wnone">brief / default</div>
+          <div className="ctl">
+            <label className="clab">Wardrobe (outfit reference → @image2)</label>
+            <div className="wardrobe-strip">
+              <button className={`wcard ${!outfit ? 'on' : ''}`} onClick={() => setOutfit('')}>
+                <div className="wnone">brief / default</div>
+              </button>
+              {wardrobe.map((w) => (
+                <button key={w.id} className={`wcard ${outfit === w.id ? 'on' : ''}`}
+                  onClick={() => setOutfit(w.id)} title={w.id}>
+                  <img alt={w.id} src={`/api/wardrobe/${w.file}/file`} />
+                  <span>{w.id}</span>
                 </button>
-                {wardrobe.map((w) => (
-                  <button key={w.id} className={`wcard ${outfit === w.id ? 'on' : ''}`}
-                    onClick={() => setOutfit(w.id)} title={w.id}>
-                    <img alt={w.id} src={`/api/wardrobe/${w.file}/file`} />
-                    <span>{w.id}</span>
-                  </button>
-                ))}
-                <label className="wcard upl" title="upload an outfit reference">
-                  + outfit
-                  <input type="file" accept="image/*" hidden onChange={async (e) => {
-                    const f = e.target.files?.[0]; if (!f) return
-                    const fd = new FormData(); fd.append('file', f)
-                    const r = await fetch('/api/wardrobe/upload', { method: 'POST', body: fd })
-                    if (!r.ok) setErr((await r.text()).slice(0, 200)); else await refresh()
-                    e.target.value = ''
-                  }} />
-                </label>
-              </div>
+              ))}
+              <label className="wcard upl" title="upload an outfit reference">
+                + outfit
+                <input type="file" accept="image/*" hidden onChange={async (e) => {
+                  const f = e.target.files?.[0]; if (!f) return
+                  const fd = new FormData(); fd.append('file', f)
+                  const r = await fetch('/api/wardrobe/upload', { method: 'POST', body: fd })
+                  if (!r.ok) setErr((await r.text()).slice(0, 200)); else await refresh()
+                  e.target.value = ''
+                }} />
+              </label>
+            </div>
+          </div>
+
+          <div className="ctl">
+            <label className="clab">Pose reference (her pose/head → @image3) — steers pose without rotating</label>
+            <div className="wardrobe-strip">
+              <button className={`wcard ${!poseRef ? 'on' : ''}`} onClick={() => setPoseRef('')}>
+                <div className="wnone">none</div>
+              </button>
+              {poseRefs.map((w) => (
+                <button key={w.id} className={`wcard ${poseRef === w.id ? 'on' : ''}`}
+                  onClick={() => setPoseRef(w.id)} title={w.id}>
+                  <img alt={w.id} src={`/api/pose-refs/${w.file}/file`} />
+                  <span>{w.id}</span>
+                </button>
+              ))}
+              <label className="wcard upl" title="upload a pose reference of her">
+                + pose
+                <input type="file" accept="image/*" hidden onChange={async (e) => {
+                  const f = e.target.files?.[0]; if (!f) return
+                  const fd = new FormData(); fd.append('file', f)
+                  const r = await fetch('/api/pose-refs/upload', { method: 'POST', body: fd })
+                  if (!r.ok) setErr((await r.text()).slice(0, 200)); else await refresh()
+                  e.target.value = ''
+                }} />
+              </label>
             </div>
           </div>
 
@@ -232,7 +247,7 @@ export default function App() {
             </button>
             <button className="ghost" onClick={async () => {
               const p = await api.send('/api/shot/preview', 'POST',
-                { brief, wardrobe_id: outfit || null, pose_id: poseId || null })
+                { brief, wardrobe_id: outfit || null })
               setShotPrompt(p)
             }}>preview prompt</button>
           </div>
@@ -561,6 +576,12 @@ export default function App() {
                             await api.send('/api/wardrobe/from-run', 'POST', { run_id: r.id, name })
                             await refresh()
                           }}>→ wardrobe</button>
+                          <button onClick={async () => {
+                            const name = window.prompt('Save this as a pose reference named:', '')
+                            if (!name) return
+                            await api.send('/api/pose-refs/from-run', 'POST', { run_id: r.id, name })
+                            await refresh()
+                          }}>→ pose ref</button>
                           {/* No "-> gallery" here on purpose: the gallery is
                               seeded only from data/refs, so our own output can
                               never become the yardstick it is measured against. */}
