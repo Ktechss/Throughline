@@ -400,6 +400,86 @@ def _slop_hits(text: str) -> list[str]:
     return hits
 
 
+SHOT_TYPES = {
+    "candid": "Candid iPhone photo",
+    "editorial": "Editorial photo",
+    "luxury": "Luxury lifestyle photo",
+    "street": "Street style photo",
+}
+
+# Pose library, ported from ai-influencer's POSE_MAP — text pose descriptions
+# someone tuned until they reliably produce each stance. These are the primary
+# pose direction; the reference images carry identity, the pose text carries the
+# body. "" = let the brief describe the pose.
+POSES_LIBRARY = {
+    "": "",
+    "front": "Facing the camera directly, confident and composed",
+    "walking": "Mid-stride, walking naturally, not looking at the camera",
+    "over-shoulder": "Body turned away from camera, looking back over the shoulder",
+    "mid-turn": "Caught mid-turn as if just hearing her name called — body still "
+                "turning, head looking back",
+    "hip-pop": "Natural S-curve with one hip shifted out to the side",
+    "triangle": "One hand on hip, natural triangle shape with the arm, relaxed pose",
+    "lean": "Leaning casually against a wall or surface, relaxed and at ease",
+    "hands-pockets": "Hands in pockets, relaxed and natural, not performing",
+    "long-line": "Tall elegant pose, one leg extended forward, long clean line "
+                 "through the body",
+    "handheld-selfie": "Handheld selfie — one arm extended toward the camera "
+                       "holding the phone, looking into the front lens, the face "
+                       "filling much of the frame",
+    "seated-casual": "Seated casually, relaxed and natural",
+    "seated-crossed": "Seated cross-legged, comfortable and grounded",
+    "seated-lean": "Seated and leaning slightly forward, relaxed and engaged",
+}
+
+
+def compose_tagged(brief: str, *, pose_text: str = "", has_wardrobe: bool = False,
+                   n_skin: int = 0, shot_type: str = "candid",
+                   realism: bool = True) -> tuple[str, list[dict]]:
+    """The ai-influencer technique, ported and validated on fal gpt-image-2.
+
+    SHORT and DIRECTIVE. The references carry WHO she is; the prompt only says
+    what is happening and points at each reference by role. This is the opposite
+    of the long-BIO prompt, and it matches our own measurement that describing
+    her hurts (0.531 vs 0.860). Their doctrine, verbatim: "this is an edit, not a
+    generation. Prompt is short and directive. Do not re-describe the refs."
+
+    Reference roles, by position in image_urls (the caller MUST attach in this
+    order):
+      @image1 = face / identity          (always)
+      @image2 = wardrobe outfit           (if has_wardrobe) — "reproduce exactly"
+      @image3, @image4 = skin close-ups   (if n_skin)
+
+    Validated: @image1 held identity at 0.825 while @image2 transferred a leather
+    jacket into a new scene. The @image convention works on fal.
+    """
+    opener = SHOT_TYPES.get(shot_type, SHOT_TYPES["candid"])
+    parts_out = [f"{opener} of @image1. {brief.strip()}"]
+
+    if pose_text:
+        parts_out.append(pose_text.strip().rstrip(".") + ".")
+
+    if has_wardrobe:
+        # The fix for the wardrobe leak: the outfit comes from its OWN reference,
+        # not fought via text. Their exact directive, which measured well.
+        parts_out.append(
+            "She is wearing the complete outfit from @image2 — reproduce every "
+            "item exactly as shown: all clothing and accessories must match the "
+            "reference.")
+
+    if n_skin >= 2:
+        parts_out.append("Match skin texture and facial detail from @image3 and @image4.")
+    elif n_skin == 1:
+        parts_out.append("Match skin texture and facial detail from @image3.")
+
+    if realism:
+        parts_out.append(
+            "Real skin texture with visible pores and natural imperfections, no "
+            "retouching. Shot on a phone, not a professional camera.")
+
+    return sanitise(" ".join(parts_out))
+
+
 def compose_shot(parts: list[Part], brief: str, *, has_reference: bool = True,
                  pose_note: str = "") -> str:
     """BIO + one shot brief. This is the whole prompting surface.

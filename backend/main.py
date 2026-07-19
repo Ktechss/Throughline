@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
 from . import gate, generate, prompt as promptlib, skeleton
-from .config import IMAGES, PARTS_PATH, POSES, REFS, ROOT, STATE
+from .config import IMAGES, PARTS_PATH, POSES, REFS, ROOT, STATE, WARDROBE
 
 app = FastAPI(title="eve1")
 
@@ -434,12 +434,75 @@ def set_bio_ref(req: BioRefReq):
     return {"reference": Path(req.reference).name}
 
 
+# ---------------------------------------------------------------- wardrobe
+
+def _wardrobe() -> list[dict]:
+    out = []
+    for p in sorted(WARDROBE.iterdir()) if WARDROBE.exists() else []:
+        if p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
+            out.append({"id": p.stem, "file": p.name})
+    return out
+
+
+@app.get("/api/wardrobe")
+def list_wardrobe():
+    return {"wardrobe": _wardrobe()}
+
+
+@app.post("/api/wardrobe/upload")
+async def wardrobe_upload(file: UploadFile = File(...)):
+    """An outfit is saved as a reference image. It becomes @image2 on any shot
+    that selects it, with a 'reproduce exactly' directive — the fix for the
+    wardrobe leak, since the outfit now comes from its own reference rather than
+    losing a text tug-of-war with the identity photo."""
+    dest = WARDROBE / Path(file.filename).name
+    dest.write_bytes(await file.read())
+    return {"id": dest.stem, "file": dest.name}
+
+
+@app.post("/api/wardrobe/from-run")
+def wardrobe_from_run(payload: dict = Body(...)):
+    """Promote a generated image to a saved outfit — its wardrobe becomes
+    reusable. (The image's identity is irrelevant here; only the clothing is
+    used, via @image2.)"""
+    run_id, name = payload["run_id"], payload["name"]
+    row = next((r for r in generate.all_runs() if r["id"] == run_id), None)
+    if not row:
+        raise HTTPException(404, run_id)
+    safe = "".join(c for c in name if c.isalnum() or c in "-_") or run_id
+    dest = WARDROBE / f"{safe}.png"
+    shutil.copy2(IMAGES / row["file"], dest)
+    return {"id": dest.stem, "file": dest.name}
+
+
+@app.get("/api/wardrobe/{name}/file")
+def wardrobe_file(name: str):
+    p = WARDROBE / Path(name).name
+    if not p.exists():
+        raise HTTPException(404, name)
+    return FileResponse(p)
+
+
+@app.delete("/api/wardrobe/{name}")
+def wardrobe_delete(name: str):
+    (WARDROBE / Path(name).name).unlink(missing_ok=True)
+    return {"ok": True}
+
+
+@app.get("/api/pose-library")
+def list_pose_library():
+    return {"poses": [{"id": k, "text": v} for k, v in promptlib.POSES_LIBRARY.items()]}
+
+
 class ShotReq(BaseModel):
     brief: str = ""              # the ONLY thing the user writes
     pose_name: str | None = None
     use_pose_image: bool = False
     aspect: str = "3:4"
     seed: int | None = None
+    wardrobe_id: str | None = None   # attach this saved outfit as @image2
+    pose_id: str | None = None       # a pose from the library
+    shot_type: str = "candid"
 
 
 @app.post("/api/shot")
@@ -455,32 +518,43 @@ def shot(req: ShotReq):
     reference is a photo of a stranger, and that should not be one forgotten
     checkbox away.
     """
-    parts = _load_parts()
-    refs = _bio_refs()
-    if not refs:
+    # Reference order defines the @image tags: @image1 = face (always).
+    face = REFS / _bio_ref()
+    if not face.exists():
         raise HTTPException(400, "no BIO reference set — import one on the face tab")
-    pose_file, pose_note = None, ""
-    if req.pose_name:
-        pose = _load_pose(req.pose_name)
-        pose_note = skeleton.describe(pose)
-        if req.use_pose_image:
-            pose_file = POSES / f"{pose.name}.png"
-            skeleton.save(pose, pose_file)
-            refs.append(pose_file)
+    refs = [face]
 
-    text, sanitised = promptlib.compose_shot_ex(parts, req.brief, has_reference=True,
-                                                pose_note=pose_note)
-    session = generate.new_session(req.brief.strip()[:60] or "untitled shot")
+    has_wardrobe = False
+    if req.wardrobe_id:
+        w = WARDROBE / f"{req.wardrobe_id}.png"
+        if not w.exists():
+            raise HTTPException(400, f"no such wardrobe: {req.wardrobe_id}")
+        refs.append(w)          # @image2 = outfit
+        has_wardrobe = True
+    else:
+        # No outfit chosen: fall back to the body reference for build (@image2).
+        cfg = _bio_cfg()
+        body = REFS / cfg["body_reference"]
+        if body.exists():
+            refs.append(body)
+
+    pose_text = promptlib.POSES_LIBRARY.get(req.pose_id or "", "")
+    text, sanitised = promptlib.compose_tagged(
+        req.brief, pose_text=pose_text, has_wardrobe=has_wardrobe,
+        shot_type=req.shot_type)
+    label = req.brief.strip()[:60] or "untitled shot"
+    session = generate.new_session(label)
 
     def run(job: dict) -> dict:
         return generate.generate(
-            prompt=text, system=promptlib.SYSTEM, refs=refs, aspect=req.aspect,
-            seed=req.seed, pose_file=pose_file, session=session, progress=job,
+            prompt=text, system="", refs=refs, aspect=req.aspect,
+            seed=req.seed, session=session, progress=job,
             meta={"brief": req.brief, "bio_references": [p.name for p in refs],
-                  "pose": req.pose_name, "sanitised": sanitised},
+                  "wardrobe": req.wardrobe_id, "pose_id": req.pose_id,
+                  "sanitised": sanitised},
         )
 
-    jid = generate.start_job(req.brief.strip()[:60] or "untitled shot", run)
+    jid = generate.start_job(label, run)
     return {"job": jid, "sanitised": sanitised}
 
 
@@ -494,20 +568,24 @@ def job(jid: str):
 
 class ShotPreviewReq(BaseModel):
     brief: str = ""
-    pose_name: str | None = None
+    wardrobe_id: str | None = None
+    pose_id: str | None = None
+    shot_type: str = "candid"
 
 
 @app.post("/api/shot/preview")
 def shot_preview(req: ShotPreviewReq):
-    parts = _load_parts()
-    pose_note = skeleton.describe(_load_pose(req.pose_name)) if req.pose_name else ""
-    has_ref = (REFS / _bio_ref()).exists()
-    text, sanitised = promptlib.compose_shot_ex(parts, req.brief, has_reference=has_ref,
-                                                pose_note=pose_note)
-    return {"prompt": text, "system": promptlib.SYSTEM, "chars": len(text),
-            "reference": _bio_ref() if has_ref else None,
-            "sanitised": sanitised,
-            "lint": promptlib.lint(parts, has_reference=has_ref)}
+    pose_text = promptlib.POSES_LIBRARY.get(req.pose_id or "", "")
+    text, sanitised = promptlib.compose_tagged(
+        req.brief, pose_text=pose_text, has_wardrobe=bool(req.wardrobe_id),
+        shot_type=req.shot_type)
+    tags = ["@image1 = face"]
+    if req.wardrobe_id:
+        tags.append(f"@image2 = outfit ({req.wardrobe_id})")
+    else:
+        tags.append("@image2 = body/build")
+    return {"prompt": text, "chars": len(text), "reference": _bio_ref(),
+            "image_tags": tags, "sanitised": sanitised}
 
 
 @app.get("/api/health")

@@ -12,6 +12,7 @@ load_dotenv(ROOT / ".env")
 DATA = ROOT / "data"
 IMAGES = DATA / "images"          # generated images
 REFS = DATA / "refs"              # identity references — the face we're holding
+WARDROBE = DATA / "wardrobe"      # outfit reference images (@image2 per shot)
 POSES = DATA / "poses"            # saved skeletons
 STATE = DATA / "state"            # part tree, gallery, threshold
 
@@ -22,7 +23,7 @@ THRESHOLD_PATH = STATE / "threshold.json"
 PARTS_PATH = STATE / "parts.json"
 RUNS_PATH = STATE / "runs.json"
 
-for d in (IMAGES, REFS, POSES, STATE):
+for d in (IMAGES, REFS, WARDROBE, POSES, STATE):
     d.mkdir(parents=True, exist_ok=True)
 
 # fal endpoints. Local inference is off the table — an 8GB laptop GPU cannot run
