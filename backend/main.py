@@ -497,6 +497,54 @@ async def wardrobe_upload(file: UploadFile = File(...)):
     return {"id": dest.stem, "file": dest.name}   # saved as-is, never rotated
 
 
+class OutfitCreateReq(BaseModel):
+    name: str
+    outfit: str          # free text: "white crop top, baggy jeans, strappy heels"
+
+
+@app.post("/api/wardrobe/create")
+def wardrobe_create(req: OutfitCreateReq):
+    """Generate the outfit ONTO her as a clean white-studio reference.
+
+    This is the ai-influencer technique for good wardrobe: instead of uploading
+    an arbitrary outfit photo (which drags in a stranger's face, a scene, and a
+    conflicting framing), we generate HER wearing the outfit on plain white — a
+    clean swatch. Used later as @image2, it injects only the clothing, because
+    that is all that varies from her own references.
+
+    Identity comes from her face + body references; the prompt changes only the
+    outfit and pins the background to white so nothing else leaks.
+    """
+    face = REFS / _bio_ref()
+    if not face.exists():
+        raise HTTPException(400, "no BIO reference set")
+    refs = [face]
+    body = REFS / _bio_cfg()["body_reference"]
+    if body.exists():
+        refs.append(body)
+
+    safe = "".join(c for c in req.name if c.isalnum() or c in "-_ ").strip() or "outfit"
+    prompt = (
+        f"Full-body studio photograph of @image1 standing and facing the camera "
+        f"on a plain white seamless studio background, soft even lighting, her "
+        f"whole outfit visible head to toe. She is wearing: {req.outfit}. Change "
+        f"ONLY her clothing to this outfit; keep her face, body, proportions, "
+        f"skin and hair exactly as in the references. Photorealistic, real skin "
+        f"texture, no retouching.")
+
+    def run(job: dict) -> dict:
+        row = generate.generate(prompt=prompt, system="", refs=refs, aspect="3:4",
+                                session=generate.new_session(f"create outfit: {safe}"),
+                                progress=job, meta={"outfit_create": req.outfit})
+        # Save the generated image as a clean wardrobe reference.
+        shutil.copy2(IMAGES / row["file"], WARDROBE / f"{safe}.png")
+        row["wardrobe_saved"] = safe
+        return row
+
+    jid = generate.start_job(f"create outfit: {safe}", run)
+    return {"job": jid}
+
+
 @app.post("/api/wardrobe/from-run")
 def wardrobe_from_run(payload: dict = Body(...)):
     """Promote a generated image to a saved outfit — its wardrobe becomes

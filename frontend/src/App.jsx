@@ -53,6 +53,7 @@ export default function App() {
   const [wardrobe, setWardrobe] = useState([])
   const [poseRefs, setPoseRefs] = useState([])
   const [outfit, setOutfit] = useState('')     // selected wardrobe id
+  const [outfitText, setOutfitText] = useState('')  // create-outfit text
   const [poseRef, setPoseRef] = useState('')    // selected pose-reference id
   const [stamp, setStamp] = useState(0)
   const [busy, setBusy] = useState(false)
@@ -191,6 +192,23 @@ export default function App() {
 
           <div className="ctl">
             <label className="clab">Wardrobe (outfit reference → @image2)</label>
+            <div className="row" style={{ marginBottom: 8 }}>
+              <input className="grow" placeholder="Create an outfit from text — e.g. 'red satin slip dress, strappy heels, gold hoops'"
+                value={outfitText} onChange={(e) => setOutfitText(e.target.value)} />
+              <button disabled={busy || !outfitText.trim()} onClick={async () => {
+                const name = window.prompt('Name this outfit:', '')
+                if (!name) return
+                setJob({ stage: 'starting', elapsed: 0 })
+                try {
+                  const { job: jid } = await api.send('/api/wardrobe/create', 'POST', { name, outfit: outfitText })
+                  for (;;) {
+                    await new Promise((r) => setTimeout(r, 1500))
+                    const st = await api.get(`/api/jobs/${jid}`); setJob(st)
+                    if (st.done) { if (st.error) setErr(st.error); setOutfitText(''); await refresh(); break }
+                  }
+                } catch (e) { setErr(String(e)) } finally { setJob(null) }
+              }}>create outfit</button>
+            </div>
             <div className="wardrobe-strip">
               <button className={`wcard ${!outfit ? 'on' : ''}`} onClick={() => setOutfit('')}>
                 <div className="wnone">brief / default</div>
