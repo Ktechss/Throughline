@@ -563,7 +563,11 @@ async def pose_ref_upload(file: UploadFile = File(...)):
     except (gate.NoFaceFound, ValueError):
         dest.unlink(missing_ok=True)
         raise HTTPException(400, "no face in the pose reference — it must show her") from None
-    return {"id": dest.stem, "file": dest.name}
+    # Level the head: a pose ref conveys yaw/pitch + expression, which we keep;
+    # its ROLL is an accidental tilt that leaks into every shot using it. Remove
+    # the roll, keep the pose.
+    leveled = level_ref_head(dest)
+    return {"id": dest.stem, "file": dest.name, "leveled": leveled}
 
 
 @app.post("/api/pose-refs/from-run")
@@ -575,7 +579,8 @@ def pose_ref_from_run(payload: dict = Body(...)):
     safe = "".join(c for c in name if c.isalnum() or c in "-_") or run_id
     dest = POSE_REFS / f"{safe}.png"
     shutil.copy2(IMAGES / row["file"], dest)
-    return {"id": dest.stem, "file": dest.name}
+    leveled = level_ref_head(dest)
+    return {"id": dest.stem, "file": dest.name, "leveled": leveled}
 
 
 @app.get("/api/pose-refs/{name}/file")
