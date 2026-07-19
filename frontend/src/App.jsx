@@ -260,11 +260,16 @@ export default function App() {
           </div>
 
           <div className="row">
-            <button className="gen" disabled={busy || !bio?.reference} onClick={shoot}>
+            <button className="gen"
+              disabled={busy || !bio?.reference || (!brief.trim() && !outfit && !poseRef)}
+              onClick={shoot}>
               {busy ? 'generating…' : 'generate'}
             </button>
             <span className="active-sel">
               outfit: <b>{outfit || 'none'}</b> · pose ref: <b>{poseRef || 'none'}</b>
+              {!brief.trim() && !outfit && !poseRef && (
+                <em style={{ color: 'var(--warn)' }}> — type a scene or pick an outfit/pose first</em>
+              )}
             </span>
             <button className="ghost" onClick={async () => {
               const p = await api.send('/api/shot/preview', 'POST',
