@@ -245,12 +245,23 @@ export default function App() {
             <button className="gen" disabled={busy || !bio?.reference} onClick={shoot}>
               {busy ? 'generating…' : 'generate'}
             </button>
+            <span className="active-sel">
+              outfit: <b>{outfit || 'none'}</b> · pose ref: <b>{poseRef || 'none'}</b>
+            </span>
             <button className="ghost" onClick={async () => {
               const p = await api.send('/api/shot/preview', 'POST',
                 { brief, wardrobe_id: outfit || null })
               setShotPrompt(p)
             }}>preview prompt</button>
           </div>
+          {!outfit && /\b(outfit|wardrobe|wearing|dress|jacket|clothes|change.*(clothe|outfit|dress))\b/i.test(brief) && (
+            <div className="lint warn">
+              Your brief mentions clothing, but no outfit is selected. Text can't
+              change her outfit — click an outfit card in the <b>wardrobe</b> strip
+              above (it turns blue). The outfit comes from the reference image, not
+              the words.
+            </div>
+          )}
 
           {job && (
             <div className="progress">

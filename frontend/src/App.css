@@ -169,3 +169,6 @@ select, input[type=text], .row input:not([type=checkbox]) {
 .wcard span { padding: 3px 2px; text-align: center; overflow-wrap: anywhere; line-height: 1.1; }
 .wcard .wnone { padding: 6px; color: var(--dim); text-align: center; }
 .wcard.upl { border-style: dashed; color: var(--dim); }
+
+.active-sel { font-size: 12px; color: var(--dim); }
+.active-sel b { color: var(--fg); }
