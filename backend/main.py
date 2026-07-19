@@ -494,8 +494,7 @@ async def wardrobe_upload(file: UploadFile = File(...)):
     losing a text tug-of-war with the identity photo."""
     dest = WARDROBE / Path(file.filename).name
     dest.write_bytes(await file.read())
-    leveled = level_ref_head(dest)   # so the outfit ref doesn't leak head tilt
-    return {"id": dest.stem, "file": dest.name, "leveled": leveled}
+    return {"id": dest.stem, "file": dest.name}   # saved as-is, never rotated
 
 
 @app.post("/api/wardrobe/from-run")
@@ -510,8 +509,7 @@ def wardrobe_from_run(payload: dict = Body(...)):
     safe = "".join(c for c in name if c.isalnum() or c in "-_") or run_id
     dest = WARDROBE / f"{safe}.png"
     shutil.copy2(IMAGES / row["file"], dest)
-    leveled = level_ref_head(dest)
-    return {"id": dest.stem, "file": dest.name, "leveled": leveled}
+    return {"id": dest.stem, "file": dest.name}   # saved as-is, never rotated
 
 
 @app.get("/api/wardrobe/{name}/file")
@@ -563,11 +561,7 @@ async def pose_ref_upload(file: UploadFile = File(...)):
     except (gate.NoFaceFound, ValueError):
         dest.unlink(missing_ok=True)
         raise HTTPException(400, "no face in the pose reference — it must show her") from None
-    # Level the head: a pose ref conveys yaw/pitch + expression, which we keep;
-    # its ROLL is an accidental tilt that leaks into every shot using it. Remove
-    # the roll, keep the pose.
-    leveled = level_ref_head(dest)
-    return {"id": dest.stem, "file": dest.name, "leveled": leveled}
+    return {"id": dest.stem, "file": dest.name}   # saved as-is, never rotated
 
 
 @app.post("/api/pose-refs/from-run")
@@ -579,8 +573,7 @@ def pose_ref_from_run(payload: dict = Body(...)):
     safe = "".join(c for c in name if c.isalnum() or c in "-_") or run_id
     dest = POSE_REFS / f"{safe}.png"
     shutil.copy2(IMAGES / row["file"], dest)
-    leveled = level_ref_head(dest)
-    return {"id": dest.stem, "file": dest.name, "leveled": leveled}
+    return {"id": dest.stem, "file": dest.name}   # saved as-is, never rotated
 
 
 @app.get("/api/pose-refs/{name}/file")
