@@ -436,6 +436,28 @@ def set_bio_ref(req: BioRefReq):
 
 # ---------------------------------------------------------------- wardrobe
 
+def level_ref_head(path: Path) -> float:
+    """Rotate a reference image in place so the head is level. Returns degrees.
+
+    A reference leaks its head tilt into every output (that is the whole
+    mechanism). The face and body references were already leveled; an outfit
+    reference is just another leak source. Expand + fill (no crop) so the full
+    garment survives — this is a reference the model reads, not a delivered
+    image, so filled corners are harmless.
+    """
+    from PIL import Image
+    try:
+        f = gate.analyze(path)
+    except (gate.NoFaceFound, ValueError):
+        return 0.0
+    if abs(f.roll) < 1.0:
+        return 0.0
+    im = Image.open(path).convert("RGB")
+    im.rotate(f.roll, resample=Image.BICUBIC, expand=True,
+              fillcolor=(245, 245, 245)).save(path)
+    return round(f.roll, 1)
+
+
 def _wardrobe() -> list[dict]:
     out = []
     for p in sorted(WARDROBE.iterdir()) if WARDROBE.exists() else []:
@@ -457,7 +479,8 @@ async def wardrobe_upload(file: UploadFile = File(...)):
     losing a text tug-of-war with the identity photo."""
     dest = WARDROBE / Path(file.filename).name
     dest.write_bytes(await file.read())
-    return {"id": dest.stem, "file": dest.name}
+    leveled = level_ref_head(dest)   # so the outfit ref doesn't leak head tilt
+    return {"id": dest.stem, "file": dest.name, "leveled": leveled}
 
 
 @app.post("/api/wardrobe/from-run")
@@ -472,7 +495,8 @@ def wardrobe_from_run(payload: dict = Body(...)):
     safe = "".join(c for c in name if c.isalnum() or c in "-_") or run_id
     dest = WARDROBE / f"{safe}.png"
     shutil.copy2(IMAGES / row["file"], dest)
-    return {"id": dest.stem, "file": dest.name}
+    leveled = level_ref_head(dest)
+    return {"id": dest.stem, "file": dest.name, "leveled": leveled}
 
 
 @app.get("/api/wardrobe/{name}/file")
