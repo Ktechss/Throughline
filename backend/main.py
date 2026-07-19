@@ -502,6 +502,33 @@ class OutfitCreateReq(BaseModel):
     outfit: str          # free text: "white crop top, baggy jeans, strappy heels"
 
 
+def _clean_outfit_text(text: str) -> str:
+    """Strip ChatGPT chat-wrapper noise from a pasted outfit description.
+
+    Users paste from a chat that adds a preamble ("Here's a polished Full Look
+    Description suitable for..."), markdown headings (### ...), and dividers
+    (---). None of that is the outfit; some of it ("suitable for an AI character
+    model") can even confuse the image model. Keep only the descriptive prose.
+    """
+    import re
+    lines = []
+    for ln in text.splitlines():
+        s = ln.strip()
+        if not s:
+            continue
+        if s.startswith("#") or set(s) <= {"-", "*", "_", " "}:   # heading / rule
+            continue
+        low = s.lower()
+        # A leading meta sentence: "Here's a ...:" / "... description:" with no
+        # real content after the colon on the same line.
+        if (low.startswith(("here's", "here is", "sure", "certainly"))
+                or low.rstrip(":").endswith(("description", "full look",
+                                             "look description"))) and s.endswith(":"):
+            continue
+        lines.append(re.sub(r"\*\*|\*|`", "", s))   # drop bold/italic marks
+    return " ".join(lines).strip() or text.strip()
+
+
 @app.post("/api/wardrobe/create")
 def wardrobe_create(req: OutfitCreateReq):
     """Generate the outfit ONTO her as a clean white-studio reference.
@@ -524,6 +551,7 @@ def wardrobe_create(req: OutfitCreateReq):
         refs.append(body)
 
     safe = "".join(c for c in req.name if c.isalnum() or c in "-_ ").strip() or "outfit"
+    outfit = _clean_outfit_text(req.outfit)   # strip pasted chat/markdown noise
     # A 4-panel turnaround SHEET, ported from ai-influencer's buildWardrobePrompt.
     # The outfit is shown from front/side/back/3q, so the reference knows the
     # garment from every angle — essential when she is turned in a scene.
@@ -539,7 +567,7 @@ def wardrobe_create(req: OutfitCreateReq):
         "The woman is @image1 — replicate her face, bone structure, skin, hair "
         "and body proportions exactly in every panel; unmistakably the same "
         "person. Identical outfit, proportions, stance and lighting across all "
-        f"four panels.\n\nShe is wearing: {req.outfit}. Change ONLY the clothing "
+        f"four panels.\n\nShe is wearing: {outfit}. Change ONLY the clothing "
         "to this outfit.\n\nPhotorealistic RAW photograph quality, real skin "
         "texture, ultra-sharp detail.")
 
