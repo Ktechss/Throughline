@@ -459,6 +459,20 @@ def level_ref_head(path: Path) -> float:
     return round(f.roll, 1)
 
 
+def _find_by_id(directory: Path, ident: str) -> Path | None:
+    """Resolve a saved reference by its id (stem) across ANY image extension.
+
+    Uploads keep their original extension (.jpg, .webp, …); saves-from-run are
+    .png. Assuming .png at lookup time was a bug — a .jpg outfit selected fine in
+    the UI but 404'd on generate.
+    """
+    for ext in (".png", ".jpg", ".jpeg", ".webp"):
+        p = directory / f"{ident}{ext}"
+        if p.exists():
+            return p
+    return None
+
+
 def _wardrobe() -> list[dict]:
     out = []
     for p in sorted(WARDROBE.iterdir()) if WARDROBE.exists() else []:
@@ -611,8 +625,8 @@ def shot(req: ShotReq):
 
     has_wardrobe = False
     if req.wardrobe_id:
-        w = WARDROBE / f"{req.wardrobe_id}.png"
-        if not w.exists():
+        w = _find_by_id(WARDROBE, req.wardrobe_id)
+        if not w:
             raise HTTPException(400, f"no such wardrobe: {req.wardrobe_id}")
         refs.append(w)          # @image2 = outfit
         has_wardrobe = True
@@ -626,8 +640,8 @@ def shot(req: ShotReq):
     # @image3 = pose reference (her, in the desired pose/head orientation).
     pose_ref_tag = ""
     if req.pose_ref_id:
-        pr = POSE_REFS / f"{req.pose_ref_id}.png"
-        if not pr.exists():
+        pr = _find_by_id(POSE_REFS, req.pose_ref_id)
+        if not pr:
             raise HTTPException(400, f"no such pose reference: {req.pose_ref_id}")
         refs.append(pr)
         pose_ref_tag = "@image3"
