@@ -524,18 +524,31 @@ def wardrobe_create(req: OutfitCreateReq):
         refs.append(body)
 
     safe = "".join(c for c in req.name if c.isalnum() or c in "-_ ").strip() or "outfit"
+    # A 4-panel turnaround SHEET, ported from ai-influencer's buildWardrobePrompt.
+    # The outfit is shown from front/side/back/3q, so the reference knows the
+    # garment from every angle — essential when she is turned in a scene.
     prompt = (
-        f"Full-body studio photograph of @image1 standing and facing the camera "
-        f"on a plain white seamless studio background, soft even lighting, her "
-        f"whole outfit visible head to toe. She is wearing: {req.outfit}. Change "
-        f"ONLY her clothing to this outfit; keep her face, body, proportions, "
-        f"skin and hair exactly as in the references. Photorealistic, real skin "
-        f"texture, no retouching.")
+        "Professional full-body character turnaround sheet. Pure white seamless "
+        "background throughout. Soft neutral studio lighting, perfectly flat and "
+        "even across all four panels, no shadows, no colour cast.\n\n"
+        "A single row of FOUR equally sized full-body panels, each with a small "
+        "label in clean sans-serif capitals above the figure: "
+        '"FRONT VIEW" | "SIDE VIEW" | "BACK VIEW" | "THREE-QUARTER VIEW". '
+        "Panel 1 front-facing, panel 2 exact side profile, panel 3 facing "
+        "directly away, panel 4 at a 45-degree three-quarter angle.\n\n"
+        "The woman is @image1 — replicate her face, bone structure, skin, hair "
+        "and body proportions exactly in every panel; unmistakably the same "
+        "person. Identical outfit, proportions, stance and lighting across all "
+        f"four panels.\n\nShe is wearing: {req.outfit}. Change ONLY the clothing "
+        "to this outfit.\n\nPhotorealistic RAW photograph quality, real skin "
+        "texture, ultra-sharp detail.")
 
     def run(job: dict) -> dict:
-        row = generate.generate(prompt=prompt, system="", refs=refs, aspect="3:4",
+        row = generate.generate(prompt=prompt, system="", refs=refs, aspect="16:9",
                                 session=generate.new_session(f"create outfit: {safe}"),
-                                progress=job, meta={"outfit_create": req.outfit})
+                                progress=job, meta={"outfit_create": req.outfit},
+                                # Wide canvas so four full-body panels fit side by side.
+                                extra={"image_size": {"width": 1536, "height": 1024}})
         # Save the generated image as a clean wardrobe reference.
         shutil.copy2(IMAGES / row["file"], WARDROBE / f"{safe}.png")
         row["wardrobe_saved"] = safe
