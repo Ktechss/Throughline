@@ -4,6 +4,7 @@ import Shoot from '@/components/eve/Shoot'
 import Bio from '@/components/eve/Bio'
 import Review from '@/components/eve/Review'
 import Calibrate from '@/components/eve/Calibrate'
+import VideoStudio from '@/components/eve/VideoStudio'
 import OriginModal from '@/components/eve/OriginModal'
 import OutfitDrawer from '@/components/eve/OutfitDrawer'
 import { api, genView, mergeOutfit, STAGE } from '@/lib/eve'
@@ -38,18 +39,22 @@ export default function App() {
   const [poseLibrary, setPoseLibrary] = useState([])         // { id, text } presets
   const [bodies, setBodies] = useState([])                   // saved body-type library
   const [stats, setStats] = useState(null)                   // approval analytics + gold set
+  const [cameraMoves, setCameraMoves] = useState({ moves: [], models: [] })
+  const [videos, setVideos] = useState([])                   // generated clips
+  const [videoBusy, setVideoBusy] = useState(null)           // current animate status
   const [generations, setGenerations] = useState([])
   const [detail, setDetail] = useState(null)
   const [err, setErr] = useState(null)
 
   const refresh = useCallback(async () => {
-    const [p, r, g, rf, b, wd, pr, bd, pl, stx] = await Promise.all([
+    const [p, r, g, rf, b, wd, pr, bd, pl, stx, cm, vd] = await Promise.all([
       api.get('/api/parts'), api.get('/api/runs'), api.get('/api/gallery'),
       api.get('/api/refs'), api.get('/api/bio'), api.get('/api/wardrobe'),
       api.get('/api/pose-refs'), api.get('/api/bodies'), api.get('/api/pose-library'),
-      api.get('/api/stats'),
+      api.get('/api/stats'), api.get('/api/camera-moves'), api.get('/api/videos'),
     ])
     setBodies(bd.bodies); setPoseLibrary(pl.poses); setStats(stx)
+    setCameraMoves(cm); setVideos(vd.videos)
     setParts(p.parts); setRuns(r.runs); setGallery(g)
     setAvailRefs(rf.refs); setBio(b); setWardrobe(wd.wardrobe); setPoseRefs(pr.pose_refs)
     setStamp(Date.now())   // bust the cache for refs overwritten under a stable filename
@@ -198,6 +203,19 @@ export default function App() {
       window.alert(`Gold set exported: ${r.exported} approved shots → data/gold/ (${r.gold_on_disk} on disk). This is your LoRA dataset — the gallery stays frozen.`)
     } catch (e) { setErr(String(e)) }
   }
+  const animate = async (payload) => {
+    setVideoBusy('starting…'); setErr(null)
+    try {
+      const { job: jid } = await api.send('/api/animate', 'POST', payload)
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 2000))
+        const st = await api.get(`/api/jobs/${jid}`)
+        setVideoBusy(STAGE[st.stage] || st.stage || 'generating…')
+        if (st.done) { if (st.error) setErr(String(st.error)); break }
+      }
+      await refresh()
+    } catch (e) { setErr(String(e)) } finally { setVideoBusy(null) }
+  }
   const purgeRejected = async () => {
     if (!window.confirm('Delete all rejected images from disk? This cannot be undone.')) return
     try {
@@ -289,6 +307,8 @@ export default function App() {
             } catch (er) { setErr(String(er)) }
           }} />
       )}
+
+      {tab === 'video' && <VideoStudio runs={runs} cameraMoves={cameraMoves.moves} models={cameraMoves.models} videos={videos} onAnimate={animate} busy={videoBusy} stamp={stamp} />}
 
       {tab === 'review' && <Review runs={runs} onOpen={setDetail} onMark={mark} stats={stats} onExportGold={exportGold} onPurgeRejected={purgeRejected} />}
 

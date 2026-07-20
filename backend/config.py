@@ -20,6 +20,7 @@ GOLD = DATA / "gold"              # human-APPROVED shots — the curated LoRA da
                                   # Approvals accumulate HERE, never in the gallery
                                   # (that stays frozen — feeding it generated output
                                   # drifts the yardstick; see gate.py).
+VIDEOS = DATA / "videos"          # generated video clips (fal image-to-video)
 STATE = DATA / "state"            # part tree, gallery, threshold
 
 GALLERY_PATH = STATE / "gallery.npz"
@@ -29,8 +30,9 @@ THRESHOLD_PATH = STATE / "threshold.json"
 PARTS_PATH = STATE / "parts.json"
 RUNS_PATH = STATE / "runs.json"
 BODIES_META = STATE / "bodies.json"     # body-type metadata: build text + active
+VIDEOS_META = STATE / "videos.json"     # video clip ledger: still, camera move, verdict
 
-for d in (IMAGES, REFS, WARDROBE, POSE_REFS, POSES, BODIES, GOLD, STATE):
+for d in (IMAGES, REFS, WARDROBE, POSE_REFS, POSES, BODIES, GOLD, VIDEOS, STATE):
     d.mkdir(parents=True, exist_ok=True)
 
 # fal endpoints. Local inference is off the table — an 8GB laptop GPU cannot run

@@ -9,7 +9,7 @@ export default function Header({ tab, setTab, count, gallery }) {
           <Circle className="h-2.5 w-2.5 fill-[#4ea1ff] text-[#4ea1ff]" />eve1
         </div>
         <nav className="flex h-full gap-7">
-          {['shoot', 'bio', 'calibrate', 'review'].map((item) => (
+          {['shoot', 'bio', 'calibrate', 'video', 'review'].map((item) => (
             <button key={item} onClick={() => setTab(item)}
               className={`relative text-xs font-semibold uppercase tracking-[.18em] transition ${tab === item ? 'text-[#e6e6ea]' : 'text-[#70707d] hover:text-[#b8b8c3]'}`}>
               {item}

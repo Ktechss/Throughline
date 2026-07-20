@@ -16,8 +16,9 @@ from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
 from . import describe, gate, generate, prompt as promptlib, prompter, skeleton
+from . import video as videolib
 from .config import (BODIES, BODIES_META, GOLD, IMAGES, PARTS_PATH, POSE_REFS,
-                     POSES, REFS, ROOT, SCENE_EDIT, STATE, WARDROBE)
+                     POSES, REFS, ROOT, SCENE_EDIT, STATE, VIDEOS, WARDROBE)
 
 app = FastAPI(title="eve1")
 
@@ -1319,6 +1320,70 @@ def purge_rejected():
             p.unlink(missing_ok=True)
         (THUMBS / f"{Path(r['file']).stem}.jpg").unlink(missing_ok=True)
     return {"deleted": len(removed), "freed_mb": round(freed / 1e6, 1)}
+
+
+# ---------------------------------------------------------------- video studio
+# Animate a gate-approved still into a clip on fal. eve1 makes the consistent
+# still (the gate proves it's her); fal only adds motion. Camera moves carry the
+# cinematic feel, and each clip's frames are re-gated for drift.
+
+@app.get("/api/camera-moves")
+def camera_moves():
+    return {"moves": list(videolib.CAMERA_MOVES.keys()),
+            "models": list(videolib.MODELS.keys())}
+
+
+class AnimateReq(BaseModel):
+    run_id: str | None = None    # a shot from the run ledger
+    file: str | None = None      # or a raw image filename in data/images
+    camera_move: str = "dolly-in"
+    model: str = "seedance"
+    extra: str = ""              # optional extra motion/scene words
+    prompt_override: str = ""    # full custom prompt (wins over camera_move+extra)
+    dialogue: str = ""           # happy-horse: spoken line -> lip-synced speech
+    resolution: str = "1080p"    # happy-horse: 720p | 1080p
+    duration: int = 5            # happy-horse: 3..15 seconds
+    seed: int | None = None
+    enable_safety_checker: bool = True
+
+
+@app.post("/api/animate")
+def animate(req: AnimateReq):
+    """Start a fal image-to-video job from a still; poll via /api/jobs/{id}."""
+    still = None
+    if req.file:
+        p = IMAGES / Path(req.file).name
+        if p.exists():
+            still = p
+    if still is None and req.run_id:
+        row = next((r for r in generate.all_runs() if r["id"] == req.run_id), None)
+        if row:
+            still = IMAGES / row["file"]
+    if still is None or not still.exists():
+        raise HTTPException(400, "no such still — pass a valid run_id or file")
+
+    def run(job: dict) -> dict:
+        return videolib.animate(
+            still, camera_move=req.camera_move, model=req.model, extra=req.extra,
+            prompt_override=req.prompt_override, dialogue=req.dialogue,
+            resolution=req.resolution, duration=req.duration, seed=req.seed,
+            enable_safety_checker=req.enable_safety_checker, progress=job)
+
+    label = "talk" if req.dialogue.strip() else req.camera_move
+    return {"job": generate.start_job(f"animate: {label}", run)}
+
+
+@app.get("/api/videos")
+def list_videos():
+    return {"videos": videolib.all_videos()}
+
+
+@app.get("/api/videos/{name}")
+def video_file(name: str):
+    p = VIDEOS / Path(name).name
+    if not p.exists():
+        raise HTTPException(404, name)
+    return FileResponse(p)
 
 
 @app.get("/api/health")
