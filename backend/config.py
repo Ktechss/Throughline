@@ -15,6 +15,11 @@ REFS = DATA / "refs"              # identity references — the face we're holdi
 WARDROBE = DATA / "wardrobe"      # outfit reference images (@image2 per shot)
 POSE_REFS = DATA / "pose-refs"    # pose reference images of HER (keyword-selected)
 POSES = DATA / "poses"            # saved skeletons
+BODIES = DATA / "bodies"          # saved BODY types (figure references, selectable)
+GOLD = DATA / "gold"              # human-APPROVED shots — the curated LoRA dataset.
+                                  # Approvals accumulate HERE, never in the gallery
+                                  # (that stays frozen — feeding it generated output
+                                  # drifts the yardstick; see gate.py).
 STATE = DATA / "state"            # part tree, gallery, threshold
 
 GALLERY_PATH = STATE / "gallery.npz"
@@ -23,8 +28,9 @@ GALLERY_META = STATE / "gallery.json"   # per-entry yaw/face_px — needed to kn
 THRESHOLD_PATH = STATE / "threshold.json"
 PARTS_PATH = STATE / "parts.json"
 RUNS_PATH = STATE / "runs.json"
+BODIES_META = STATE / "bodies.json"     # body-type metadata: build text + active
 
-for d in (IMAGES, REFS, WARDROBE, POSE_REFS, POSES, STATE):
+for d in (IMAGES, REFS, WARDROBE, POSE_REFS, POSES, BODIES, GOLD, STATE):
     d.mkdir(parents=True, exist_ok=True)
 
 # fal endpoints. Local inference is off the table — an 8GB laptop GPU cannot run

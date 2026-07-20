@@ -16,8 +16,17 @@ from pathlib import Path
 import fal_client
 
 from . import gate
-from .config import (EDIT, GPT_IMAGE, GPT_IMAGE_SIZE, IMAGES, LOCAL_ENDPOINT,
-                     LOCAL_PY, LOCAL_WORKER, RESOLUTION, RUNS_PATH, TEXT2IMG)
+from .config import (GPT_IMAGE, GPT_IMAGE_SIZE, IMAGES, LOCAL_ENDPOINT,
+                     LOCAL_PY, LOCAL_WORKER, RESOLUTION, RUNS_PATH, SCENE_EDIT,
+                     SCENE_TEXT2IMG)
+
+# The pipeline was rebuilt around nano-banana-pro as the PRIMARY generator: it
+# renders the full figure range gpt-image-2's moderation refuses, and the
+# identity/gallery is recalibrated natively on nano so its self-agreement is high
+# (a model matches its own renderings far better than a foreign one's). gpt-image-2
+# stays available as an explicit endpoint but is no longer the default.
+PRIMARY_EDIT = SCENE_EDIT
+PRIMARY_T2I = SCENE_TEXT2IMG
 
 
 def _runs() -> list[dict]:
@@ -78,82 +87,114 @@ def new_session(label: str = "") -> dict:
             "started": time.strftime("%Y-%m-%dT%H:%M:%S")}
 
 
+# gpt-image-2's moderation classifier is non-deterministic NEAR its boundary
+# (the airport look: refused 3/3 then accepted 4/4 on a byte-identical prompt),
+# so a content_policy refusal is retried — it may be a coin flip. But an input
+# image that is genuinely OVER the line (e.g. a short, tight, cutout outfit
+# turnaround) refuses every single time, and four ~2-minute attempts turned a
+# refusal into a 9-minute dead spin. Two retries keep the coin-flip rescue while
+# failing a hard refusal in roughly a third of the time.
+CONTENT_RETRIES = 2
+
+
 def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
              aspect: str = "4:5", seed: int | None = None,
              pose_file: Path | None = None, meta: dict | None = None,
              session: dict | None = None, endpoint: str | None = None,
-             extra: dict | None = None, progress: dict | None = None) -> dict:
+             extra: dict | None = None, progress: dict | None = None,
+             fallback_endpoint: str | None = None,
+             resolution: str | None = None) -> dict:
     """One generation, gated and recorded.
 
     refs order matters and is the caller's responsibility. Measured on the
     previous build: an identity reference plus ONE face crop scored 0.860, where
     three face crops scored 0.547. More references don't add identity, they add
     things to blend. A pose image spends one of those slots.
+
+    fallback_endpoint: if the primary endpoint refuses on content_policy for
+    every retry, run ONCE on this endpoint instead. gpt-image-2 and nano-banana
+    have different moderation, so a revealing outfit that gpt-image-2 rejects
+    outright still renders on nano — at weaker identity (~0.68 vs 0.81), which is
+    why the served endpoint is recorded on the row (`moderation_fallback`).
     """
     refs = refs or []
     rid = uuid.uuid4().hex[:10]
     dest = IMAGES / f"{rid}.png"
-    ep = endpoint or (EDIT if refs else TEXT2IMG)
+    primary = endpoint or (PRIMARY_EDIT if refs else PRIMARY_T2I)
 
-    if ep == LOCAL_ENDPOINT:
+    if primary == LOCAL_ENDPOINT:
         return _generate_local(rid, dest, prompt=prompt, system=system,
                                refs=refs, seed=seed, session=session,
                                pose_file=pose_file, meta=meta, extra=extra)
 
-    # Arguments are per-endpoint. fal ignores foreign fields rather than
-    # rejecting them, which is worse than an error: send nano-banana's
-    # aspect_ratio/resolution to gpt-image-2 and you get a default-sized image
-    # while believing you asked for 4K, and the face-pixel count silently drops
-    # below the gate's floor.
-    if ep in GPT_IMAGE:
-        # gpt-image takes prompt + image_urls. It has no system_prompt: the
-        # realism rules have to ride inside the prompt itself.
-        args = {"prompt": f"{system}\n\n{prompt}" if system else prompt,
-                "image_size": GPT_IMAGE_SIZE}
-        if refs:
-            args["image_urls"] = [upload(p) for p in refs]
-    else:
-        args = {
-            "prompt": prompt,
-            "aspect_ratio": aspect,
-            "resolution": RESOLUTION,
-            "num_images": 1,
-            "output_format": "png",
-        }
-        if system:
-            args["system_prompt"] = system
-        if refs:
-            args["image_urls"] = [upload(p) for p in refs]
-    if seed is not None:
-        args["seed"] = seed
-    if extra:
-        args |= extra
+    # Upload refs ONCE and reuse the URLs across both endpoints — re-uploading
+    # for the fallback would double the cost and latency for nothing.
+    image_urls = [upload(p) for p in refs] if refs else []
 
-    # gpt-image-2's moderation classifier is non-deterministic near its
-    # boundary: an airport look (short shorts + heels + a body line + a close
-    # crop) sits right on it and the SAME prompt flips accepted/refused call to
-    # call. Measured: refused 3/3, then accepted 4/4, minutes apart. So a
-    # content_policy refusal is retried rather than surfaced — it is a coin
-    # flip, not a verdict on the prompt. A genuinely disallowed prompt refuses
-    # every time and still raises after the retries are spent.
+    def build_args(ep: str) -> dict:
+        # Arguments are per-endpoint. fal ignores foreign fields rather than
+        # rejecting them, which is worse than an error: send nano-banana's
+        # aspect_ratio/resolution to gpt-image-2 and you get a default-sized
+        # image while believing you asked for 4K, and the face-pixel count
+        # silently drops below the gate's floor.
+        if ep in GPT_IMAGE:
+            # gpt-image takes prompt + image_urls. No system_prompt: the realism
+            # rules ride inside the prompt itself.
+            a = {"prompt": f"{system}\n\n{prompt}" if system else prompt,
+                 "image_size": GPT_IMAGE_SIZE}
+        else:
+            a = {"prompt": prompt, "aspect_ratio": aspect,
+                 "resolution": resolution or RESOLUTION,
+                 "num_images": 1, "output_format": "png"}
+            if system:
+                a["system_prompt"] = system
+        if image_urls:
+            a["image_urls"] = image_urls
+        if seed is not None:
+            a["seed"] = seed
+        if extra:
+            a |= extra
+        return a
+
+    # Try the primary endpoint (with coin-flip retries); on a persistent
+    # content_policy refusal, drop to the fallback endpoint once.
+    plan = [(primary, CONTENT_RETRIES)]
+    if fallback_endpoint and fallback_endpoint != primary:
+        plan.append((fallback_endpoint, 1))
+
     t0 = time.time()
+    r = None
+    used_ep = primary
     last = None
-    for attempt in range(4):
-        try:
-            r = fal_client.subscribe(ep, arguments=args, with_logs=False)
-            break
-        except Exception as exc:  # noqa: BLE001
-            last = exc
-            if "content_policy" in str(exc) and attempt < 3:
-                # Surface the moderation retry so it reads as "retrying", not a
-                # silent hang — the confusion the user hit before.
+    for ep, tries in plan:
+        falling_back = ep != primary
+        for attempt in range(tries):
+            try:
                 if progress is not None:
-                    progress["retry"] = attempt + 1
-                    progress["stage"] = "moderation retry"
-                continue
-            raise
-    else:  # pragma: no cover - loop always breaks or raises
+                    progress["stage"] = ("scene-model fallback" if falling_back
+                                         else "generating")
+                r = fal_client.subscribe(ep, arguments=build_args(ep),
+                                         with_logs=False)
+                used_ep = ep
+                break
+            except Exception as exc:  # noqa: BLE001
+                last = exc
+                if "content_policy" in str(exc):
+                    # Surface the retry so it reads as "retrying", not a silent
+                    # hang — the confusion the user hit before.
+                    if progress is not None:
+                        progress["retry"] = attempt + 1
+                        progress["stage"] = ("scene-model moderation retry"
+                                             if falling_back
+                                             else "moderation retry")
+                    continue
+                raise
+        if r is not None:
+            break
+    if r is None:
         raise last
+
+    moderation_fallback = used_ep != primary
     if progress is not None:
         progress["stage"] = "downloading"
     urllib.request.urlretrieve(r["images"][0]["url"], dest)
@@ -175,14 +216,18 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
         # someone else's run.
         "session": session or new_session("ad-hoc"),
         "file": dest.name,
-        "endpoint": ep,
+        "endpoint": used_ep,
+        # True = the primary endpoint refused on content_policy and this image
+        # came from the fallback (scene) model instead. Identity is weaker there
+        # (~0.68 vs 0.81); the flag makes that visible rather than a silent swap.
+        "moderation_fallback": moderation_fallback,
         "prompt": prompt,
         "system": system,
         "refs": [p.name for p in refs],
         "pose": pose_file.name if pose_file else None,
         "seed": seed,
         "aspect": aspect,
-        "resolution": RESOLUTION,
+        "resolution": resolution or RESOLUTION,
         "seconds": round(time.time() - t0, 1),
         "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "auto_leveled": leveled,   # degrees rotated to straighten her head
@@ -285,6 +330,16 @@ def mark(run_id: str, decision: str | None) -> dict:
 
 def all_runs() -> list[dict]:
     return list(reversed(_runs()))
+
+
+def delete_runs(ids: set[str]) -> list[dict]:
+    """Remove runs by id from the ledger; return the removed rows so the caller
+    can delete their image files. The ledger and disk are cleaned together."""
+    rows = _runs()
+    removed = [r for r in rows if r["id"] in ids]
+    if removed:
+        _save_runs([r for r in rows if r["id"] not in ids])
+    return removed
 
 
 # --------------------------------------------------------------------------

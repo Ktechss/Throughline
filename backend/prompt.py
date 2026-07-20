@@ -24,7 +24,7 @@ person at all.
 from __future__ import annotations
 
 import re
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 
 # Words that mark AI slop. The UI warns on these rather than blocking — a banned
 # word inside a quoted brand name or a scene description is sometimes correct.
@@ -54,16 +54,13 @@ BANNED = (
 # person, which is the opposite failure. Each entry earns its place by having
 # actually tripped the filter or being a well-known trigger, not by prudishness.
 _SANITISE = [
-    # explicit cup / measurements — the single biggest confirmed trigger next to
-    # revealing wardrobe. The body REFERENCE IMAGE carries her real proportions,
-    # so the number was never load-bearing anyway.
-    # optionally swallow a preceding "a/an/a full" so we don't leave "a full a
-    # full chest" when the BIO already led with an article.
-    (r"\b(?:an?\s+)?(?:full\s+)?\d{2,3}\s*(?:dd?|ddd|[a-k])\s*(?:bust|breasts?|chest|cup)\b",
-     "a full chest", "explicit cup size"),
-    (r"\b(?:32|34|36|38|40)\s*(?:dd?|ddd|[a-k])\b", "a full figure", "bra size"),
-    (r"\b(?:huge|large|big|ample|voluptuous|busty)\s+(?:breasts?|bust|chest|cleavage)\b",
-     "a full chest", "sexualised bust phrasing"),
+    # Bust SIZE wording is intentionally left ALONE now (cup sizes, "large/huge
+    # bust", bra sizes all pass through) so the fictional character's figure can
+    # be set as large as wanted — the size cannot be dialled if the sanitiser
+    # keeps collapsing it to "a full chest". gpt-image-2 may still refuse very
+    # explicit sizing; the scene-model fallback catches that. What stays guarded
+    # below is EXPOSURE and NUDITY, not size — the line is proportions (allowed)
+    # vs. undress/sexualisation (still neutralised).
     (r"\bcleavage\b", "neckline", "cleavage"),
     (r"\b(?:breasts?)\b", "chest", "anatomical term"),
     # revealing-wardrobe intensifiers — the classifier scores the ADJECTIVE, not
@@ -413,28 +410,78 @@ SHOT_TYPES = {
 # body. "" = let the brief describe the pose.
 POSES_LIBRARY = {
     "": "",
+    "headshot": "Head-and-shoulders headshot, facing the camera directly, close "
+                "framing on her face, looking into the lens",
+    "portrait": "Waist-up portrait, facing the camera, relaxed and natural, "
+                "looking toward the camera",
+    "close-up": "Tight close-up, her face filling much of the frame, looking "
+                "straight into the lens",
+    "beauty": "Beauty headshot, straight to camera, chin level, soft even light, "
+              "looking into the lens",
     "front": "Facing the camera directly, confident and composed",
     "walking": "Mid-stride, walking naturally, not looking at the camera",
     "over-shoulder": "Body turned away from camera, looking back over the shoulder",
     "mid-turn": "Caught mid-turn as if just hearing her name called — body still "
                 "turning, head looking back",
-    "hip-pop": "Natural S-curve with one hip shifted out to the side",
-    "triangle": "One hand on hip, natural triangle shape with the arm, relaxed pose",
-    "lean": "Leaning casually against a wall or surface, relaxed and at ease",
-    "hands-pockets": "Hands in pockets, relaxed and natural, not performing",
+    "hip-pop": "Natural S-curve with one hip shifted out to the side, looking "
+               "toward the camera",
+    "triangle": "One hand on hip, natural triangle shape with the arm, relaxed "
+                "pose, looking toward the camera",
+    "lean": "Leaning casually against a wall or surface, relaxed and at ease, "
+            "looking toward the camera",
+    "hands-pockets": "Hands in pockets, relaxed and natural, not performing, "
+                     "looking toward the camera",
     "long-line": "Tall elegant pose, one leg extended forward, long clean line "
-                 "through the body",
+                 "through the body, looking toward the camera",
     "handheld-selfie": "Handheld selfie — one arm extended toward the camera "
                        "holding the phone, looking into the front lens, the face "
                        "filling much of the frame",
-    "seated-casual": "Seated casually, relaxed and natural",
-    "seated-crossed": "Seated cross-legged, comfortable and grounded",
-    "seated-lean": "Seated and leaning slightly forward, relaxed and engaged",
+    "contrapposto": "Standing in a relaxed contrapposto, weight on one leg, the "
+                    "other knee soft, looking toward the camera",
+    "arms-crossed": "Standing with arms lightly crossed, confident and composed, "
+                    "looking toward the camera",
+    "seated-casual": "Seated casually, relaxed and natural, looking toward the camera",
+    "seated-crossed": "Seated cross-legged, comfortable and grounded, looking "
+                      "toward the camera",
+    "seated-lean": "Seated and leaning slightly forward, relaxed and engaged, "
+                   "looking toward the camera",
+    "seated-floor": "Seated on the floor, legs folded to one side, weight on one "
+                    "hand, looking toward the camera",
+    "kneeling": "Kneeling upright, tall elegant posture, hands resting easily, "
+                "looking toward the camera",
+    "crouching": "Crouching low, balanced on the balls of her feet, forearms on "
+                 "her knees, looking toward the camera",
+    "reclining-side": "Lying on her side, propped up on one elbow, body in a long "
+                      "relaxed line, looking toward the camera",
+    "lying-back": "Lying on her back, one knee raised, arms relaxed, head turned "
+                  "toward the camera",
+    "lying-front": "Lying on her front, propped up on both forearms, ankles "
+                   "crossed behind her, looking toward the camera",
+    "lounging": "Reclining back against cushions on a sofa, languid and at ease, "
+                "one arm draped along the backrest",
 }
 
 
+def build_clause(parts: list["Part"]) -> str:
+    """A body-shape directive from the ENABLED `body` parts, so editing bust /
+    waist / hips in the UI actually tunes the shot.
+
+    The body REFERENCE image still anchors proportions; this nudges them on top
+    of it (text is a weaker lever than the image — that is the measured trade,
+    not a bug). sanitise() runs downstream, so cup-size/measurement wording is
+    neutralised before it reaches fal's moderation. Toggling a body part off in
+    the UI now removes it from this clause — the checkbox is a real knob again.
+    """
+    body = [p.text.strip().rstrip(".") for p in parts
+            if p.section == "body" and getattr(p, "enabled", True) and p.text.strip()]
+    if not body:
+        return ""
+    return "Keep her body shape to this build: " + "; ".join(body) + "."
+
+
 def compose_tagged(brief: str, *, pose_text: str = "", has_wardrobe: bool = False,
-                   pose_ref_tag: str = "", n_skin: int = 0, shot_type: str = "candid",
+                   pose_ref_tag: str = "", build_text: str = "", n_skin: int = 0,
+                   shot_type: str = "candid",
                    realism: bool = True) -> tuple[str, list[dict]]:
     """The ai-influencer technique, ported and validated on fal gpt-image-2.
 
@@ -462,17 +509,26 @@ def compose_tagged(brief: str, *, pose_text: str = "", has_wardrobe: bool = Fals
         # the user's idea, and the honest alternative to rotating the output.
         parts_out.append(
             f"Match her body pose and head orientation to {pose_ref_tag} — same "
-            f"stance, same head angle, head held the same way.")
+            f"stance, same head angle. Take ONLY the pose, stance and orientation "
+            f"from {pose_ref_tag}; her face, features and identity come only from "
+            f"@image1.")
     elif pose_text:
         parts_out.append(pose_text.strip().rstrip(".") + ".")
 
+    if build_text:
+        parts_out.append(build_text)
+
     if has_wardrobe:
-        # The fix for the wardrobe leak: the outfit comes from its OWN reference,
-        # not fought via text. Their exact directive, which measured well.
+        # The wardrobe reference is a turnaround of HER wearing the outfit, so it
+        # contains her face and skin too. Without an explicit exclusion the model
+        # pulls identity from @image2 and the wardrobe face overrides @image1.
+        # Same shape as the pose-ref directive: take ONLY the garments; identity
+        # stays with @image1.
         parts_out.append(
             "She is wearing the complete outfit from @image2 — reproduce every "
-            "item exactly as shown: all clothing and accessories must match the "
-            "reference.")
+            "clothing item and accessory exactly as shown. Take ONLY the clothing "
+            "and accessories from @image2; her face, skin, hair, features and "
+            "identity come only from @image1, never from @image2.")
 
     if n_skin >= 2:
         parts_out.append("Match skin texture and facial detail from @image3 and @image4.")
@@ -481,8 +537,11 @@ def compose_tagged(brief: str, *, pose_text: str = "", has_wardrobe: bool = Fals
 
     if realism:
         parts_out.append(
-            "Real skin texture with visible pores and natural imperfections, no "
-            "retouching. Shot on a phone, not a professional camera.")
+            "Sharp, high-detail face: visible skin pores, fine peach-fuzz and "
+            "skin texture, subtle natural imperfections, and her exact freckles, "
+            "moles and beauty marks reproduced from @image1 — never smoothed, "
+            "airbrushed or retouched. Crisp focus on the eyes. Shot on a phone, "
+            "not a professional camera.")
 
     return sanitise(" ".join(parts_out))
 

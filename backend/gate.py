@@ -189,6 +189,20 @@ def analyze(path: str | Path) -> Face:
                 width=int(f.bbox[2] - f.bbox[0]))
 
 
+def face_box(path: str | Path) -> tuple[int, int, int, int] | None:
+    """Bounding box (x1, y1, x2, y2) of the largest face, or None if there is
+    none. Used to crop the head off a wardrobe turnaround so the outfit reference
+    carries no competing identity."""
+    img = cv2.imread(str(path))
+    if img is None:
+        raise ValueError(f"could not read image: {path}")
+    faces = _get_app().get(img)
+    if not faces:
+        return None
+    f = max(faces, key=lambda x: (x.bbox[2] - x.bbox[0]) * (x.bbox[3] - x.bbox[1]))
+    return tuple(int(v) for v in f.bbox)  # type: ignore[return-value]
+
+
 def similarity(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.dot(a, b))
 
@@ -280,6 +294,38 @@ def check(path: str | Path, threshold: float | None = None) -> Verdict:
     thr = threshold if threshold is not None else load_threshold()
     return Verdict(similarity(face.vector, g[name]), name, thr, face,
                    source_yaw=src_yaw)
+
+
+def reset_gallery() -> None:
+    """Wipe the gallery + meta so a calibration run can seed a fresh fingerprint.
+
+    Used only at the START of a deliberate re-calibration — never mid-flight."""
+    GALLERY_PATH.unlink(missing_ok=True)
+    GALLERY_META.unlink(missing_ok=True)
+
+
+def calibrate_from_gallery(sigma: float = 2.0) -> dict:
+    """Derive the threshold from the CURRENT gallery's own vectors.
+
+    The gallery, after a calibration pass, is the human-curated set of faces that
+    ARE her on this pipeline. Their pairwise similarity is the same-person
+    distribution; two sigma below its mean is the stranger floor. Same maths as
+    calibrate(), but reads the stored vectors instead of re-analysing files.
+    """
+    g = load_gallery()
+    vecs = list(g.values())
+    if len(vecs) < 3:
+        raise ValueError(f"need >=3 gallery faces to calibrate, have {len(vecs)}")
+    sims = [similarity(a, b) for a, b in itertools.combinations(vecs, 2)]
+    mean, std = float(np.mean(sims)), float(np.std(sims))
+    result = {"threshold": round(max(0.0, mean - sigma * std), 3),
+              "mean": round(mean, 3), "std": round(std, 3),
+              "min": round(float(np.min(sims)), 3),
+              "n_faces": len(vecs), "n_pairs": len(sims), "sigma": sigma,
+              "warning": "Stranger floor, not a quality bar."}
+    THRESHOLD_PATH.parent.mkdir(parents=True, exist_ok=True)
+    THRESHOLD_PATH.write_text(json.dumps(result, indent=2) + "\n")
+    return result
 
 
 def calibrate(paths: list[Path], sigma: float = 2.0) -> dict:

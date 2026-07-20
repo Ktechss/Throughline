@@ -15,9 +15,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
-from . import gate, generate, prompt as promptlib, skeleton
-from .config import (IMAGES, PARTS_PATH, POSE_REFS, POSES, REFS, ROOT, STATE,
-                     WARDROBE)
+from . import describe, gate, generate, prompt as promptlib, prompter, skeleton
+from .config import (BODIES, BODIES_META, GOLD, IMAGES, PARTS_PATH, POSE_REFS,
+                     POSES, REFS, ROOT, SCENE_EDIT, STATE, WARDROBE)
 
 app = FastAPI(title="eve1")
 
@@ -230,6 +230,28 @@ def image(name: str):
     return FileResponse(p)
 
 
+# Generated images are 3584x4800 / ~20 MB each. A grid rendering the full files
+# downloads hundreds of MB and decodes each to a ~69 MB bitmap in the browser —
+# the archive would sink the UI as it grows. Grids request this cached ~512px
+# JPEG thumbnail instead; the full image is only fetched in the detail view.
+THUMBS = IMAGES / ".thumbs"
+
+
+@app.get("/api/images/{name}/thumb")
+def image_thumb(name: str):
+    src = IMAGES / Path(name).name
+    if not src.exists():
+        raise HTTPException(404, name)
+    THUMBS.mkdir(exist_ok=True)
+    cache = THUMBS / f"{Path(name).stem}.jpg"
+    if not cache.exists() or cache.stat().st_mtime < src.stat().st_mtime:
+        from PIL import Image
+        im = Image.open(src).convert("RGB")
+        im.thumbnail((512, 512))
+        im.save(cache, "JPEG", quality=80)
+    return FileResponse(cache)
+
+
 # ---------------------------------------------------------------- gallery
 
 @app.get("/api/gallery")
@@ -247,13 +269,121 @@ def get_gallery():
     return out
 
 
-# NOTE: there is deliberately no endpoint to promote a GENERATED image into the
-# gallery. The gallery is the source of truth and is seeded only from
-# data/refs (see /api/gallery/from-ref). Admitting our own output would let the
-# yardstick drift with the thing it measures — the previous project's namesake
-# sheet ended up disagreeing with ten of its own descendants that way. If you
-# want a generated image to become a reference, import it deliberately as a ref
-# first; that way it is a decision with a filename, not a side effect.
+# NOTE: /api/gallery/from-ref seeds ONLY from data/refs. The one place a
+# GENERATED image enters the gallery is the CALIBRATION engine below, and only
+# via explicit human selection — see the warning on /api/calibrate/gallery/add.
+
+
+# ---------------------------------------------------------------- calibration
+# Rebuild the identity/fingerprint natively on the primary generator (nano-pro).
+# Generate canonical headshot angles -> the user SELECTS the on-model ones ->
+# they seed a fresh gallery -> recalibrate the threshold from their self-agreement.
+# The essential angle set is from the user's Character Calibration Rules.
+
+IDENTITY_LOCK_LINE = (
+    "Preserve the exact same facial identity, facial proportions, skin texture, "
+    "beauty marks, eye shape, nose, lips, hairline, hair colour and body "
+    "proportions. No identity drift.")
+
+# (angle key, prompt fragment) — ordered by importance; front/3q/profile give the
+# pose-matched gallery its coverage, the rest add same-person variety.
+CALIB_FACES = [
+    ("front", "a straight front headshot, facing the camera directly, eyes to camera"),
+    ("tq-left", "a three-quarter headshot, face turned to the left, eyes toward camera"),
+    ("tq-right", "a three-quarter headshot, face turned to the right, eyes toward camera"),
+    ("profile-left", "a left side-profile headshot"),
+    ("profile-right", "a right side-profile headshot"),
+    ("over-shoulder", "looking back over one shoulder toward the camera"),
+    ("chin-up", "a headshot, chin slightly raised, confident expression"),
+    ("smile", "a headshot with a natural warm smile"),
+    ("editorial", "a neutral editorial headshot expression"),
+    ("tilt-left", "a headshot, head tilted slightly to the left"),
+    ("tilt-right", "a headshot, head tilted slightly to the right"),
+    ("soft", "a headshot, chin slightly lowered, soft eye contact"),
+]
+
+
+class CalibFacesReq(BaseModel):
+    count: int = 5
+
+
+@app.post("/api/calibrate/faces")
+def calibrate_faces(req: CalibFacesReq):
+    """Generate `count` canonical headshots (identity-locked) on the primary model."""
+    face = REFS / _bio_ref()
+    if not face.exists():
+        raise HTTPException(400, "no BIO face reference set")
+    n = max(1, min(req.count, len(CALIB_FACES)))
+    jobs = []
+    for angle, desc in CALIB_FACES[:n]:
+        prompt = (f"Headshot portrait of @image1 — {desc}. Plain neutral studio "
+                  f"background, soft even lighting, head and shoulders framing. "
+                  f"{IDENTITY_LOCK_LINE} Photorealistic, real skin texture, sharp "
+                  f"focus on the face.")
+
+        def run(job: dict, prompt=prompt, angle=angle) -> dict:
+            return generate.generate(
+                prompt=prompt, system="", refs=[face], aspect="3:4",
+                session=generate.new_session(f"calib face: {angle}"), progress=job,
+                meta={"calibrate": "face", "angle": angle})
+
+        jobs.append({"angle": angle, "job": generate.start_job(f"calib {angle}", run)})
+    return {"jobs": jobs}
+
+
+@app.get("/api/calibrate/candidates")
+def calibrate_candidates():
+    """Generated calibration faces awaiting selection, newest first."""
+    out = []
+    for r in generate.all_runs():
+        if r.get("meta", {}).get("calibrate") == "face":
+            out.append({"id": r["id"], "file": r["file"],
+                        "angle": r.get("meta", {}).get("angle"),
+                        "verdict": r.get("verdict", {})})
+    return {"candidates": out[:60]}
+
+
+class CalibAddReq(BaseModel):
+    run_id: str
+    view: str | None = None
+
+
+@app.post("/api/calibrate/gallery/add")
+def calibrate_gallery_add(req: CalibAddReq):
+    """Add a SELECTED, human-approved calibration face to the gallery.
+
+    ⚠ This is the ONE place a generated image enters the gallery — deliberately,
+    because the calibration set defines the character natively on the primary
+    model. Two safeguards keep it honest: it is gated by human selection (the
+    user picked this exact face), and it is used to seed a FROZEN fingerprint,
+    never fed continuously. Do not automate this. See gate.py's drift warning.
+    """
+    row = next((r for r in generate.all_runs() if r["id"] == req.run_id), None)
+    if not row:
+        raise HTTPException(404, req.run_id)
+    name = req.view or row.get("meta", {}).get("angle") or req.run_id
+    try:
+        face = gate.add_to_gallery(IMAGES / row["file"], name)
+    except gate.NoFaceFound as exc:
+        raise HTTPException(400, str(exc)) from None
+    return {"view": name, "yaw": round(face.yaw, 1), "face_px": face.width,
+            "pose_class": face.pose_class}
+
+
+@app.post("/api/calibrate/recalibrate")
+def calibrate_recalibrate():
+    """Set the threshold from the seeded fingerprint's own self-agreement."""
+    try:
+        return gate.calibrate_from_gallery()
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+
+
+@app.post("/api/calibrate/reset")
+def calibrate_reset():
+    """Wipe the gallery to start a fresh calibration."""
+    gate.reset_gallery()
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------- references
@@ -427,12 +557,198 @@ class BioRefReq(BaseModel):
 
 @app.put("/api/bio/reference")
 def set_bio_ref(req: BioRefReq):
-    """Changing this changes who Kiara is for every future generation."""
-    if not (REFS / Path(req.reference).name).exists():
-        raise HTTPException(400, f"no such reference: {req.reference}")
-    BIO_REF_PATH.write_text(json.dumps({"reference": Path(req.reference).name},
-                                       indent=2) + "\n")
-    return {"reference": Path(req.reference).name}
+    """Changing this changes who Kiara is for every future generation.
+
+    Merge, don't overwrite: writing only {"reference": ...} used to drop a
+    custom body_reference back to its default. Preserve the rest of the config.
+    """
+    name = Path(req.reference).name
+    if not (REFS / name).exists():
+        raise HTTPException(400, f"no such reference: {name}")
+    cfg = _bio_cfg()
+    cfg["reference"] = name
+    BIO_REF_PATH.write_text(json.dumps(cfg, indent=2) + "\n")
+    return {"reference": name}
+
+
+@app.post("/api/bio/reference/from-run")
+def bio_reference_from_run(payload: dict = Body(...)):
+    """Promote a generated face (a calibration face) to the BIO identity (@image1).
+
+    After calibration the identity anchor should be a NANO-NATIVE face, not the
+    original uploaded base — so every generation is seeded from the same model
+    that built the fingerprint. That is what keeps @image1 and the gallery in
+    the same 'look'.
+    """
+    run_id = payload["run_id"]
+    name = payload.get("name") or f"identity-{run_id}"
+    row = next((r for r in generate.all_runs() if r["id"] == run_id), None)
+    if not row:
+        raise HTTPException(404, run_id)
+    safe = "".join(c for c in name if c.isalnum() or c in "-_") or run_id
+    dest = REFS / f"{safe}.png"
+    shutil.copy2(IMAGES / row["file"], dest)
+    try:
+        gate.analyze(dest)   # must contain a detectable face
+    except (gate.NoFaceFound, ValueError):
+        dest.unlink(missing_ok=True)
+        raise HTTPException(400, "no face detected in that image") from None
+    cfg = _bio_cfg()
+    cfg["reference"] = dest.name
+    BIO_REF_PATH.write_text(json.dumps(cfg, indent=2) + "\n")
+    return {"reference": dest.name}
+
+
+class BodyRefCreateReq(BaseModel):
+    shape: str | None = None   # optional shape override; else uses the body parts
+
+
+@app.post("/api/bio/body-ref/create")
+def body_ref_create(req: BodyRefCreateReq):
+    """Generate a canonical BODY image from the face + body-shape text ONLY.
+
+    No competing body image is attached, so the TEXT drives the proportions
+    (the ChatGPT text-to-image mode) — this is how you actually set an exact or
+    large figure, which an edit anchored to an existing body cannot. Review the
+    preview, then save it as the body reference; every shot and outfit then
+    inherits that image's proportions exactly.
+    """
+    face = REFS / _bio_ref()
+    if not face.exists():
+        raise HTTPException(400, "no BIO face reference set")
+    shape = (req.shape or "").strip() or promptlib.build_clause(_load_parts())
+    shape_clean, _ = promptlib.sanitise(shape)   # size passes now; nudity still guarded
+    prompt = (
+        "Full-body studio photograph of @image1 on a plain white seamless "
+        "background, lit flat and even. She stands straight and relaxed facing "
+        "the camera, arms at her sides, neutral expression, wearing simple "
+        "fitted plain activewear (a fitted tank top and leggings) so her figure "
+        f"and proportions are clearly visible. {shape_clean} Her face and "
+        "identity exactly match @image1. Photorealistic, real skin texture, "
+        "natural anatomy.")
+
+    def run(job: dict) -> dict:
+        return generate.generate(
+            prompt=prompt, system="", refs=[face], aspect="3:4",
+            session=generate.new_session("body reference"), progress=job,
+            meta={"body_ref_create": True, "shape": shape_clean},
+            fallback_endpoint=SCENE_EDIT)
+
+    return {"job": generate.start_job("body reference", run)}
+
+
+@app.post("/api/bio/body-ref/save")
+def body_ref_save(payload: dict = Body(...)):
+    """Lock a generated body image in as the BODY reference (@image2 everywhere)."""
+    run_id = payload["run_id"]
+    row = next((r for r in generate.all_runs() if r["id"] == run_id), None)
+    if not row:
+        raise HTTPException(404, run_id)
+    dest = REFS / "body-canonical.png"
+    shutil.copy2(IMAGES / row["file"], dest)
+    cfg = _bio_cfg()
+    cfg["body_reference"] = "body-canonical.png"
+    BIO_REF_PATH.write_text(json.dumps(cfg, indent=2) + "\n")
+    return {"body_reference": "body-canonical.png"}
+
+
+# ---------------------------------------------------------------- body types
+# A library of saved BODY types (figure references), like the wardrobe. Each is
+# an image + the bust/build text it was made with, so selecting one restores BOTH
+# the reference image AND the matching text — that pairing is what keeps a figure
+# consistent (the drift the user hit came from image and text disagreeing).
+
+def _bodies() -> dict:
+    if BODIES_META.exists():
+        return json.loads(BODIES_META.read_text())
+    return {"active": None, "bodies": []}
+
+
+def _save_bodies(data: dict) -> None:
+    BODIES_META.write_text(json.dumps(data, indent=2) + "\n")
+
+
+def _bust_text() -> str:
+    p = next((q for q in _load_parts() if q.id == "body.bust"), None)
+    return p.text if p else ""
+
+
+@app.get("/api/bodies")
+def list_bodies():
+    data = _bodies()
+    active = data.get("active")
+    out = []
+    for b in data.get("bodies", []):
+        f = _find_by_id(BODIES, b["id"])
+        if f:
+            out.append({"id": b["id"], "file": f.name, "build": b.get("build", ""),
+                        "active": b["id"] == active, "created": b.get("created")})
+    return {"bodies": out, "active": active}
+
+
+@app.post("/api/bodies/save")
+def body_save(payload: dict = Body(...)):
+    """Save a generated body image as a named body type (image + current build)."""
+    run_id, name = payload["run_id"], payload["name"]
+    row = next((r for r in generate.all_runs() if r["id"] == run_id), None)
+    if not row:
+        raise HTTPException(404, run_id)
+    safe = "".join(c for c in name if c.isalnum() or c in "-_ ").strip() or run_id
+    shutil.copy2(IMAGES / row["file"], BODIES / f"{safe}.png")
+    data = _bodies()
+    data["bodies"] = [b for b in data["bodies"] if b["id"] != safe]
+    data["bodies"].append({"id": safe, "build": _bust_text(),
+                           "created": row.get("created")})
+    _save_bodies(data)
+    return {"id": safe}
+
+
+class BodySelectReq(BaseModel):
+    id: str
+
+
+@app.post("/api/bodies/select")
+def body_select(req: BodySelectReq):
+    """Make a body type active: its image becomes @image2 everywhere, and its
+    saved bust text is restored so the image and text agree (no drift)."""
+    data = _bodies()
+    b = next((x for x in data["bodies"] if x["id"] == req.id), None)
+    src = _find_by_id(BODIES, req.id)
+    if not b or not src:
+        raise HTTPException(404, req.id)
+    shutil.copy2(src, REFS / "body-canonical.png")   # the active body reference
+    cfg = _bio_cfg()
+    cfg["body_reference"] = "body-canonical.png"
+    BIO_REF_PATH.write_text(json.dumps(cfg, indent=2) + "\n")
+    # restore the matching bust text so the figure stays consistent
+    if b.get("build"):
+        parts = _load_parts()
+        for p in parts:
+            if p.id == "body.bust":
+                p.text = b["build"]
+        _save_parts(parts)
+    data["active"] = req.id
+    _save_bodies(data)
+    return {"active": req.id, "build": b.get("build", "")}
+
+
+@app.get("/api/bodies/{name}/file")
+def body_file(name: str):
+    p = BODIES / Path(name).name
+    if not p.exists():
+        raise HTTPException(404, name)
+    return FileResponse(p)
+
+
+@app.delete("/api/bodies/{name}")
+def body_delete(name: str):
+    (BODIES / f"{Path(name).stem}.png").unlink(missing_ok=True)
+    data = _bodies()
+    data["bodies"] = [b for b in data["bodies"] if b["id"] != Path(name).stem]
+    if data.get("active") == Path(name).stem:
+        data["active"] = None
+    _save_bodies(data)
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------- wardrobe
@@ -481,6 +797,41 @@ def _wardrobe() -> list[dict]:
     return out
 
 
+# The wardrobe turnaround is a photo of HER wearing the outfit, so it carries a
+# competing face — measured to drag a headshot's identity ~0.85 -> ~0.64 even
+# with the "clothing only" directive. Crop the head off so @image2 is the garment
+# alone and identity comes solely from @image1 — the project's own "crop faces
+# off references" rule, applied to the wardrobe. Cached in a hidden subdir so the
+# crops never appear as wardrobe items themselves.
+OUTFIT_CROPS = WARDROBE / ".outfitcrops"
+
+
+def _outfit_ref(path: Path) -> Path:
+    """Clothing-only version of a wardrobe image: head cropped off. Falls back to
+    the original if no face is found or the face already fills the frame."""
+    from PIL import Image
+    OUTFIT_CROPS.mkdir(exist_ok=True)
+    cache = OUTFIT_CROPS / f"{path.stem}.png"
+    if cache.exists() and cache.stat().st_mtime >= path.stat().st_mtime:
+        return cache
+    try:
+        box = gate.face_box(path)
+    except ValueError:
+        box = None
+    if box is None:
+        return path
+    im = Image.open(path).convert("RGB")
+    W, H = im.size
+    _, fy1, _, fy2 = box
+    # Crop from just below the chin down — removes eyes/nose/mouth (the identity),
+    # keeps the neckline, shoulders and the whole outfit.
+    top = fy2 + int((fy2 - fy1) * 0.10)
+    if top >= H - 40:
+        return path   # face fills the frame (already a close crop) — nothing to gain
+    im.crop((0, top, W, H)).save(cache)
+    return cache
+
+
 @app.get("/api/wardrobe")
 def list_wardrobe():
     return {"wardrobe": _wardrobe()}
@@ -497,9 +848,30 @@ async def wardrobe_upload(file: UploadFile = File(...)):
     return {"id": dest.stem, "file": dest.name}   # saved as-is, never rotated
 
 
+@app.post("/api/wardrobe/describe")
+async def wardrobe_describe(file: UploadFile = File(...)):
+    """Describe an uploaded reference outfit image with Claude vision.
+
+    Step one of the two-step create flow: upload an outfit photo from the
+    internet, get back a clean garment-only description. The user reviews/edits
+    it, then it feeds /api/wardrobe/create as the `outfit` text. Nothing is
+    saved here — this is a read of the image, not an import of it.
+    """
+    data = await file.read()
+    media = describe.media_type(file.filename or "", file.content_type)
+    try:
+        out = describe.describe_outfit(data, media)
+    except describe.DescribeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    # outfit = the garment prose; details = the small fields (empty ones the UI
+    # highlights for the user to fill: shoes, nail colours, lipstick, etc.).
+    return {"outfit": out["description"], "details": out["details"]}
+
+
 class OutfitCreateReq(BaseModel):
-    name: str
     outfit: str          # free text: "white crop top, baggy jeans, strappy heels"
+    name: str | None = None   # optional label only; the outfit is SAVED later via
+                              # /api/wardrobe/from-run once the user likes the preview
 
 
 def _clean_outfit_text(text: str) -> str:
@@ -531,7 +903,7 @@ def _clean_outfit_text(text: str) -> str:
 
 @app.post("/api/wardrobe/create")
 def wardrobe_create(req: OutfitCreateReq):
-    """Generate the outfit ONTO her as a clean white-studio reference.
+    """Generate the outfit ONTO her as a clean white-studio reference — PREVIEW only.
 
     This is the ai-influencer technique for good wardrobe: instead of uploading
     an arbitrary outfit photo (which drags in a stranger's face, a scene, and a
@@ -539,6 +911,9 @@ def wardrobe_create(req: OutfitCreateReq):
     clean swatch. Used later as @image2, it injects only the clothing, because
     that is all that varies from her own references.
 
+    Generate-then-preview: this only produces the turnaround (a normal run). It
+    does NOT save to the wardrobe — the user reviews the preview and, if they
+    like it, saves it with a name via /api/wardrobe/from-run (or discards it).
     Identity comes from her face + body references; the prompt changes only the
     outfit and pins the background to white so nothing else leaks.
     """
@@ -547,11 +922,30 @@ def wardrobe_create(req: OutfitCreateReq):
         raise HTTPException(400, "no BIO reference set")
     refs = [face]
     body = REFS / _bio_cfg()["body_reference"]
-    if body.exists():
+    has_body = body.exists()
+    if has_body:
         refs.append(body)
 
-    safe = "".join(c for c in req.name if c.isalnum() or c in "-_ ").strip() or "outfit"
+    # Face and body are two references doing two jobs — and now that @image1 is a
+    # HEADSHOT, the turnaround must be told to take proportions from @image2 (the
+    # body), not @image1. Without a body ref, @image1 carries both.
+    identity_clause = (
+        "Her face and identity are @image1; her body build, height, frame and "
+        "proportions are @image2. Replicate her face, bone structure, skin and "
+        "hair exactly from @image1, and her exact body proportions and build from "
+        "@image2, in every panel — unmistakably the same person."
+        if has_body else
+        "The woman is @image1 — replicate her face, bone structure, skin, hair "
+        "and body proportions exactly in every panel; unmistakably the same person.")
+
+    # Same body-shape tuning as shots — so the turnaround is built with the bust/
+    # waist/hips you set, and a wardrobe (used as @image2 later) doesn't fight the
+    # shot's build clause. Sanitised here because this prompt path isn't otherwise.
+    build_clean, _ = promptlib.sanitise(promptlib.build_clause(_load_parts()))
+
     outfit = _clean_outfit_text(req.outfit)   # strip pasted chat/markdown noise
+    label = ("".join(c for c in (req.name or outfit) if c.isalnum() or c in "-_ ")
+             .strip())[:50] or "outfit"
     # A 4-panel turnaround SHEET, ported from ai-influencer's buildWardrobePrompt.
     # The outfit is shown from front/side/back/3q, so the reference knows the
     # garment from every angle — essential when she is turned in a scene.
@@ -564,25 +958,27 @@ def wardrobe_create(req: OutfitCreateReq):
         '"FRONT VIEW" | "SIDE VIEW" | "BACK VIEW" | "THREE-QUARTER VIEW". '
         "Panel 1 front-facing, panel 2 exact side profile, panel 3 facing "
         "directly away, panel 4 at a 45-degree three-quarter angle.\n\n"
-        "The woman is @image1 — replicate her face, bone structure, skin, hair "
-        "and body proportions exactly in every panel; unmistakably the same "
-        "person. Identical outfit, proportions, stance and lighting across all "
-        f"four panels.\n\nShe is wearing: {outfit}. Change ONLY the clothing "
+        f"{identity_clause} {build_clean} Identical outfit, proportions, stance and lighting "
+        f"across all four panels.\n\nShe is wearing: {outfit}. Change ONLY the clothing "
         "to this outfit.\n\nPhotorealistic RAW photograph quality, real skin "
         "texture, ultra-sharp detail.")
 
     def run(job: dict) -> dict:
-        row = generate.generate(prompt=prompt, system="", refs=refs, aspect="16:9",
-                                session=generate.new_session(f"create outfit: {safe}"),
-                                progress=job, meta={"outfit_create": req.outfit},
-                                # Wide canvas so four full-body panels fit side by side.
-                                extra={"image_size": {"width": 1536, "height": 1024}})
-        # Save the generated image as a clean wardrobe reference.
-        shutil.copy2(IMAGES / row["file"], WARDROBE / f"{safe}.png")
-        row["wardrobe_saved"] = safe
-        return row
+        # Generate only — no save. The image lands in data/images like any run;
+        # the user saves it into the wardrobe via /api/wardrobe/from-run after
+        # they see and approve the preview.
+        return generate.generate(prompt=prompt, system="", refs=refs, aspect="16:9",
+                                 session=generate.new_session(f"create outfit: {label}"),
+                                 progress=job,
+                                 meta={"outfit_create": req.outfit, "body": _bodies().get("active")},
+                                 # A revealing outfit turnaround can trip gpt-image-2's
+                                 # moderation; render it on the scene model instead of
+                                 # dead-spinning to a failure.
+                                 fallback_endpoint=SCENE_EDIT,
+                                 # Wide canvas so four full-body panels fit side by side.
+                                 extra={"image_size": {"width": 1536, "height": 1024}})
 
-    jid = generate.start_job(f"create outfit: {safe}", run)
+    jid = generate.start_job(f"create outfit: {label}", run)
     return {"job": jid}
 
 
@@ -681,6 +1077,8 @@ def pose_ref_delete(name: str):
 
 class ShotReq(BaseModel):
     brief: str = ""              # the ONLY thing the user writes
+    prompt: str | None = None    # AI-written (Claude) prompt, edited by the user;
+                                 # used VERBATIM when present instead of the template
     pose_name: str | None = None
     use_pose_image: bool = False
     aspect: str = "3:4"
@@ -689,6 +1087,37 @@ class ShotReq(BaseModel):
     pose_id: str | None = None       # a pose from the text library
     pose_ref_id: str | None = None   # a pose REFERENCE image, attached as @image3
     shot_type: str = "candid"
+    resolution: str | None = None    # "1K" | "2K" | "4K" (nano). None -> config default
+
+
+class AiPromptReq(BaseModel):
+    brief: str = ""
+    wardrobe_id: str | None = None
+    pose_id: str | None = None
+    pose_ref_id: str | None = None
+    shot_type: str = "candid"
+
+
+@app.post("/api/shot/ai-prompt")
+def ai_prompt(req: AiPromptReq):
+    """Claude rewrites the brief into a full fal prompt. Reviewable before use.
+
+    Claude expands the SCENE from the brief but is forbidden to describe her —
+    identity stays with @image1, per the measured 0.86->0.53 finding. The result
+    runs through the same moderation sanitiser and is returned for the user to
+    edit; it is not sent to fal until they generate.
+    """
+    pose_text = promptlib.POSES_LIBRARY.get(req.pose_id or "", "")
+    pose_ref_tag = "@image3" if req.pose_ref_id else ""
+    try:
+        raw = prompter.rewrite(
+            req.brief, shot_type=req.shot_type,
+            has_wardrobe=bool(req.wardrobe_id), pose_ref_tag=pose_ref_tag,
+            pose_text=pose_text)
+    except prompter.PrompterError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    clean, sanitised = promptlib.sanitise(raw)
+    return {"prompt": clean, "sanitised": sanitised}
 
 
 @app.post("/api/shot")
@@ -715,7 +1144,7 @@ def shot(req: ShotReq):
         w = _find_by_id(WARDROBE, req.wardrobe_id)
         if not w:
             raise HTTPException(400, f"no such wardrobe: {req.wardrobe_id}")
-        refs.append(w)          # @image2 = outfit
+        refs.append(_outfit_ref(w))   # @image2 = outfit, head cropped off (no competing face)
         has_wardrobe = True
     else:
         # No outfit chosen: fall back to the body reference for build (@image2).
@@ -733,10 +1162,23 @@ def shot(req: ShotReq):
         refs.append(pr)
         pose_ref_tag = "@image3"
 
-    pose_text = promptlib.POSES_LIBRARY.get(req.pose_id or "", "")
-    text, sanitised = promptlib.compose_tagged(
-        req.brief, pose_text=pose_text, has_wardrobe=has_wardrobe,
-        pose_ref_tag=pose_ref_tag, shot_type=req.shot_type)
+    # Body-shape tuning from the editable body parts — folded into BOTH paths so
+    # bust/waist/hips edits actually change the output. The AI prompter is barred
+    # from describing her body, so it's appended after Claude's scene prompt.
+    build_text = promptlib.build_clause(_load_parts())
+    if req.prompt and req.prompt.strip():
+        # AI-written (and user-edited) prompt: use it verbatim, only running the
+        # moderation sanitiser so a trigger can't slip through. The reference
+        # tags (@image1/2/3) are the user's/Claude's responsibility here.
+        base = req.prompt.strip()
+        if build_text:
+            base = f"{base} {build_text}"
+        text, sanitised = promptlib.sanitise(base)
+    else:
+        pose_text = promptlib.POSES_LIBRARY.get(req.pose_id or "", "")
+        text, sanitised = promptlib.compose_tagged(
+            req.brief, pose_text=pose_text, has_wardrobe=has_wardrobe,
+            pose_ref_tag=pose_ref_tag, build_text=build_text, shot_type=req.shot_type)
     label = req.brief.strip()[:60] or "untitled shot"
     session = generate.new_session(label)
 
@@ -744,9 +1186,15 @@ def shot(req: ShotReq):
         return generate.generate(
             prompt=text, system="", refs=refs, aspect=req.aspect,
             seed=req.seed, session=session, progress=job,
+            # If gpt-image-2 refuses a revealing outfit on content_policy, render
+            # it on the scene model instead (weaker identity, recorded) rather
+            # than dead-spinning to a failure.
+            fallback_endpoint=SCENE_EDIT,
+            resolution=req.resolution,
             meta={"brief": req.brief, "bio_references": [p.name for p in refs],
                   "wardrobe": req.wardrobe_id, "pose_id": req.pose_id,
-                  "pose_ref": req.pose_ref_id, "sanitised": sanitised},
+                  "pose_ref": req.pose_ref_id, "sanitised": sanitised,
+                  "ai_prompt": bool(req.prompt and req.prompt.strip())},
         )
 
     jid = generate.start_job(label, run)
@@ -773,7 +1221,7 @@ def shot_preview(req: ShotPreviewReq):
     pose_text = promptlib.POSES_LIBRARY.get(req.pose_id or "", "")
     text, sanitised = promptlib.compose_tagged(
         req.brief, pose_text=pose_text, has_wardrobe=bool(req.wardrobe_id),
-        shot_type=req.shot_type)
+        build_text=promptlib.build_clause(_load_parts()), shot_type=req.shot_type)
     tags = ["@image1 = face"]
     if req.wardrobe_id:
         tags.append(f"@image2 = outfit ({req.wardrobe_id})")
@@ -781,6 +1229,96 @@ def shot_preview(req: ShotPreviewReq):
         tags.append("@image2 = body/build")
     return {"prompt": text, "chars": len(text), "reference": _bio_ref(),
             "image_tags": tags, "sanitised": sanitised}
+
+
+# ------------------------------------------------------ learning from approvals
+# Human approvals drive LEARNING — but never the gallery. Feeding approved output
+# back into the yardstick drifts it toward the generator (the number climbs while
+# the identity walks away; see gate.py). So approvals do two SAFE things instead:
+#   1. Analytics — keep-rate by pose/outfit, so you learn which recipes work.
+#   2. A gold set — the curated dataset a future LoRA trains on, kept apart from
+#      the frozen gate.
+
+def _shots() -> list[dict]:
+    """Runs that are actual shots (have a brief) — not calibration/body/outfit gen."""
+    return [r for r in generate.all_runs() if "brief" in (r.get("meta") or {})]
+
+
+@app.get("/api/stats")
+def stats():
+    rows = _shots()
+    total = len(rows)
+
+    def rate(sub, key):
+        n = len(sub)
+        return round(sum(1 for r in sub if (r.get(key[0]) or {}).get(key[1]) == key[2]) / n, 3) if n else 0.0
+
+    def bucket(keyfn):
+        b: dict[str, dict] = {}
+        for r in rows:
+            k = keyfn(r) or "—"
+            e = b.setdefault(k, {"key": k, "n": 0, "kept": 0, "approved": 0})
+            e["n"] += 1
+            if (r.get("verdict") or {}).get("status") == "kept":
+                e["kept"] += 1
+            if r.get("mark") == "approve":
+                e["approved"] += 1
+        out = []
+        for e in b.values():
+            e["keep_rate"] = round(e["kept"] / e["n"], 2)
+            e["approve_rate"] = round(e["approved"] / e["n"], 2)
+            out.append(e)
+        return sorted(out, key=lambda e: (-e["n"], e["key"]))
+
+    kept = sum(1 for r in rows if (r.get("verdict") or {}).get("status") == "kept")
+    approved = sum(1 for r in rows if r.get("mark") == "approve")
+    rejected = sum(1 for r in rows if r.get("mark") == "reject")
+    return {
+        "total": total,
+        "gate": {"kept": kept, "keep_rate": round(kept / total, 2) if total else 0},
+        "marks": {"approved": approved, "rejected": rejected,
+                  "unmarked": total - approved - rejected},
+        "gold_set": approved,
+        "gold_on_disk": len(list(GOLD.glob("*.png"))),
+        "by_pose": bucket(lambda r: (r.get("meta") or {}).get("pose_id")),
+        "by_outfit": bucket(lambda r: (r.get("meta") or {}).get("wardrobe")),
+    }
+
+
+@app.post("/api/gold/export")
+def gold_export():
+    """Copy every human-APPROVED shot into data/gold/ — the curated LoRA dataset.
+
+    Approvals accumulate here, NEVER in the gallery: the gallery is the frozen
+    yardstick, and feeding generated output back into it drifts the measure. The
+    gold set is a separate artifact — the training data for a future Flux LoRA.
+    """
+    GOLD.mkdir(exist_ok=True)
+    n = 0
+    for r in _shots():
+        if r.get("mark") == "approve":
+            src = IMAGES / r["file"]
+            if src.exists():
+                shutil.copy2(src, GOLD / r["file"])
+                n += 1
+    return {"exported": n, "gold_on_disk": len(list(GOLD.glob("*.png"))),
+            "path": str(GOLD)}
+
+
+@app.post("/api/runs/purge-rejected")
+def purge_rejected():
+    """Delete every human-REJECTED shot — image, thumbnail and ledger row. At
+    ~20 MB apiece the rejects pile up fast; this reclaims the disk in one go."""
+    ids = {r["id"] for r in generate.all_runs() if r.get("mark") == "reject"}
+    removed = generate.delete_runs(ids)
+    freed = 0
+    for r in removed:
+        p = IMAGES / r["file"]
+        if p.exists():
+            freed += p.stat().st_size
+            p.unlink(missing_ok=True)
+        (THUMBS / f"{Path(r['file']).stem}.jpg").unlink(missing_ok=True)
+    return {"deleted": len(removed), "freed_mb": round(freed / 1e6, 1)}
 
 
 @app.get("/api/health")
