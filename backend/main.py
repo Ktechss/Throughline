@@ -1336,7 +1336,7 @@ def purge_rejected():
         if p.exists():
             freed += p.stat().st_size
             p.unlink(missing_ok=True)
-        (THUMBS / f"{Path(r['file']).stem}.jpg").unlink(missing_ok=True)
+        (IMAGES / ".thumbs" / f"{Path(r['file']).stem}.jpg").unlink(missing_ok=True)
     return {"deleted": len(removed), "freed_mb": round(freed / 1e6, 1)}
 
 
