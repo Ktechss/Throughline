@@ -24,6 +24,7 @@ export default function VideoStudio({ runs, cameraMoves = [], models = [], video
   const [duration, setDuration] = useState(5)
   const [seed, setSeed] = useState('')
   const [safety, setSafety] = useState(true)
+  const [keepAudio, setKeepAudio] = useState(true)
   const [scenario, setScenario] = useState('')
   const [directing, setDirecting] = useState(false)
   const [note, setNote] = useState('')
@@ -63,6 +64,7 @@ export default function VideoStudio({ runs, cameraMoves = [], models = [], video
       run_id: selected.id, file: selected.file, camera_move: move, model,
       extra: extra.trim(), dialogue: isHH ? dialogue.trim() : '',
       resolution, duration: Number(duration), enable_safety_checker: safety,
+      keep_audio: isHH ? keepAudio : true,
       seed: seed.trim() === '' ? null : Number(seed),
     })
   }
@@ -178,7 +180,15 @@ export default function VideoStudio({ runs, cameraMoves = [], models = [], video
                   {safety ? 'on (moderated)' : 'off'}
                 </button>
               </Field>
+              <Field label="audio">
+                <button onClick={() => setKeepAudio((a) => !a)}
+                  title="happy-horse always generates audio; off strips it to a silent clip"
+                  className={`h-9 w-full rounded-md border text-xs ${keepAudio ? 'border-[#4ea1ff] bg-[#123049] text-[#9fd0ff]' : 'border-[#2a2a34] text-[#a9a9b6]'}`}>
+                  {keepAudio ? 'keep audio' : 'silent'}
+                </button>
+              </Field>
             </div>
+            {!dialogue.trim() && keepAudio && <p className="text-[11px] text-[#d99a2b]">No dialogue — happy-horse will add its own ambient/music. Set audio to "silent" to drop it.</p>}
             {!safety && <p className="text-[11px] text-[#d99a2b]">Safety checker off disables NSFW filtering — keep it on for normal content.</p>}
           </div>
         )}

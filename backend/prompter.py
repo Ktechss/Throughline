@@ -170,9 +170,11 @@ _VIDEO_SYSTEM = (
     "toward or moves away from camera, any pause or turn. Keep the FRAMING the "
     "scenario asks for (full-body / wide for a walk; waist-up or close for "
     "talking). Concrete and physical. No AI-slop words.\n"
-    "4. camera_move — pick ONE from exactly: static, dolly-in, orbit, crash-zoom, "
-    "pull-back. For a subject who walks toward the camera, prefer 'static' (let "
-    "HER move) or a gentle 'dolly-in'.\n"
+    "4. camera_move — pick ONE from the exact list of valid moves given in the "
+    "user message (they cover framing angles, dolly/zoom pushes, pans/tilts/"
+    "cranes, orbits, and handheld/FPV/whip specials). For a subject who walks "
+    "toward the camera, prefer 'static' (let HER move) or a gentle 'dolly-in'; "
+    "match the move to the mood.\n"
     "5. model — 'happy-horse' when she SPEAKS (it lip-syncs dialogue); 'seedance' "
     "for silent motion/action (stronger, cleaner body and scene movement).\n"
     "6. duration — an integer 3-15 seconds that fits the action/dialogue.\n"
@@ -198,12 +200,17 @@ def direct_video(scenario: str) -> dict:
     except ImportError as exc:  # pragma: no cover
         raise PrompterError("the 'anthropic' package is not installed") from exc
 
+    from . import video as _video
+    moves = ", ".join(_video.CAMERA_MOVES.keys())
+
     client = anthropic.Anthropic()
     try:
         msg = client.messages.create(
             model="claude-opus-4-8", max_tokens=700, system=_VIDEO_SYSTEM,
             messages=[{"role": "user",
-                       "content": f"Scenario: {scenario.strip()}\n\nWrite the JSON clip plan now."}])
+                       "content": (f"Scenario: {scenario.strip()}\n\n"
+                                   f"Valid camera_move values (pick exactly one): {moves}\n\n"
+                                   "Write the JSON clip plan now.")}])
     except anthropic.APIStatusError as exc:
         raise PrompterError(f"Claude API error: {exc.message}"[:300]) from exc
     except anthropic.APIConnectionError as exc:
@@ -234,7 +241,7 @@ def direct_video(scenario: str) -> dict:
     return {
         "dialogue": dialogue,
         "scene": str(d.get("scene") or "").strip(),
-        "camera_move": cam if cam in ("static", "dolly-in", "orbit", "crash-zoom", "pull-back") else "dolly-in",
+        "camera_move": cam if cam in _video.CAMERA_MOVES else "dolly-in",
         "model": mdl,
         "duration": dur,
         "resolution": res if res in ("720p", "1080p") else "1080p",

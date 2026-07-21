@@ -34,14 +34,47 @@ MODELS = {"seedance": SEEDANCE, "kling": KLING, "happy-horse": HAPPY_HORSE}
 # camera move -> (prompt fragment, camera_fixed). Big moves (orbit, crash-zoom)
 # turn her head off-axis and cost identity — that's the yaw law, and the frame
 # gate reports it. Gentle moves (dolly, static) keep her frontal and on-model.
-# Camera-ONLY descriptions — the SUBJECT's motion comes from the scene/extra text
-# (or the director), so these must not pin her still or they fight an action clip.
+# Camera library — descriptions of the CAMERA only (the SUBJECT's motion comes
+# from the scene/extra text), so a move never pins her still and fights an action
+# clip. Each entry: (prompt fragment, camera_fixed). Curated from the standard
+# cinematography vocabulary + Higgsfield's preset library, kept to the moves that
+# translate reliably to text-prompt video models (Seedance / Kling / happy-horse).
 CAMERA_MOVES = {
-    "static":     ("The camera is locked off and steady.", True),
-    "dolly-in":   ("The camera pushes in smoothly toward her.", False),
-    "orbit":      ("The camera slowly orbits around her.", False),
-    "crash-zoom": ("The camera crash-zooms in fast, a dramatic push.", False),
-    "pull-back":  ("The camera slowly pulls back.", False),
+    # --- static / framing angles (camera holds; the shot's ANGLE is the choice) ---
+    "static":        ("The camera is locked off and steady.", True),
+    "low-angle":     ("Low-angle shot from below, looking up at her — she reads tall and powerful.", True),
+    "high-angle":    ("High-angle shot from above, looking down at her.", True),
+    "overhead":      ("Overhead top-down shot looking straight down at her.", True),
+    "dutch-angle":   ("Dutch angle — the frame canted off-level for tension.", True),
+    "over-shoulder": ("Over-the-shoulder framing, looking past her shoulder.", True),
+    # --- push / pull (dolly & zoom on the lens axis) ---
+    "dolly-in":      ("The camera pushes in smoothly toward her.", False),
+    "dolly-out":     ("The camera pulls back smoothly away from her.", False),
+    "super-dolly-in": ("A fast, aggressive super dolly straight in toward her.", False),
+    "crash-zoom":    ("The camera crash-zooms in fast, a dramatic snap push.", False),
+    "crash-zoom-out": ("The camera crash-zooms out fast, snapping wide.", False),
+    "dolly-zoom":    ("A dolly-zoom (vertigo effect) — the camera pushes in while zooming out, the background warping around her.", False),
+    "pull-back":     ("The camera slowly pulls back to reveal the full scene.", False),
+    "aerial-pullback": ("The camera pulls back and rises into a wide aerial reveal.", False),
+    # --- lateral / vertical ---
+    "pan-left":      ("The camera pans smoothly to the left.", False),
+    "pan-right":     ("The camera pans smoothly to the right.", False),
+    "truck":         ("The camera tracks laterally alongside her.", False),
+    "tilt-up":       ("The camera tilts upward.", False),
+    "tilt-down":     ("The camera tilts downward.", False),
+    "crane-up":      ("The camera cranes upward, rising above her.", False),
+    "crane-down":    ("The camera cranes downward toward her.", False),
+    # --- rotational ---
+    "orbit":         ("The camera slowly orbits around her.", False),
+    "arc":           ("The camera arcs around her in a smooth semicircle.", False),
+    "360-orbit":     ("The camera makes a full 360-degree orbit around her.", False),
+    "bullet-time":   ("Bullet-time — the camera whips around her in a frozen moment as she holds still.", False),
+    # --- special / handheld ---
+    "handheld":      ("Handheld camera with subtle natural shake, a candid documentary feel.", False),
+    "whip-pan":      ("A fast whip pan with motion blur.", False),
+    "fpv-drone":     ("A fast FPV drone shot flying in toward and around her, dynamic and immersive.", False),
+    "snorricam":     ("Snorricam — the camera rig-mounted to her body, she stays fixed in frame while the world moves behind her.", False),
+    "focus-pull":    ("A rack focus pulling from the foreground onto her.", False),
 }
 
 
@@ -56,6 +89,22 @@ def _upload_seed(path: Path) -> str:
         return fal_client.upload_file(str(tmp))
     finally:
         tmp.unlink(missing_ok=True)
+
+
+def _strip_audio(path: Path) -> bool:
+    """Remove the audio track in place (happy-horse forces audio; this is the only
+    way to get a silent clip). Returns True if it stripped."""
+    import subprocess
+    import imageio_ffmpeg
+    exe = imageio_ffmpeg.get_ffmpeg_exe()
+    tmp = path.with_suffix(".mute.mp4")
+    subprocess.run([exe, "-y", "-i", str(path), "-c", "copy", "-an", str(tmp)],
+                   capture_output=True)
+    if tmp.exists() and tmp.stat().st_size > 10_000:
+        tmp.replace(path)
+        return True
+    tmp.unlink(missing_ok=True)
+    return False
 
 
 def _score_frames(video_path: Path) -> list[dict]:
@@ -86,7 +135,8 @@ def _score_frames(video_path: Path) -> list[dict]:
 def animate(still: Path, *, camera_move: str = "dolly-in", model: str = "seedance",
             extra: str = "", prompt_override: str = "", dialogue: str = "",
             resolution: str = "1080p", duration: int = 5, seed: int | None = None,
-            enable_safety_checker: bool = True, progress: dict | None = None) -> dict:
+            enable_safety_checker: bool = True, keep_audio: bool = True,
+            progress: dict | None = None) -> dict:
     """Animate `still` into a clip on fal, gate its frames, and record it.
 
     prompt_override wins if given; else the prompt is built from the camera move +
@@ -138,6 +188,13 @@ def animate(still: Path, *, camera_move: str = "dolly-in", model: str = "seedanc
         dest.unlink(missing_ok=True)
         raise RuntimeError("truncated video download")
 
+    # happy-horse forces audio; strip it if the user asked for a silent clip
+    muted = False
+    if not keep_audio:
+        if progress is not None:
+            progress["stage"] = "muting"
+        muted = _strip_audio(dest)
+
     if progress is not None:
         progress["stage"] = "gating frames"
     frames = _score_frames(dest)
@@ -146,7 +203,8 @@ def animate(still: Path, *, camera_move: str = "dolly-in", model: str = "seedanc
            "camera_move": camera_move, "model": model, "endpoint": ep,
            "prompt": prompt, "dialogue": dialogue.strip() or None,
            "resolution": resolution, "duration": int(duration),
-           "created": time.strftime("%Y-%m-%dT%H:%M:%S"), "frames": frames}
+           "audio": not muted, "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
+           "frames": frames}
     rows = _ledger()
     rows.append(row)
     VIDEOS_META.write_text(json.dumps(rows, indent=2) + "\n")

@@ -1358,6 +1358,7 @@ class AnimateReq(BaseModel):
     duration: int = 5            # happy-horse: 3..15 seconds
     seed: int | None = None
     enable_safety_checker: bool = True
+    keep_audio: bool = True      # happy-horse forces audio; false strips it post-gen
 
 
 @app.post("/api/animate")
@@ -1380,7 +1381,8 @@ def animate(req: AnimateReq):
             still, camera_move=req.camera_move, model=req.model, extra=req.extra,
             prompt_override=req.prompt_override, dialogue=req.dialogue,
             resolution=req.resolution, duration=req.duration, seed=req.seed,
-            enable_safety_checker=req.enable_safety_checker, progress=job)
+            enable_safety_checker=req.enable_safety_checker,
+            keep_audio=req.keep_audio, progress=job)
 
     label = "talk" if req.dialogue.strip() else req.camera_move
     return {"job": generate.start_job(f"animate: {label}", run)}
