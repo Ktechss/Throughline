@@ -35,7 +35,7 @@ export default function Shoot({
     <main className="mx-auto max-w-[1180px] space-y-6 px-5 py-7">
       <button onClick={goBio} className="flex w-full items-center gap-3 rounded-lg border border-[#284d72] bg-[#101923] p-3 text-left">
         {bio?.reference
-          ? <img src={`/api/refs/${bio.reference}/file`} className="h-11 w-11 rounded object-cover" alt="bio" />
+          ? <img src={`/api/refs/${bio.reference}/thumb`} loading="lazy" className="h-11 w-11 rounded object-cover" alt="bio" />
           : <div className="flex h-11 w-11 items-center justify-center rounded bg-[#1b2b3d] text-[#d99a2b]">!</div>}
         <div>
           <span className="eve-label text-[#67aff8]">{bio?.reference ? 'BIO · identity locked' : 'BIO · not set'}</span>

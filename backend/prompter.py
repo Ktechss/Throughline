@@ -180,16 +180,25 @@ _VIDEO_SYSTEM = (
     "6. duration — an integer 3-15 seconds that fits the action/dialogue.\n"
     "7. resolution — '1080p' by default (hero/close/talking shots); '720p' only "
     "for a very long or quick throwaway clip.\n"
-    "8. note — ONE short sentence for the user explaining why you picked this "
-    "model / camera / duration, so they trust the defaults. These are tuned for "
-    "the scene — the user can override any of them, but shouldn't need to.\n\n"
+    "8. image_brief — describe the STILL PHOTO to generate that this clip will "
+    "animate: the location/setting, the FRAMING (a waist-up or close portrait for "
+    "a talking clip so her face is large; full-body/wide for a walk or full-look "
+    "reveal), her pose, and the mood/light. This is a photo brief, not the motion "
+    "— still NEVER describe her face or identity.\n"
+    "9. wardrobe — from the exact wardrobe id list given in the user message, pick "
+    "the ONE outfit that best fits the scene (a wedding -> a saree/ethnic look; a "
+    "club/gala -> a gown; office -> workwear; casual day -> everyday). Return an "
+    "empty string if none clearly fits or the scene doesn't call for a set look.\n"
+    "10. note — ONE short sentence explaining your picks (outfit, model, camera, "
+    "duration) so the user trusts the defaults. They can override anything.\n\n"
     "Output ONLY a JSON object, no prose, no code fences: {\"dialogue\": string, "
-    "\"scene\": string, \"camera_move\": string, \"model\": string, "
-    "\"duration\": integer, \"resolution\": string, \"note\": string}."
+    "\"scene\": string, \"image_brief\": string, \"wardrobe\": string, "
+    "\"camera_move\": string, \"model\": string, \"duration\": integer, "
+    "\"resolution\": string, \"note\": string}."
 )
 
 
-def direct_video(scenario: str) -> dict:
+def direct_video(scenario: str, wardrobe_ids: list[str] | None = None) -> dict:
     """Expand a scenario into a clip plan for the video studio. Raises PrompterError."""
     if not scenario.strip():
         raise PrompterError("describe a scenario first — the director needs something to work with")
@@ -202,14 +211,16 @@ def direct_video(scenario: str) -> dict:
 
     from . import video as _video
     moves = ", ".join(_video.CAMERA_MOVES.keys())
+    wardrobe = ", ".join(wardrobe_ids or []) or "(none available)"
 
     client = anthropic.Anthropic()
     try:
         msg = client.messages.create(
-            model="claude-opus-4-8", max_tokens=700, system=_VIDEO_SYSTEM,
+            model="claude-opus-4-8", max_tokens=900, system=_VIDEO_SYSTEM,
             messages=[{"role": "user",
                        "content": (f"Scenario: {scenario.strip()}\n\n"
                                    f"Valid camera_move values (pick exactly one): {moves}\n\n"
+                                   f"Wardrobe ids to choose from (pick one that fits, or empty): {wardrobe}\n\n"
                                    "Write the JSON clip plan now.")}])
     except anthropic.APIStatusError as exc:
         raise PrompterError(f"Claude API error: {exc.message}"[:300]) from exc
@@ -238,9 +249,14 @@ def direct_video(scenario: str) -> dict:
     if mdl not in ("happy-horse", "seedance", "kling"):
         mdl = "happy-horse" if dialogue else "seedance"
     res = str(d.get("resolution", "1080p")).strip()
+    ward = str(d.get("wardrobe") or "").strip()
+    if wardrobe_ids is not None and ward and ward not in wardrobe_ids:
+        ward = ""   # the director must pick a real id or nothing
     return {
         "dialogue": dialogue,
         "scene": str(d.get("scene") or "").strip(),
+        "image_brief": str(d.get("image_brief") or "").strip(),
+        "wardrobe": ward,
         "camera_move": cam if cam in _video.CAMERA_MOVES else "dolly-in",
         "model": mdl,
         "duration": dur,

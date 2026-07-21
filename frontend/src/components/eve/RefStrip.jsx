@@ -15,7 +15,7 @@ export default function RefStrip({ title, tag, items, selected, onSelect, onUplo
         {items.map((item) => (
           <button key={item.id} onClick={() => onSelect(item.id)}
             className={`ref-card overflow-hidden ${selected === item.id ? 'ref-active' : ''}`}>
-            <img src={`${urlBase}/${item.file}/file`} alt="" /><small>{item.id}</small>
+            <img src={`${urlBase}/${item.file}/thumb`} loading="lazy" decoding="async" alt="" /><small>{item.id}</small>
           </button>
         ))}
         <label className="ref-card cursor-pointer border-dashed">

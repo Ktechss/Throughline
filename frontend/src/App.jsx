@@ -208,6 +208,22 @@ export default function App() {
     try { return await api.send('/api/video-direct', 'POST', { scenario }) }
     catch (e) { setErr(String(e)); throw e }
   }
+  // Phase 3: generate the scene still (brief + matched wardrobe) to animate.
+  const generateSceneStill = async ({ brief, wardrobe }) => {
+    setErr(null)
+    const { job: jid } = await api.send('/api/shot', 'POST', {
+      brief, wardrobe_id: wardrobe || null, aspect: '9:16', resolution: '2K',
+    })
+    for (;;) {
+      await new Promise((r) => setTimeout(r, 1800))
+      const st = await api.get(`/api/jobs/${jid}`)
+      if (st.done) {
+        if (st.error) throw new Error(String(st.error))
+        await refresh()
+        return st.run   // { id, file, verdict, ... }
+      }
+    }
+  }
   const animate = async (payload) => {
     setVideoBusy('starting…'); setErr(null)
     try {
@@ -313,7 +329,7 @@ export default function App() {
           }} />
       )}
 
-      {tab === 'video' && <VideoStudio runs={runs} cameraMoves={cameraMoves.moves} models={cameraMoves.models} videos={videos} onAnimate={animate} onDirect={videoDirect} busy={videoBusy} stamp={stamp} />}
+      {tab === 'video' && <VideoStudio runs={runs} cameraMoves={cameraMoves.moves} models={cameraMoves.models} videos={videos} onAnimate={animate} onDirect={videoDirect} onGenerateStill={generateSceneStill} busy={videoBusy} stamp={stamp} />}
 
       {tab === 'review' && <Review runs={runs} onOpen={setDetail} onMark={mark} stats={stats} onExportGold={exportGold} onPurgeRejected={purgeRejected} />}
 

@@ -231,26 +231,44 @@ def image(name: str):
     return FileResponse(p)
 
 
-# Generated images are 3584x4800 / ~20 MB each. A grid rendering the full files
-# downloads hundreds of MB and decodes each to a ~69 MB bitmap in the browser —
-# the archive would sink the UI as it grows. Grids request this cached ~512px
-# JPEG thumbnail instead; the full image is only fetched in the detail view.
-THUMBS = IMAGES / ".thumbs"
+# Generated images and wardrobe turnarounds are 3584x4800 / ~18-20 MB each. A grid
+# rendering the full files downloads hundreds of MB (the wardrobe strip alone was
+# ~433 MB) and decodes each to a huge bitmap in the browser — it sinks the UI.
+# Grids request this cached ~512px JPEG thumbnail instead; the full image is only
+# fetched in a detail view.
+def _serve_thumb(src_dir: Path, name: str, box: tuple[int, int] = (512, 512)):
+    src = src_dir / Path(name).name
+    if not src.exists():
+        raise HTTPException(404, name)
+    cache_dir = src_dir / ".thumbs"
+    cache_dir.mkdir(exist_ok=True)
+    cache = cache_dir / f"{Path(name).stem}.jpg"
+    if not cache.exists() or cache.stat().st_mtime < src.stat().st_mtime:
+        from PIL import Image
+        im = Image.open(src).convert("RGB")
+        im.thumbnail(box)
+        im.save(cache, "JPEG", quality=80)
+    return FileResponse(cache)
 
 
 @app.get("/api/images/{name}/thumb")
 def image_thumb(name: str):
-    src = IMAGES / Path(name).name
-    if not src.exists():
-        raise HTTPException(404, name)
-    THUMBS.mkdir(exist_ok=True)
-    cache = THUMBS / f"{Path(name).stem}.jpg"
-    if not cache.exists() or cache.stat().st_mtime < src.stat().st_mtime:
-        from PIL import Image
-        im = Image.open(src).convert("RGB")
-        im.thumbnail((512, 512))
-        im.save(cache, "JPEG", quality=80)
-    return FileResponse(cache)
+    return _serve_thumb(IMAGES, name)
+
+
+@app.get("/api/wardrobe/{name}/thumb")
+def wardrobe_thumb(name: str):
+    return _serve_thumb(WARDROBE, name, (256, 384))
+
+
+@app.get("/api/pose-refs/{name}/thumb")
+def pose_ref_thumb(name: str):
+    return _serve_thumb(POSE_REFS, name, (256, 384))
+
+
+@app.get("/api/refs/{name}/thumb")
+def ref_thumb(name: str):
+    return _serve_thumb(REFS, name, (256, 384))
 
 
 # ---------------------------------------------------------------- gallery
@@ -1339,9 +1357,10 @@ class VideoDirectReq(BaseModel):
 
 @app.post("/api/video-direct")
 def video_direct(req: VideoDirectReq):
-    """Claude directs a scenario into a clip plan: dialogue, scene, camera, duration."""
+    """Claude directs a scenario into a full clip plan: outfit, image brief,
+    dialogue, scene motion, camera, model, duration."""
     try:
-        return prompter.direct_video(req.scenario)
+        return prompter.direct_video(req.scenario, [w["id"] for w in _wardrobe()])
     except prompter.PrompterError as exc:
         raise HTTPException(400, str(exc)) from exc
 

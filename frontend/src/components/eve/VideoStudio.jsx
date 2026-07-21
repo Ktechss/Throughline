@@ -14,7 +14,7 @@ const MODEL_NOTE = {
 
 // Animate a gate-approved still on fal. happy-horse adds a full configurator:
 // dialogue (auto lip-sync), resolution, duration, seed, safety checker.
-export default function VideoStudio({ runs, cameraMoves = [], models = [], videos = [], onAnimate, onDirect, busy, stamp = 0 }) {
+export default function VideoStudio({ runs, cameraMoves = [], models = [], videos = [], onAnimate, onDirect, onGenerateStill, busy, stamp = 0 }) {
   const [still, setStill] = useState(null)
   const [move, setMove] = useState('dolly-in')
   const [model, setModel] = useState('happy-horse')
@@ -28,6 +28,9 @@ export default function VideoStudio({ runs, cameraMoves = [], models = [], video
   const [scenario, setScenario] = useState('')
   const [directing, setDirecting] = useState(false)
   const [note, setNote] = useState('')
+  const [imageBrief, setImageBrief] = useState('')
+  const [wardrobe, setWardrobe] = useState('')
+  const [stillBusy, setStillBusy] = useState(false)
 
   const direct = async () => {
     if (!scenario.trim() || directing) return
@@ -41,7 +44,18 @@ export default function VideoStudio({ runs, cameraMoves = [], models = [], video
       if (plan.duration) setDuration(plan.duration)
       if (plan.resolution) setResolution(plan.resolution)
       setNote(plan.note || '')
+      setImageBrief(plan.image_brief || '')
+      setWardrobe(plan.wardrobe || '')
     } catch { /* error surfaced by App */ } finally { setDirecting(false) }
+  }
+
+  const makeStill = async () => {
+    if (!imageBrief.trim() || stillBusy) return
+    setStillBusy(true)
+    try {
+      const run = await onGenerateStill({ brief: imageBrief.trim(), wardrobe })
+      if (run?.id) setStill(run.id)   // auto-select the fresh scene still
+    } catch { /* surfaced by App */ } finally { setStillBusy(false) }
   }
 
   // pickable = the gate kept it OR you approved it by hand (the mark override)
@@ -123,6 +137,21 @@ export default function VideoStudio({ runs, cameraMoves = [], models = [], video
           <div className="mt-3 flex items-start gap-2 rounded-lg border border-[#284d72] bg-[#101923] p-3">
             <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#4ea1ff]" />
             <p className="text-xs text-[#8fb6dd]"><b className="text-[#c7dcf0]">Director's picks:</b> {note} <span className="text-[#6f8299]">— tuned for this scene; change anything below only if you want to.</span></p>
+          </div>
+        )}
+
+        {imageBrief && (
+          <div className="mt-3 rounded-lg border border-[#2a2a34] bg-[#0e0e12] p-3">
+            <div className="flex items-center gap-2">
+              <span className="eve-label">scene still to generate</span>
+              {wardrobe && <span className="eve-chip text-[#9fd0ff]">outfit: {wardrobe}</span>}
+            </div>
+            <p className="mt-1.5 text-xs text-[#a9a9b6]">{imageBrief}</p>
+            <button onClick={makeStill} disabled={stillBusy}
+              className="eve-button mt-3 bg-[#173a2c] text-[#62d99d] disabled:opacity-40">
+              {stillBusy ? <><LoaderCircle className="h-4 w-4 animate-spin" /> generating still…</> : <><Wand2 className="h-3.5 w-3.5" /> generate scene still {wardrobe ? `(${wardrobe})` : ''}</>}
+            </button>
+            <span className="ml-3 text-[11px] text-[#8a8a99]">makes the outfit-matched still in eve1, gates it, and selects it above</span>
           </div>
         )}
       </section>
