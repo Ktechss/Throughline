@@ -2,7 +2,7 @@ import { X, Check, Ban } from 'lucide-react'
 import VerdictChips from './VerdictChips'
 import { ep, runView } from '@/lib/eve'
 
-export default function OriginModal({ run, wardrobe, poseRefs, onClose, onMark, onToWardrobe, onToPoseRef }) {
+export default function OriginModal({ run, wardrobe, poseRefs, onClose, onMark, onToWardrobe, onToPoseRef, stamp }) {
   if (!run) return null
   const v = runView(run)
   const m = run.meta || {}
@@ -60,9 +60,9 @@ export default function OriginModal({ run, wardrobe, poseRefs, onClose, onMark, 
           )}
           <p className="eve-label mt-6">references used</p>
           <div className="mt-2 flex flex-wrap gap-3">
-            {face && <figure className="m-0 w-24"><img src={`/api/refs/${face}/file`} onError={hide} className="h-28 w-24 rounded object-cover" alt="face" /><figcaption className="mt-1 truncate text-[9px] text-[#777785]">face · {face}</figcaption></figure>}
-            {outfitFile && <figure className="m-0 w-24"><img src={`/api/wardrobe/${outfitFile}/file`} onError={hide} className="h-28 w-24 rounded object-cover" alt="outfit" /><figcaption className="mt-1 truncate text-[9px] text-[#777785]">outfit · {m.wardrobe}</figcaption></figure>}
-            {poseFile && <figure className="m-0 w-24"><img src={`/api/pose-refs/${poseFile}/file`} onError={hide} className="h-28 w-24 rounded object-cover" alt="pose" /><figcaption className="mt-1 truncate text-[9px] text-[#777785]">pose · {m.pose_ref}</figcaption></figure>}
+            {face && <figure className="m-0 w-24"><img src={`/api/refs/${face}/file?t=${stamp}`} onError={hide} className="h-28 w-24 rounded object-cover" alt="face" /><figcaption className="mt-1 truncate text-[9px] text-[#777785]">face · {face}</figcaption></figure>}
+            {outfitFile && <figure className="m-0 w-24"><img src={`/api/wardrobe/${outfitFile}/file?t=${stamp}`} onError={hide} className="h-28 w-24 rounded object-cover" alt="outfit" /><figcaption className="mt-1 truncate text-[9px] text-[#777785]">outfit · {m.wardrobe}</figcaption></figure>}
+            {poseFile && <figure className="m-0 w-24"><img src={`/api/pose-refs/${poseFile}/file?t=${stamp}`} onError={hide} className="h-28 w-24 rounded object-cover" alt="pose" /><figcaption className="mt-1 truncate text-[9px] text-[#777785]">pose · {m.pose_ref}</figcaption></figure>}
           </div>
           <p className="mt-2 font-mono text-[10px] text-[#565663]">attached in order: {(run.refs || []).join(' → ') || 'none'}</p>
         </div>

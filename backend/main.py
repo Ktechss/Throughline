@@ -328,10 +328,16 @@ class CalibFacesReq(BaseModel):
 
 @app.post("/api/calibrate/faces")
 def calibrate_faces(req: CalibFacesReq):
-    """Generate `count` canonical headshots (identity-locked) on the primary model."""
-    face = REFS / _bio_ref()
-    if not face.exists():
-        raise HTTPException(400, "no BIO face reference set")
+    """Generate `count` canonical headshots (identity-locked) on the primary model.
+
+    Faces are generated from the calibration SEED, not the BIO reference — so the
+    uploaded seed drives calibration without ever becoming the default identity.
+    """
+    cfg = _bio_cfg()
+    seed_name = cfg.get("calib_seed") or cfg.get("reference")
+    face = REFS / Path(seed_name).name if seed_name else None
+    if not face or not face.exists():
+        raise HTTPException(400, "no calibration seed — upload a base image first (Step 1)")
     n = max(1, min(req.count, len(CALIB_FACES)))
     jobs = []
     for angle, desc in CALIB_FACES[:n]:
@@ -341,10 +347,24 @@ def calibrate_faces(req: CalibFacesReq):
                   f"focus on the face.")
 
         def run(job: dict, prompt=prompt, angle=angle) -> dict:
-            return generate.generate(
+            row = generate.generate(
                 prompt=prompt, system="", refs=[face], aspect="3:4",
                 session=generate.new_session(f"calib face: {angle}"), progress=job,
                 meta={"calibrate": "face", "angle": angle})
+            # Keep EVERY generated calibration face in the reference library
+            # (advanced · face) so nothing is ever lost — the candidate copy in
+            # data/images can be purged, but this ref persists. The user curates
+            # and deletes by hand; we never drop one automatically. No-clobber
+            # naming means repeated calibrations accumulate (calib-front-1, …).
+            try:
+                src = IMAGES / row["file"]
+                if src.exists():
+                    dst = _unique_ref_path(f"calib-{angle}.png")
+                    shutil.copy2(src, dst)
+                    row.setdefault("meta", {})["calib_ref"] = dst.name
+            except Exception:  # noqa: BLE001 — a failed copy must not fail the gen
+                pass
+            return row
 
         jobs.append({"angle": angle, "job": generate.start_job(f"calib {angle}", run)})
     return {"jobs": jobs}
@@ -352,14 +372,39 @@ def calibrate_faces(req: CalibFacesReq):
 
 @app.get("/api/calibrate/candidates")
 def calibrate_candidates():
-    """Generated calibration faces awaiting selection, newest first."""
+    """Generated calibration faces awaiting selection, newest first.
+
+    Skip any whose image file is gone — a deleted image must not resurface as an
+    empty ghost card. The ledger row is the record; the file is the picture.
+    """
     out = []
     for r in generate.all_runs():
-        if r.get("meta", {}).get("calibrate") == "face":
+        if r.get("meta", {}).get("calibrate") == "face" and (IMAGES / r["file"]).exists():
             out.append({"id": r["id"], "file": r["file"],
                         "angle": r.get("meta", {}).get("angle"),
                         "verdict": r.get("verdict", {})})
     return {"candidates": out[:60]}
+
+
+class CalibSeedReq(BaseModel):
+    reference: str
+
+
+@app.post("/api/calibrate/seed")
+def set_calib_seed(req: CalibSeedReq):
+    """Set the calibration seed — the image faces are generated FROM.
+
+    Deliberately NOT `PUT /api/bio/reference`: an uploaded calibration image must
+    never silently become the default BIO identity. That only happens when the
+    user promotes a generated face (⭐ identity → /api/bio/reference/from-run).
+    """
+    name = Path(req.reference).name
+    if not (REFS / name).exists():
+        raise HTTPException(400, f"no such reference: {name}")
+    cfg = _bio_cfg()
+    cfg["calib_seed"] = name
+    BIO_REF_PATH.write_text(json.dumps(cfg, indent=2) + "\n")
+    return {"calib_seed": name}
 
 
 class CalibAddReq(BaseModel):
@@ -431,6 +476,24 @@ class ImportReq(BaseModel):
     path: str
 
 
+def _unique_ref_path(filename: str) -> Path:
+    """Never clobber an existing reference. Overwriting a ref in place rewrites
+    history: every past run records the ref's *filename*, so if that name later
+    points at different bytes, the run's provenance silently lies (and old
+    origin panels show the wrong face). If the name is taken, suffix it
+    (-1, -2, …) so a changed identity becomes a NEW file and old runs keep
+    resolving to the exact image they used.
+    """
+    p = REFS / Path(filename or "reference.png").name
+    if not p.exists():
+        return p
+    stem, suf = p.stem, p.suffix
+    n = 1
+    while (REFS / f"{stem}-{n}{suf}").exists():
+        n += 1
+    return REFS / f"{stem}-{n}{suf}"
+
+
 @app.post("/api/refs/import")
 def import_ref(req: ImportReq):
     """Copy a local image in as an identity reference.
@@ -441,7 +504,7 @@ def import_ref(req: ImportReq):
     src = Path(req.path)
     if not src.exists() or not src.is_file():
         raise HTTPException(400, f"no such file: {req.path}")
-    dest = REFS / src.name
+    dest = _unique_ref_path(src.name)
     shutil.copy2(src, dest)
     info = _ref_info(dest)
     if not info["usable"]:
@@ -453,7 +516,7 @@ def import_ref(req: ImportReq):
 
 @app.post("/api/refs/upload")
 async def upload_ref(file: UploadFile = File(...)):
-    dest = REFS / Path(file.filename).name
+    dest = _unique_ref_path(file.filename)
     dest.write_bytes(await file.read())
     info = _ref_info(dest)
     if not info["usable"]:
@@ -528,7 +591,13 @@ DEFAULT_BODY_REF = "cd-body.png"
 def _bio_cfg() -> dict:
     cfg = json.loads(BIO_REF_PATH.read_text()) if BIO_REF_PATH.exists() else {}
     return {"reference": cfg.get("reference", DEFAULT_BIO_REF),
-            "body_reference": cfg.get("body_reference", DEFAULT_BODY_REF)}
+            "body_reference": cfg.get("body_reference", DEFAULT_BODY_REF),
+            # The calibration SEED is the image faces are generated FROM during
+            # calibration. It is deliberately SEPARATE from `reference` (the
+            # default BIO identity attached to every shot): uploading a seed must
+            # never silently become the default identity. The BIO identity is set
+            # only by promoting a generated nano-native face (⭐ identity).
+            "calib_seed": cfg.get("calib_seed")}
 
 
 def _bio_ref() -> str:
@@ -564,6 +633,17 @@ def get_bio():
                                      "pose_class": f.pose_class}
         except (gate.NoFaceFound, ValueError):
             out["reference_face"] = None
+    # calibration seed — the image faces are generated from (NOT the default BIO)
+    seed = cfg.get("calib_seed")
+    seed_path = REFS / Path(seed).name if seed else None
+    out["calib_seed"] = seed if (seed_path and seed_path.exists()) else None
+    if out["calib_seed"]:
+        try:
+            fs = gate.analyze(seed_path)
+            out["calib_seed_face"] = {"face_px": fs.width, "yaw": round(fs.yaw, 1),
+                                      "pose_class": fs.pose_class}
+        except (gate.NoFaceFound, ValueError):
+            out["calib_seed_face"] = None
     g = gate.load_gallery()
     out["gallery"] = {"entries": sorted(g), "meta": gate.load_meta(),
                       "threshold": gate.load_threshold()}
@@ -619,39 +699,95 @@ def bio_reference_from_run(payload: dict = Body(...)):
 
 
 class BodyRefCreateReq(BaseModel):
-    shape: str | None = None   # optional shape override; else uses the body parts
+    shape: str | None = None       # optional shape override; else uses the body parts
+    shape_ref: str | None = None   # optional body-SHAPE reference image (filename in refs)
+    turnaround: bool = False       # full-body 4-view sheet (front/side/back/¾) like wardrobe
+
+
+@app.post("/api/bio/shape-ref/upload")
+async def upload_shape_ref(file: UploadFile = File(...)):
+    """Upload a body-SHAPE reference — a figure whose proportions to match.
+
+    No face required (a shape ref is often a headless/faceless body), so this
+    skips the face check that /api/refs/upload enforces. Identity never comes
+    from here — only the silhouette/proportions do.
+    """
+    dest = _unique_ref_path(file.filename or "shape-ref.png")
+    dest.write_bytes(await file.read())
+    return {"name": dest.name}
 
 
 @app.post("/api/bio/body-ref/create")
 def body_ref_create(req: BodyRefCreateReq):
-    """Generate a canonical BODY image from the face + body-shape text ONLY.
+    """Generate a canonical BODY image from the face + body-shape text, and
+    OPTIONALLY a body-shape reference image (@image2) to hit an exact figure.
 
-    No competing body image is attached, so the TEXT drives the proportions
-    (the ChatGPT text-to-image mode) — this is how you actually set an exact or
-    large figure, which an edit anchored to an existing body cannot. Review the
-    preview, then save it as the body reference; every shot and outfit then
-    inherits that image's proportions exactly.
+    Text alone specifies a *type* and the model regresses toward slim; a shape
+    reference pins the exact silhouette. Identity always stays with @image1 —
+    only the proportions come from the shape ref. Review the preview, then save
+    it as the body reference; every shot then inherits those proportions.
     """
     face = REFS / _bio_ref()
     if not face.exists():
         raise HTTPException(400, "no BIO face reference set")
     shape = (req.shape or "").strip() or promptlib.build_clause(_load_parts())
     shape_clean, _ = promptlib.sanitise(shape)   # size passes now; nudity still guarded
-    prompt = (
-        "Full-body studio photograph of @image1 on a plain white seamless "
-        "background, lit flat and even. She stands straight and relaxed facing "
-        "the camera, arms at her sides, neutral expression, wearing simple "
-        "fitted plain activewear (a fitted tank top and leggings) so her figure "
-        f"and proportions are clearly visible. {shape_clean} Her face and "
-        "identity exactly match @image1. Photorealistic, real skin texture, "
-        "natural anatomy.")
+
+    refs = [face]
+    shape_ref_clause = ""
+    if req.shape_ref:
+        sp = REFS / Path(req.shape_ref).name
+        if not sp.exists():
+            raise HTTPException(400, f"no such shape reference: {req.shape_ref}")
+        refs.append(sp)
+        # Same exclusion shape as the wardrobe/pose directives: take ONLY the
+        # figure from @image2, never the face — an angled/other face there costs
+        # identity (measured this session; see the angle-body-ref finding).
+        shape_ref_clause = (
+            " Match her body proportions, figure and silhouette to @image2 — the "
+            "same build, the same bust-to-waist-to-hip ratio and curves. Take ONLY "
+            "the body shape and proportions from @image2; her face, identity, skin, "
+            "hair and features come only from @image1, never from @image2.")
+
+    if req.turnaround:
+        # Full-body 4-view sheet — same format as the wardrobe turnaround, so the
+        # body ref anchors her figure from every angle (front/side/back/¾).
+        prompt = (
+            "Professional full-body character turnaround sheet. Pure white "
+            "seamless background throughout. Soft neutral studio lighting, "
+            "perfectly flat and even across all four panels, no shadows.\n\n"
+            "A single row of FOUR equally sized FULL-BODY panels — head to toe, "
+            "feet visible in every panel — each with a small label in clean "
+            'sans-serif capitals above the figure: "FRONT VIEW" | "SIDE VIEW" | '
+            '"BACK VIEW" | "THREE-QUARTER VIEW". Panel 1 front-facing, panel 2 '
+            "exact side profile, panel 3 facing directly away, panel 4 at a "
+            "45-degree three-quarter angle.\n\n"
+            "The woman is @image1 — replicate her face, bone structure, skin and "
+            f"hair exactly in every panel. {shape_clean}{shape_ref_clause} She "
+            "wears simple fitted plain activewear (a fitted tank top and "
+            "leggings) so her figure and proportions are clearly visible. "
+            "Identical figure, proportions, stance and lighting across all four "
+            "panels.\n\nPhotorealistic RAW photograph quality, real skin texture, "
+            "ultra-sharp detail.")
+        aspect, extra = "16:9", {"image_size": {"width": 1536, "height": 1024}}
+    else:
+        prompt = (
+            "Full-body studio photograph of @image1 on a plain white seamless "
+            "background, lit flat and even. She stands straight and relaxed "
+            "facing the camera, arms at her sides, neutral expression, wearing "
+            "simple fitted plain activewear (a fitted tank top and leggings) so "
+            f"her figure and proportions are clearly visible. {shape_clean}"
+            f"{shape_ref_clause} Her face and identity exactly match @image1. "
+            "Photorealistic, real skin texture, natural anatomy.")
+        aspect, extra = "3:4", None
 
     def run(job: dict) -> dict:
         return generate.generate(
-            prompt=prompt, system="", refs=[face], aspect="3:4",
+            prompt=prompt, system="", refs=refs, aspect=aspect,
             session=generate.new_session("body reference"), progress=job,
-            meta={"body_ref_create": True, "shape": shape_clean},
-            fallback_endpoint=SCENE_EDIT)
+            meta={"body_ref_create": True, "shape": shape_clean,
+                  "shape_ref": req.shape_ref, "turnaround": req.turnaround},
+            fallback_endpoint=SCENE_EDIT, extra=extra)
 
     return {"job": generate.start_job("body reference", run)}
 
@@ -808,11 +944,26 @@ def _find_by_id(directory: Path, ident: str) -> Path | None:
     return None
 
 
+WARDROBE_META = STATE / "wardrobe.json"   # id -> {description, created}
+
+
+def _wardrobe_meta() -> dict:
+    return json.loads(WARDROBE_META.read_text()) if WARDROBE_META.exists() else {}
+
+
+def _save_wardrobe_meta(d: dict) -> None:
+    WARDROBE_META.write_text(json.dumps(d, indent=2) + "\n")
+
+
 def _wardrobe() -> list[dict]:
+    meta = _wardrobe_meta()
     out = []
     for p in sorted(WARDROBE.iterdir()) if WARDROBE.exists() else []:
         if p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
-            out.append({"id": p.stem, "file": p.name})
+            m = meta.get(p.stem, {})
+            out.append({"id": p.stem, "file": p.name,
+                        "description": m.get("description"),
+                        "created": m.get("created")})
     return out
 
 
@@ -1013,6 +1164,11 @@ def wardrobe_from_run(payload: dict = Body(...)):
     safe = "".join(c for c in name if c.isalnum() or c in "-_") or run_id
     dest = WARDROBE / f"{safe}.png"
     shutil.copy2(IMAGES / row["file"], dest)
+    # Persist the outfit description it was made with, so the UI can show it.
+    meta = _wardrobe_meta()
+    meta[dest.stem] = {"description": row.get("meta", {}).get("outfit_create"),
+                       "created": row.get("created")}
+    _save_wardrobe_meta(meta)
     return {"id": dest.stem, "file": dest.name}   # saved as-is, never rotated
 
 
@@ -1026,7 +1182,12 @@ def wardrobe_file(name: str):
 
 @app.delete("/api/wardrobe/{name}")
 def wardrobe_delete(name: str):
+    stem = Path(name).stem
     (WARDROBE / Path(name).name).unlink(missing_ok=True)
+    meta = _wardrobe_meta()
+    if stem in meta:
+        del meta[stem]
+        _save_wardrobe_meta(meta)
     return {"ok": True}
 
 

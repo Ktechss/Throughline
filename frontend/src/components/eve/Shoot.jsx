@@ -1,6 +1,7 @@
 import { useRef } from 'react'
 import { LockKeyhole, ImagePlus, LoaderCircle } from 'lucide-react'
 import RefStrip from './RefStrip'
+import WardrobePanel from './WardrobePanel'
 import PromptControls from './PromptControls'
 import GenerationCard from './GenerationCard'
 
@@ -22,7 +23,7 @@ export default function Shoot({
   poseId, setPoseId, poseLibrary, resolution, setResolution,
   outfitText, setOutfitText, describing, onDescribe, creating, onCreateOutfit,
   outfitPreview, onSaveOutfit, onDiscardOutfit,
-  onUploadOutfit, onUploadPose,
+  onUploadOutfit, onUploadPose, onDeleteWardrobe, stamp,
 }) {
   const canGenerate = !!bio?.reference && (!!brief.trim() || !!outfit || !!poseRef)
   const gensRef = useRef(null)
@@ -32,7 +33,7 @@ export default function Shoot({
     setTimeout(() => gensRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60)
   }
   return (
-    <main className="mx-auto max-w-[1180px] space-y-6 px-5 py-7">
+    <main className="mx-auto max-w-[1340px] space-y-6 px-5 py-7">
       <button onClick={goBio} className="flex w-full items-center gap-3 rounded-lg border border-[#284d72] bg-[#101923] p-3 text-left">
         {bio?.reference
           ? <img src={`/api/refs/${bio.reference}/thumb`} loading="lazy" className="h-11 w-11 rounded object-cover" alt="bio" />
@@ -48,6 +49,7 @@ export default function Shoot({
         <LockKeyhole className="ml-auto h-4 w-4 text-[#4ea1ff]" />
       </button>
 
+      <div className="grid gap-6 lg:grid-cols-[1fr_460px]">
       <section className="eve-panel space-y-5">
         <PromptControls brief={brief} setBrief={setBrief} prompt={aiPrompt} setPrompt={setAiPrompt}
           onGenerate={handleGenerate} onAiPrompt={onAiPrompt} aiBusy={aiBusy}
@@ -105,7 +107,6 @@ export default function Shoot({
             </div>
           )}
         </div>
-        <RefStrip title="outfit" tag="@image2" items={wardrobe} selected={outfit} onSelect={setOutfit} onUpload={onUploadOutfit} urlBase="/api/wardrobe" />
 
         {/* Text pose presets — native, no reference slot spent, no identity tax. */}
         <div>
@@ -139,6 +140,10 @@ export default function Shoot({
 
         <RefStrip title="pose reference (optional override)" tag="@image3" items={poseRefs} selected={poseRef} onSelect={setPoseRef} onUpload={onUploadPose} urlBase="/api/pose-refs" />
       </section>
+
+      <WardrobePanel items={wardrobe} selected={outfit} onSelect={setOutfit}
+        onDelete={onDeleteWardrobe} onUpload={onUploadOutfit} stamp={stamp} />
+      </div>
 
       <div ref={gensRef} className="scroll-mt-20">
         <div className="mb-3 flex items-end justify-between">

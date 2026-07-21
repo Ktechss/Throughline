@@ -1,14 +1,20 @@
 import { useState } from 'react'
-import { Star, Trash2, LoaderCircle } from 'lucide-react'
+import { Star, Trash2, LoaderCircle, ImagePlus, X } from 'lucide-react'
 
 export default function Bio({
   bio, refs, parts, importPath, setImportPath,
   onImport, onUploadRef, onSetBio, onToGallery, onDeleteRef, savePart, onResetParts,
   bodyCreating, bodyPreview, stamp, bodies = [], onSelectBody, onDeleteBody,
-  onCreateBody, onSaveBody, onDiscardBody,
+  onCreateBody, onUploadShape, onSaveBody, onDiscardBody,
 }) {
   const [view, setView] = useState('overview')
+  const [shapeRef, setShapeRef] = useState(null)   // optional body-shape reference for the next body-ref generation
   const sections = [...new Set(parts.map((p) => p.section))]
+  const uploadShape = async (e) => {
+    const f = e.target.files?.[0]; e.target.value = ''
+    if (!f || !onUploadShape) return
+    try { const info = await onUploadShape(f); if (info?.name) setShapeRef(info.name) } catch { /* handled upstream */ }
+  }
 
   return (
     <main className="mx-auto max-w-[1180px] px-5 py-7">
@@ -22,7 +28,7 @@ export default function Bio({
       {view === 'overview' && (
         <div className="grid gap-5 md:grid-cols-[280px_1fr]">
           <div className="eve-card overflow-hidden">
-            {bio?.reference && <img src={`/api/refs/${bio.reference}/file`} className="aspect-[4/5] w-full object-cover" alt="identity" />}
+            {bio?.reference && <img src={`/api/refs/${bio.reference}/file?t=${stamp}`} className="aspect-[4/5] w-full object-cover" alt="identity" />}
             <div className="p-3">
               <p className="eve-label text-[#4ea1ff]">identity lock</p>
               <p className="mt-2 text-xs leading-relaxed text-[#9999a5]">{bio?.identity_lock}</p>
@@ -64,7 +70,7 @@ export default function Bio({
             {refs.map((r) => (
               <div key={r.name} className={`eve-card overflow-hidden ${bio?.reference === r.name ? 'border-[#4ea1ff]' : ''}`}>
                 <div className="relative">
-                  <img src={`/api/refs/${r.name}/file`} className="aspect-[4/5] w-full object-cover" alt={r.name} />
+                  <img src={`/api/refs/${r.name}/file?t=${stamp}`} className="aspect-[4/5] w-full object-cover" alt={r.name} />
                   {bio?.reference === r.name && <span className="absolute left-2 top-2 rounded bg-[#4ea1ff] px-2 py-1 text-[9px] font-bold text-black">★ BIO</span>}
                   {!r.usable && <span className="absolute right-2 top-2 rounded bg-[#40201f] px-2 py-1 text-[9px] text-[#f17b72]">no face</span>}
                 </div>
@@ -88,10 +94,10 @@ export default function Bio({
       {view === 'advanced · body' && (
         <>
           <p className="help">
-            Her figure comes from this <b>body reference</b> image (@image2). To set an exact or larger
-            shape, generate a new one — here the <b>text drives the proportions</b> (face + your body
-            settings, no competing body image), the way ChatGPT does it. Review, then lock it in and every
-            shot &amp; outfit inherits it.
+            Her figure comes from this <b>body reference</b> image (@image2). To set an exact shape, generate a
+            new one: your <b>body text</b> drives the proportions, and you can add an optional <b>body-shape
+            reference image</b> below to pin the exact hourglass/curve. Identity always stays with the face —
+            only the figure comes from the shape ref. Review, then lock it in and every shot inherits it.
           </p>
           {/* saved body-type library — select one to make it the active figure */}
           <div className="mb-5">
@@ -121,9 +127,28 @@ export default function Bio({
               </div>
             </div>
             <div>
-              <button onClick={onCreateBody} disabled={!!bodyCreating}
+              {/* optional body-SHAPE reference — pins the exact figure; identity still comes from the face */}
+              <div className="mb-3 flex items-center gap-3">
+                {shapeRef
+                  ? <div className="relative">
+                      <img src={`/api/refs/${shapeRef}/file?t=${stamp}`} className="h-20 w-16 rounded-md border border-[#315d88] object-cover" alt="shape ref" />
+                      <button onClick={() => setShapeRef(null)} title="remove shape reference"
+                        className="absolute -right-2 -top-2 rounded-full bg-[#2a2a34] p-0.5 text-[#e2564a]"><X className="h-3 w-3" /></button>
+                    </div>
+                  : <label className="flex h-20 w-16 cursor-pointer flex-col items-center justify-center gap-1 rounded-md border border-dashed border-[#3a3a46] bg-[#0e0e12] text-center text-[9px] text-[#8a8a99] transition hover:border-[#4ea1ff] hover:text-[#cfe0f5]">
+                      <ImagePlus className="h-4 w-4" />
+                      shape ref
+                      <input type="file" accept="image/*" hidden onChange={uploadShape} />
+                    </label>}
+                <p className="flex-1 text-[11px] text-[#767684]">
+                  <b className="text-[#8fb6dd]">Optional body-shape reference.</b> Point at a figure to match the
+                  exact hourglass/curve — only the <b>proportions</b> are taken from it; her face &amp; identity stay
+                  locked. Use a generated or non-identifiable figure, <b>not a photo of a real person</b>.
+                </p>
+              </div>
+              <button onClick={() => onCreateBody(shapeRef)} disabled={!!bodyCreating}
                 className="eve-button bg-[#4ea1ff] text-[#07111b] hover:bg-[#70b3ff]">
-                {bodyCreating ? 'generating…' : 'generate body reference'}
+                {bodyCreating ? 'generating…' : `generate body reference${shapeRef ? ' (+ shape ref)' : ''}`}
               </button>
               {bodyCreating && (
                 <div className="mt-3 flex items-center gap-3 rounded-lg border border-[#315d88] bg-[#101b27] p-4">

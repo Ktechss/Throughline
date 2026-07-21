@@ -154,10 +154,13 @@ export default function App() {
   const discardOutfit = () => setOutfitPreview(null)
 
   // Generate a canonical body image (text-driven, no competing body ref) → preview.
-  const createBodyRef = async () => {
+  // Upload a body-SHAPE reference (no face required); returns { name }.
+  const uploadShape = async (f) => await api.upload('/api/bio/shape-ref/upload', f)
+  const createBodyRef = async (shapeRef) => {
     setBodyCreating('starting…'); setErr(null); setBodyPreview(null)
     try {
-      const { job: jid } = await api.send('/api/bio/body-ref/create', 'POST', {})
+      const { job: jid } = await api.send('/api/bio/body-ref/create', 'POST',
+        shapeRef ? { shape_ref: shapeRef } : {})
       for (;;) {
         await new Promise((r) => setTimeout(r, 1500))
         const st = await api.get(`/api/jobs/${jid}`)
@@ -188,6 +191,14 @@ export default function App() {
     const f = e.target.files?.[0]; e.target.value = ''
     if (!f) return
     try { await api.upload(url, f); await refresh() } catch (er) { setErr(String(er)) }
+  }
+  const deleteWardrobe = async (item) => {
+    if (!window.confirm(`Delete outfit "${item.id}"? This can't be undone.`)) return
+    try {
+      await fetch(`/api/wardrobe/${item.file}`, { method: 'DELETE' })
+      if (outfit === item.id) setOutfit('')
+      await refresh()
+    } catch (e) { setErr(String(e)) }
   }
 
   const mark = async (id, decision) => {
@@ -290,7 +301,8 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#0c0c0f] text-[#e6e6ea]">
-      <Header tab={tab} setTab={setTab} count={runs.length} gallery={gallery} />
+      <Header tab={tab} setTab={setTab} gallery={gallery}
+        count={runs.filter((r) => !r.meta?.outfit_create && !r.meta?.body_ref_create && !r.meta?.calibrate).length} />
 
       {err && (
         <div onClick={() => setErr(null)}
@@ -312,6 +324,7 @@ export default function App() {
           describing={describing} onDescribe={describe} creating={creating} onCreateOutfit={createOutfit}
           outfitPreview={outfitPreview} onSaveOutfit={saveOutfit} onDiscardOutfit={discardOutfit}
           onUploadOutfit={uploadTo('/api/wardrobe/upload')} onUploadPose={uploadTo('/api/pose-refs/upload')}
+          onDeleteWardrobe={deleteWardrobe} stamp={stamp}
         />
       )}
 
@@ -324,12 +337,13 @@ export default function App() {
           savePart={savePart} onResetParts={resetParts}
           bodyCreating={bodyCreating} bodyPreview={bodyPreview} stamp={stamp}
           bodies={bodies} onSelectBody={selectBody} onDeleteBody={deleteBody}
-          onCreateBody={createBodyRef} onSaveBody={saveBodyRef} onDiscardBody={discardBodyRef}
+          onCreateBody={createBodyRef} onUploadShape={uploadShape}
+          onSaveBody={saveBodyRef} onDiscardBody={discardBodyRef}
         />
       )}
 
       {tab === 'calibrate' && (
-        <Calibrate bio={bio} gallery={gallery} onRefresh={refresh}
+        <Calibrate bio={bio} gallery={gallery} onRefresh={refresh} stamp={stamp}
           onEditBio={() => setTab('bio')}
           onUploadBase={async (e) => {
             const f = e.target.files?.[0]; e.target.value = ''
@@ -337,7 +351,9 @@ export default function App() {
             try {
               const info = await api.upload('/api/refs/upload', f)
               if (!info.usable) { setErr('No face detected in that image — pick a clear face photo.'); return }
-              await api.send('/api/bio/reference', 'PUT', { reference: info.name })
+              // Set it as the calibration SEED, NOT the default BIO identity.
+              // The BIO identity is set only by promoting a generated face (⭐).
+              await api.send('/api/calibrate/seed', 'POST', { reference: info.name })
               await refresh()
             } catch (er) { setErr(String(er)) }
           }} />
@@ -352,7 +368,7 @@ export default function App() {
         creating={creating} onClose={() => setDrawerOpen(false)}
         onGenerate={() => { setDrawerOpen(false); createOutfit() }} />
 
-      <OriginModal run={detail} wardrobe={wardrobe} poseRefs={poseRefs}
+      <OriginModal run={detail} wardrobe={wardrobe} poseRefs={poseRefs} stamp={stamp}
         onClose={() => setDetail(null)} onMark={mark} onToWardrobe={toWardrobe} onToPoseRef={toPoseRef} />
     </div>
   )

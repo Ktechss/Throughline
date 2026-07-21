@@ -38,8 +38,33 @@ def _save_runs(rows: list[dict]) -> None:
 
 
 def upload(path: Path) -> str:
-    """⚠ fal's CDN URLs are public and unauthenticated."""
-    return fal_client.upload_file(str(path))
+    """Upload a reference to fal, downscaling oversized ones first.
+
+    ⚠ fal's CDN URLs are public and unauthenticated.
+
+    Our generated references are full-res nano outputs (~20 MB each). Sending two
+    of them as input (face @image1 + body @image2, ~40 MB) stalls fal's
+    upload/generate call — the wardrobe-generation hang. A reference is read at
+    modest resolution, so capping the longest side to 2048px preserves identity
+    and proportions while cutting each payload to well under 1 MB. Small files go
+    up untouched; any failure falls back to the raw upload so this can never
+    break a generation.
+    """
+    p = Path(path)
+    try:
+        if p.stat().st_size < 4_000_000:
+            return fal_client.upload_file(str(p))
+        from PIL import Image
+        im = Image.open(p).convert("RGB")
+        im.thumbnail((2048, 2048))
+        tmp = IMAGES / f"_up_{uuid.uuid4().hex[:8]}.jpg"
+        im.save(tmp, quality=92)
+        try:
+            return fal_client.upload_file(str(tmp))
+        finally:
+            tmp.unlink(missing_ok=True)
+    except Exception:  # noqa: BLE001 — downscaling must never fail a generation
+        return fal_client.upload_file(str(p))
 
 
 # Rotating the finished image levels the FACE by tilting the whole SCENE the

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { LoaderCircle, ScanFace, Wand2, Check, ImagePlus, Star } from 'lucide-react'
 import { api, STAGE } from '@/lib/eve'
 
@@ -6,12 +6,29 @@ import { api, STAGE } from '@/lib/eve'
 //   1. SEED   — base image + BIO (who she is; drives all generation)
 //   2. GENERATE & APPROVE — canonical faces from the seed; pick the on-model ones
 //   3. LOCK   — approved faces seed the fingerprint + recalibrate the threshold
-export default function Calibrate({ bio, gallery, onRefresh, onUploadBase, onEditBio }) {
+export default function Calibrate({ bio, gallery, onRefresh, onUploadBase, onEditBio, stamp }) {
   const [count, setCount] = useState(6)
   const [cands, setCands] = useState([])
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState(null)
   const [err, setErr] = useState(null)
+
+  // Re-load already-generated calibration faces on mount so a browser refresh
+  // (or a server restart that killed the in-flight jobs) never loses finished
+  // work — they live in the ledger, not just in this component's state. Give
+  // each a `jid` = its run id so the render keys + toggle (which key on jid)
+  // work exactly like freshly-generated ones.
+  useEffect(() => {
+    let alive = true
+    api.get('/api/calibrate/candidates')
+      .then(({ candidates }) => {
+        if (alive && candidates?.length)
+          setCands(candidates.map((c) => ({ jid: c.id, id: c.id, file: c.file,
+                                            angle: c.angle, verdict: c.verdict })))
+      })
+      .catch(() => { /* first run / empty ledger */ })
+    return () => { alive = false }
+  }, [])
 
   const pollOne = (jid) => {
     const tick = async () => {
@@ -32,11 +49,13 @@ export default function Calibrate({ bio, gallery, onRefresh, onUploadBase, onEdi
   }
 
   const generate = async () => {
-    if (!bio?.reference) { setErr('Set a base image first (Step 1).'); return }
+    if (!bio?.calib_seed && !bio?.reference) { setErr('Upload a base image first (Step 1).'); return }
     setBusy(true); setErr(null); setResult(null)
     try {
       const { jobs } = await api.send('/api/calibrate/faces', 'POST', { count })
-      setCands(jobs.map((j) => ({ jid: j.job, angle: j.angle, running: true })))
+      // Prepend the new batch; keep any already-loaded faces below so a second
+      // "generate" never wipes the earlier ones from view.
+      setCands((cs) => [...jobs.map((j) => ({ jid: j.job, angle: j.angle, running: true })), ...cs])
       jobs.forEach((j) => pollOne(j.job))
     } catch (e) { setErr(String(e)) } finally { setBusy(false) }
   }
@@ -89,17 +108,22 @@ export default function Calibrate({ bio, gallery, onRefresh, onUploadBase, onEdi
       <section className="eve-panel mb-5">
         <div className="mb-3">{step(1, 'identity seed — base image + BIO')}</div>
         <div className="flex flex-wrap items-center gap-4">
-          {bio?.reference
-            ? <img src={`/api/refs/${bio.reference}/file`} className="h-28 w-24 rounded-md border border-[#24242e] object-cover" alt="base" />
-            : <div className="flex h-28 w-24 items-center justify-center rounded-md bg-[#1b2b3d] text-2xl text-[#d99a2b]">!</div>}
+          {bio?.calib_seed
+            ? <img src={`/api/refs/${bio.calib_seed}/file?t=${stamp}`} className="h-28 w-24 rounded-md border border-[#24242e] object-cover" alt="seed" />
+            : <label className="flex h-28 w-24 cursor-pointer flex-col items-center justify-center gap-1 rounded-md border border-dashed border-[#3a3a46] bg-[#0e0e12] text-center text-[10px] text-[#8a8a99] transition hover:border-[#4ea1ff] hover:text-[#cfe0f5]">
+                <ImagePlus className="h-5 w-5" />
+                upload seed
+                <input type="file" accept="image/*" hidden onChange={onUploadBase} />
+              </label>}
           <div className="min-w-[240px] flex-1">
-            <p className="text-sm font-medium">{bio?.reference || 'no base image set'}</p>
+            <p className="text-sm font-medium">{bio?.calib_seed || 'no seed image set'}</p>
             <p className="mt-1 text-xs text-[#8a8a99]">
-              This face and your BIO text are the seed — every calibration face is generated from them. Change the
-              base to re-seed the character from scratch.
+              This is the <b className="text-[#e6e6ea]">calibration seed</b> — every calibration face is generated from it.
+              It is <b className="text-[#e6e6ea]">not</b> your default identity: uploading here never changes the BIO image.
+              You set the identity later by promoting a generated face (<span className="text-[#ffd36e]">★ identity</span>).
             </p>
-            {bio?.reference_face && (
-              <p className="mt-1 font-mono text-[10px] text-[#777785]">{bio.reference_face.face_px}px · {bio.reference_face.pose_class} · yaw {bio.reference_face.yaw > 0 ? '+' : ''}{bio.reference_face.yaw}°</p>
+            {bio?.calib_seed_face && (
+              <p className="mt-1 font-mono text-[10px] text-[#777785]">{bio.calib_seed_face.face_px}px · {bio.calib_seed_face.pose_class} · yaw {bio.calib_seed_face.yaw > 0 ? '+' : ''}{bio.calib_seed_face.yaw}°</p>
             )}
             <div className="mt-3 flex flex-wrap gap-2">
               <label className="eve-button border border-[#353541] cursor-pointer">
@@ -122,7 +146,7 @@ export default function Calibrate({ bio, gallery, onRefresh, onUploadBase, onEdi
               onChange={(e) => setCount(Math.max(1, Math.min(12, +e.target.value || 1)))}
               className="mt-1 h-10 w-24 rounded-md border border-[#30303a] bg-[#0e0e12] px-3 text-sm text-[#e6e6ea] outline-none focus:border-[#4ea1ff]" />
           </label>
-          <button onClick={generate} disabled={busy || !bio?.reference}
+          <button onClick={generate} disabled={busy || (!bio?.calib_seed && !bio?.reference)}
             className="eve-button bg-[#4ea1ff] text-[#07111b] hover:bg-[#70b3ff]">
             <Wand2 /> {busy ? 'starting…' : 'generate faces'}
           </button>
