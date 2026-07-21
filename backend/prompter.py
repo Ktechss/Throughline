@@ -175,10 +175,15 @@ _VIDEO_SYSTEM = (
     "HER move) or a gentle 'dolly-in'.\n"
     "5. model — 'happy-horse' when she SPEAKS (it lip-syncs dialogue); 'seedance' "
     "for silent motion/action (stronger, cleaner body and scene movement).\n"
-    "6. duration — an integer 3-15 seconds that fits the action/dialogue.\n\n"
+    "6. duration — an integer 3-15 seconds that fits the action/dialogue.\n"
+    "7. resolution — '1080p' by default (hero/close/talking shots); '720p' only "
+    "for a very long or quick throwaway clip.\n"
+    "8. note — ONE short sentence for the user explaining why you picked this "
+    "model / camera / duration, so they trust the defaults. These are tuned for "
+    "the scene — the user can override any of them, but shouldn't need to.\n\n"
     "Output ONLY a JSON object, no prose, no code fences: {\"dialogue\": string, "
     "\"scene\": string, \"camera_move\": string, \"model\": string, "
-    "\"duration\": integer}."
+    "\"duration\": integer, \"resolution\": string, \"note\": string}."
 )
 
 
@@ -225,10 +230,13 @@ def direct_video(scenario: str) -> dict:
     # silent action -> seedance (cleaner motion); talking -> happy-horse (lip-sync)
     if mdl not in ("happy-horse", "seedance", "kling"):
         mdl = "happy-horse" if dialogue else "seedance"
+    res = str(d.get("resolution", "1080p")).strip()
     return {
         "dialogue": dialogue,
         "scene": str(d.get("scene") or "").strip(),
         "camera_move": cam if cam in ("static", "dolly-in", "orbit", "crash-zoom", "pull-back") else "dolly-in",
         "model": mdl,
         "duration": dur,
+        "resolution": res if res in ("720p", "1080p") else "1080p",
+        "note": str(d.get("note") or "").strip(),
     }

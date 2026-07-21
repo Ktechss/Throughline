@@ -26,6 +26,7 @@ export default function VideoStudio({ runs, cameraMoves = [], models = [], video
   const [safety, setSafety] = useState(true)
   const [scenario, setScenario] = useState('')
   const [directing, setDirecting] = useState(false)
+  const [note, setNote] = useState('')
 
   const direct = async () => {
     if (!scenario.trim() || directing) return
@@ -37,6 +38,8 @@ export default function VideoStudio({ runs, cameraMoves = [], models = [], video
       setExtra(plan.scene || '')
       if (plan.camera_move) setMove(plan.camera_move)
       if (plan.duration) setDuration(plan.duration)
+      if (plan.resolution) setResolution(plan.resolution)
+      setNote(plan.note || '')
     } catch { /* error surfaced by App */ } finally { setDirecting(false) }
   }
 
@@ -113,7 +116,13 @@ export default function VideoStudio({ runs, cameraMoves = [], models = [], video
           className="eve-button mt-3 border border-[#284d72] bg-[#101923] text-[#8fb6dd] disabled:opacity-40">
           {directing ? <><LoaderCircle className="h-4 w-4 animate-spin" /> directing…</> : <><Sparkles className="h-3.5 w-3.5" /> direct this scene</>}
         </button>
-        <span className="ml-3 text-[11px] text-[#8a8a99]">fills the dialogue, scene, camera &amp; duration below — you can tweak it, then generate</span>
+        <span className="ml-3 text-[11px] text-[#8a8a99]">fills every setting below — you can tweak it, then generate</span>
+        {note && (
+          <div className="mt-3 flex items-start gap-2 rounded-lg border border-[#284d72] bg-[#101923] p-3">
+            <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#4ea1ff]" />
+            <p className="text-xs text-[#8fb6dd]"><b className="text-[#c7dcf0]">Director's picks:</b> {note} <span className="text-[#6f8299]">— tuned for this scene; change anything below only if you want to.</span></p>
+          </div>
+        )}
       </section>
 
       {/* STEP 3 — model + configurator */}
