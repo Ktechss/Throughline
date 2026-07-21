@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Film, Wand2, LoaderCircle, MessageSquare } from 'lucide-react'
+import { Film, Wand2, LoaderCircle, MessageSquare, Sparkles, Check } from 'lucide-react'
 
 const MODEL_LABEL = {
   'seedance': 'Seedance 1.0 Pro',
@@ -14,7 +14,7 @@ const MODEL_NOTE = {
 
 // Animate a gate-approved still on fal. happy-horse adds a full configurator:
 // dialogue (auto lip-sync), resolution, duration, seed, safety checker.
-export default function VideoStudio({ runs, cameraMoves = [], models = [], videos = [], onAnimate, busy, stamp = 0 }) {
+export default function VideoStudio({ runs, cameraMoves = [], models = [], videos = [], onAnimate, onDirect, busy, stamp = 0 }) {
   const [still, setStill] = useState(null)
   const [move, setMove] = useState('dolly-in')
   const [model, setModel] = useState('happy-horse')
@@ -24,8 +24,25 @@ export default function VideoStudio({ runs, cameraMoves = [], models = [], video
   const [duration, setDuration] = useState(5)
   const [seed, setSeed] = useState('')
   const [safety, setSafety] = useState(true)
+  const [scenario, setScenario] = useState('')
+  const [directing, setDirecting] = useState(false)
 
-  const stills = runs.filter((r) => r.file && r.meta && 'brief' in r.meta && r.verdict?.status === 'kept')
+  const direct = async () => {
+    if (!scenario.trim() || directing) return
+    setDirecting(true)
+    try {
+      const plan = await onDirect(scenario.trim())
+      if (plan.model) setModel(plan.model)
+      setDialogue(plan.dialogue || '')
+      setExtra(plan.scene || '')
+      if (plan.camera_move) setMove(plan.camera_move)
+      if (plan.duration) setDuration(plan.duration)
+    } catch { /* error surfaced by App */ } finally { setDirecting(false) }
+  }
+
+  // pickable = the gate kept it OR you approved it by hand (the mark override)
+  const stills = runs.filter((r) => r.file && r.meta && 'brief' in r.meta
+    && (r.verdict?.status === 'kept' || r.mark === 'approve'))
   const selected = stills.find((r) => r.id === still)
   const isHH = model === 'happy-horse'
 
@@ -64,22 +81,44 @@ export default function VideoStudio({ runs, cameraMoves = [], models = [], video
 
       {/* STEP 1 — pick a still */}
       <section className="eve-panel mb-5">
-        <p className="eve-label mb-3">1 · pick a still <span className="text-[#666674]">(gate-approved shots)</span></p>
+        <p className="eve-label mb-3">1 · pick a still <span className="text-[#666674]">(gate-approved or manually approved)</span></p>
         {stills.length === 0
-          ? <p className="text-xs text-[#767684]">No gate-approved shots yet. Generate some in the <b className="text-[#e6e6ea]">shoot</b> tab first.</p>
+          ? <p className="text-xs text-[#767684]">No approved shots yet. Generate some in <b className="text-[#e6e6ea]">shoot</b>, or approve some in <b className="text-[#e6e6ea]">review</b>.</p>
           : <div className="grid grid-cols-4 gap-2 sm:grid-cols-6 md:grid-cols-8">
-              {stills.slice(0, 24).map((r) => (
+              {stills.slice(0, 30).map((r) => (
                 <button key={r.id} onClick={() => setStill(r.id)}
-                  className={`eve-card overflow-hidden transition ${still === r.id ? 'ring-2 ring-[#4ea1ff]' : ''}`}>
+                  className={`eve-card relative overflow-hidden transition ${still === r.id ? 'ring-2 ring-[#4ea1ff]' : ''}`}>
                   <img src={`/api/images/${r.file}/thumb`} loading="lazy" className="aspect-[3/4] w-full object-cover" alt="" />
+                  <span className="absolute right-1 top-1" title={r.mark === 'approve' ? 'you approved this' : 'gate-approved'}>
+                    {r.mark === 'approve'
+                      ? <span className="flex h-4 w-4 items-center justify-center rounded-full bg-[#33c07f] text-black"><Check className="h-2.5 w-2.5" /></span>
+                      : <span className="h-2 w-2 rounded-full bg-[#4ea1ff] ring-2 ring-black/40" />}
+                  </span>
                 </button>
               ))}
             </div>}
+        <p className="mt-2 text-[10px] text-[#666674]"><span className="text-[#33c07f]">✓</span> you approved · <span className="text-[#4ea1ff]">•</span> gate-approved</p>
       </section>
 
-      {/* STEP 2 — model + configurator */}
+      {/* STEP 2 — AI director */}
       <section className="eve-panel mb-5">
-        <p className="eve-label mb-3">2 · model</p>
+        <div className="mb-3 flex items-center gap-2">
+          <Sparkles className="h-4 w-4 text-[#4ea1ff]" />
+          <p className="eve-label text-[#67aff8]">2 · describe the scene — the AI directs it</p>
+        </div>
+        <textarea value={scenario} onChange={(e) => setScenario(e.target.value)} rows={2}
+          className="eve-input w-full resize-y"
+          placeholder="e.g. she's at a rooftop party introducing herself for her first post · or: styling a bride, talking through the look" />
+        <button onClick={direct} disabled={!scenario.trim() || directing}
+          className="eve-button mt-3 border border-[#284d72] bg-[#101923] text-[#8fb6dd] disabled:opacity-40">
+          {directing ? <><LoaderCircle className="h-4 w-4 animate-spin" /> directing…</> : <><Sparkles className="h-3.5 w-3.5" /> direct this scene</>}
+        </button>
+        <span className="ml-3 text-[11px] text-[#8a8a99]">fills the dialogue, scene, camera &amp; duration below — you can tweak it, then generate</span>
+      </section>
+
+      {/* STEP 3 — model + configurator */}
+      <section className="eve-panel mb-5">
+        <p className="eve-label mb-3">3 · model &amp; controls</p>
         <div className="flex flex-wrap gap-2">
           {models.map((md) => (
             <button key={md} onClick={() => setModel(md)} title={MODEL_NOTE[md]}

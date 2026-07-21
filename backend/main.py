@@ -1333,6 +1333,19 @@ def camera_moves():
             "models": list(videolib.MODELS.keys())}
 
 
+class VideoDirectReq(BaseModel):
+    scenario: str = ""
+
+
+@app.post("/api/video-direct")
+def video_direct(req: VideoDirectReq):
+    """Claude directs a scenario into a clip plan: dialogue, scene, camera, duration."""
+    try:
+        return prompter.direct_video(req.scenario)
+    except prompter.PrompterError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
 class AnimateReq(BaseModel):
     run_id: str | None = None    # a shot from the run ledger
     file: str | None = None      # or a raw image filename in data/images

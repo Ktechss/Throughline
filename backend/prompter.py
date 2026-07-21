@@ -141,3 +141,94 @@ def rewrite(brief: str, *, shot_type: str = "candid", has_wardrobe: bool = False
     if not text:
         raise PrompterError("Claude returned an empty prompt")
     return text
+
+
+# The video director: a scenario -> a full clip plan (dialogue, scene, camera,
+# duration) that fills the happy-horse configurator. Same iron rule as the image
+# prompter: it directs the SCENE and her WORDS, never her face — identity lives
+# in the still.
+_VIDEO_SYSTEM = (
+    "You are a short-form video director for a photorealistic character named "
+    "Kiara — a warm, quietly witty South Delhi fashion stylist who dresses brides "
+    "and styles everyday looks. The user gives a scenario; you turn it into a plan "
+    "for a short vertical (9:16) clip that animates a still photo of her on an "
+    "image-to-video model.\n\n"
+    "ABSOLUTE RULES:\n"
+    "1. NEVER describe her face, body, hair, skin, age or identity — she is a "
+    "fixed reference image. Describe only the SCENE, the MOVEMENT, atmosphere, "
+    "wardrobe-in-motion, lighting and camera.\n"
+    "2. DIALOGUE: only if she actually speaks. Write it in her own voice — first "
+    "person, warm, natural, a little dry, never salesy. Fit ~2.5 spoken words per "
+    "second of duration. For a silent action/mood clip (a runway walk, a turn, "
+    "dancing), return an empty dialogue string.\n"
+    "3. SCENE / MOTION — this is the most important field. Image-to-video models "
+    "follow MOVEMENT described as ONE continuous, ordered action in plain language "
+    "(they ignore timestamps and bracketed beats — never use them). Describe where "
+    "she starts, how she moves through the shot, and how it ends, as a single "
+    "flowing sentence or two. For a runway/walk: name the stride, the pace, the "
+    "hip sway from posture, the fabric catching the movement, whether she comes "
+    "toward or moves away from camera, any pause or turn. Keep the FRAMING the "
+    "scenario asks for (full-body / wide for a walk; waist-up or close for "
+    "talking). Concrete and physical. No AI-slop words.\n"
+    "4. camera_move — pick ONE from exactly: static, dolly-in, orbit, crash-zoom, "
+    "pull-back. For a subject who walks toward the camera, prefer 'static' (let "
+    "HER move) or a gentle 'dolly-in'.\n"
+    "5. model — 'happy-horse' when she SPEAKS (it lip-syncs dialogue); 'seedance' "
+    "for silent motion/action (stronger, cleaner body and scene movement).\n"
+    "6. duration — an integer 3-15 seconds that fits the action/dialogue.\n\n"
+    "Output ONLY a JSON object, no prose, no code fences: {\"dialogue\": string, "
+    "\"scene\": string, \"camera_move\": string, \"model\": string, "
+    "\"duration\": integer}."
+)
+
+
+def direct_video(scenario: str) -> dict:
+    """Expand a scenario into a clip plan for the video studio. Raises PrompterError."""
+    if not scenario.strip():
+        raise PrompterError("describe a scenario first — the director needs something to work with")
+    if not os.getenv("ANTHROPIC_API_KEY"):
+        raise PrompterError("ANTHROPIC_API_KEY is not set in .env")
+    try:
+        import anthropic
+    except ImportError as exc:  # pragma: no cover
+        raise PrompterError("the 'anthropic' package is not installed") from exc
+
+    client = anthropic.Anthropic()
+    try:
+        msg = client.messages.create(
+            model="claude-opus-4-8", max_tokens=700, system=_VIDEO_SYSTEM,
+            messages=[{"role": "user",
+                       "content": f"Scenario: {scenario.strip()}\n\nWrite the JSON clip plan now."}])
+    except anthropic.APIStatusError as exc:
+        raise PrompterError(f"Claude API error: {exc.message}"[:300]) from exc
+    except anthropic.APIConnectionError as exc:
+        raise PrompterError("could not reach the Claude API") from exc
+
+    import json
+    import re
+    text = "".join(b.text for b in msg.content if b.type == "text").strip()
+    m = re.search(r"\{.*\}", text, re.S)
+    if not m:
+        raise PrompterError("the director did not return a usable plan")
+    try:
+        d = json.loads(m.group(0))
+    except json.JSONDecodeError as exc:
+        raise PrompterError("could not parse the director's plan") from exc
+
+    cam = str(d.get("camera_move", "dolly-in"))
+    mdl = str(d.get("model", "")).strip()
+    try:
+        dur = max(3, min(15, int(d.get("duration", 8))))
+    except (TypeError, ValueError):
+        dur = 8
+    dialogue = str(d.get("dialogue") or "").strip()
+    # silent action -> seedance (cleaner motion); talking -> happy-horse (lip-sync)
+    if mdl not in ("happy-horse", "seedance", "kling"):
+        mdl = "happy-horse" if dialogue else "seedance"
+    return {
+        "dialogue": dialogue,
+        "scene": str(d.get("scene") or "").strip(),
+        "camera_move": cam if cam in ("static", "dolly-in", "orbit", "crash-zoom", "pull-back") else "dolly-in",
+        "model": mdl,
+        "duration": dur,
+    }

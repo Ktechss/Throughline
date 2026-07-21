@@ -203,6 +203,11 @@ export default function App() {
       window.alert(`Gold set exported: ${r.exported} approved shots → data/gold/ (${r.gold_on_disk} on disk). This is your LoRA dataset — the gallery stays frozen.`)
     } catch (e) { setErr(String(e)) }
   }
+  const videoDirect = async (scenario) => {
+    setErr(null)
+    try { return await api.send('/api/video-direct', 'POST', { scenario }) }
+    catch (e) { setErr(String(e)); throw e }
+  }
   const animate = async (payload) => {
     setVideoBusy('starting…'); setErr(null)
     try {
@@ -308,7 +313,7 @@ export default function App() {
           }} />
       )}
 
-      {tab === 'video' && <VideoStudio runs={runs} cameraMoves={cameraMoves.moves} models={cameraMoves.models} videos={videos} onAnimate={animate} busy={videoBusy} stamp={stamp} />}
+      {tab === 'video' && <VideoStudio runs={runs} cameraMoves={cameraMoves.moves} models={cameraMoves.models} videos={videos} onAnimate={animate} onDirect={videoDirect} busy={videoBusy} stamp={stamp} />}
 
       {tab === 'review' && <Review runs={runs} onOpen={setDetail} onMark={mark} stats={stats} onExportGold={exportGold} onPurgeRejected={purgeRejected} />}
 

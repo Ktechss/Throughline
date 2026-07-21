@@ -34,12 +34,14 @@ MODELS = {"seedance": SEEDANCE, "kling": KLING, "happy-horse": HAPPY_HORSE}
 # camera move -> (prompt fragment, camera_fixed). Big moves (orbit, crash-zoom)
 # turn her head off-axis and cost identity — that's the yaw law, and the frame
 # gate reports it. Gentle moves (dolly, static) keep her frontal and on-model.
+# Camera-ONLY descriptions — the SUBJECT's motion comes from the scene/extra text
+# (or the director), so these must not pin her still or they fight an action clip.
 CAMERA_MOVES = {
-    "static":     ("static locked-off camera, she stays still with only subtle natural motion, hair moving gently", True),
-    "dolly-in":   ("smooth cinematic dolly-in, the camera gently pushing toward her, she stays still and poised", False),
-    "orbit":      ("slow cinematic orbit around her, the camera circling as she stays still and confident", False),
-    "crash-zoom": ("fast crash zoom toward her, a dramatic push-in, she stays still", False),
-    "pull-back":  ("the camera slowly pulls back to reveal her full look, she stays still", False),
+    "static":     ("The camera is locked off and steady.", True),
+    "dolly-in":   ("The camera pushes in smoothly toward her.", False),
+    "orbit":      ("The camera slowly orbits around her.", False),
+    "crash-zoom": ("The camera crash-zooms in fast, a dramatic push.", False),
+    "pull-back":  ("The camera slowly pulls back.", False),
 }
 
 
@@ -91,8 +93,13 @@ def animate(still: Path, *, camera_move: str = "dolly-in", model: str = "seedanc
     extra. `dialogue` (happy-horse only) is appended so the model lip-syncs speech.
     """
     frag, camera_fixed = CAMERA_MOVES.get(camera_move, CAMERA_MOVES["dolly-in"])
-    prompt = prompt_override.strip() or (
-        f"{frag}. {extra}".strip().rstrip(".") + ". Photorealistic, cinematic, shallow depth of field.")
+    if prompt_override.strip():
+        prompt = prompt_override.strip()
+    else:
+        # scene/action FIRST (drives her movement), camera second, then realism tail
+        parts = [extra.strip()] if extra.strip() else []
+        parts.append(frag)
+        prompt = " ".join(parts).strip().rstrip(".") + ". Photorealistic, cinematic."
     if dialogue.strip():
         prompt = f'{prompt} She looks at the camera and says: "{dialogue.strip()}"'
     ep = MODELS.get(model, SEEDANCE)
@@ -110,12 +117,13 @@ def animate(still: Path, *, camera_move: str = "dolly-in", model: str = "seedanc
         if seed is not None:
             args["seed"] = int(seed)
     elif ep == KLING:
-        args = {"prompt": prompt, "image_url": url, "duration": "5",
+        args = {"prompt": prompt, "image_url": url,
+                "duration": "10" if int(duration) >= 8 else "5",
                 "negative_prompt": "distortion, morphing face, warping, identity change, extra fingers",
                 "cfg_scale": 0.5}
-    else:
+    else:  # seedance — supports 5s or 10s
         args = {"prompt": prompt, "image_url": url, "resolution": "1080p",
-                "duration": "5", "camera_fixed": camera_fixed}
+                "duration": "10" if int(duration) >= 8 else "5", "camera_fixed": camera_fixed}
     r = fal_client.subscribe(ep, arguments=args, with_logs=False)
     vid_url = (r.get("video") or {}).get("url") or (r.get("videos") or [{}])[0].get("url")
     if not vid_url:
