@@ -42,6 +42,7 @@ export default function App() {
   const [cameraMoves, setCameraMoves] = useState({ moves: [], models: [] })
   const [videos, setVideos] = useState([])                   // generated clips
   const [videoBusy, setVideoBusy] = useState(null)           // current animate status
+  const [makeBusy, setMakeBusy] = useState(null)             // make-video status
   const [generations, setGenerations] = useState([])
   const [detail, setDetail] = useState(null)
   const [err, setErr] = useState(null)
@@ -224,6 +225,19 @@ export default function App() {
       }
     }
   }
+  const makeVideo = async (payload) => {
+    setMakeBusy('starting…'); setErr(null)
+    try {
+      const { job: jid } = await api.send('/api/make-video', 'POST', payload)
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 3000))
+        const st = await api.get(`/api/jobs/${jid}`)
+        setMakeBusy(st.stage || 'working…')
+        if (st.done) { if (st.error) setErr(String(st.error)); break }
+      }
+      await refresh()
+    } catch (e) { setErr(String(e)) } finally { setMakeBusy(null) }
+  }
   const animate = async (payload) => {
     setVideoBusy('starting…'); setErr(null)
     try {
@@ -329,7 +343,7 @@ export default function App() {
           }} />
       )}
 
-      {tab === 'video' && <VideoStudio runs={runs} cameraMoves={cameraMoves.moves} models={cameraMoves.models} videos={videos} onAnimate={animate} onDirect={videoDirect} onGenerateStill={generateSceneStill} busy={videoBusy} stamp={stamp} />}
+      {tab === 'video' && <VideoStudio runs={runs} cameraMoves={cameraMoves.moves} models={cameraMoves.models} videos={videos} wardrobe={wardrobe} onAnimate={animate} onDirect={videoDirect} onGenerateStill={generateSceneStill} onMakeVideo={makeVideo} busy={videoBusy} makeBusy={makeBusy} stamp={stamp} />}
 
       {tab === 'review' && <Review runs={runs} onOpen={setDetail} onMark={mark} stats={stats} onExportGold={exportGold} onPurgeRejected={purgeRejected} />}
 

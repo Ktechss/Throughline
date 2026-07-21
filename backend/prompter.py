@@ -198,6 +198,113 @@ _VIDEO_SYSTEM = (
 )
 
 
+_STORYBOARD_SYSTEM = (
+    "You are a short-form video director for a photorealistic character named "
+    "Kiara — a warm, quietly witty South Delhi fashion stylist. The user gives a "
+    "scenario and a target length; you break it into a STORYBOARD of short scenes "
+    "for a single vertical (9:16) clip. Each scene will be a separate still photo "
+    "of her that gets animated, then all the clips are stitched together in order.\n\n"
+    "ABSOLUTE RULES:\n"
+    "1. NEVER describe her face, body, hair, skin, age or identity — she is a "
+    "fixed reference. Describe only location, action, expression, wardrobe-in-"
+    "motion, light and camera.\n"
+    "2. ONE wardrobe for the whole video (continuity): from the wardrobe id list "
+    "given, pick the single outfit that best fits, or empty if none fits.\n"
+    "3. ONE model for the whole video: 'happy-horse' if ANY scene has spoken "
+    "dialogue (it lip-syncs); otherwise 'seedance' (cleaner silent motion).\n"
+    "4. Break the scenario into scenes of ~2-4 seconds each so the durations sum "
+    "to about the target length (e.g. a 15s clip = about 4-6 scenes). Each scene "
+    "is a distinct beat — a change of location, action, angle or expression.\n"
+    "5. For EACH scene give: location, action (what she physically does), "
+    "expression (mood), image_brief (the still to generate: setting + FRAMING + "
+    "pose + light — waist-up/close for talking or expression beats, full-body/"
+    "wide for movement), motion (the ordered continuous movement for the video, "
+    "no timestamps), camera_move (one valid value), dialogue (her spoken line for "
+    "this beat, or empty), and duration (integer seconds).\n\n"
+    "Output ONLY a JSON object, no prose, no code fences: {\"wardrobe\": string, "
+    "\"model\": string, \"note\": string, \"scenes\": [{\"location\": string, "
+    "\"action\": string, \"expression\": string, \"image_brief\": string, "
+    "\"motion\": string, \"camera_move\": string, \"dialogue\": string, "
+    "\"duration\": integer}]}."
+)
+
+
+def storyboard(scenario: str, wardrobe_ids: list[str] | None = None,
+               total_duration: int = 15) -> dict:
+    """Break a scenario into an ordered multi-scene storyboard. Raises PrompterError."""
+    if not scenario.strip():
+        raise PrompterError("describe the video first")
+    if not os.getenv("ANTHROPIC_API_KEY"):
+        raise PrompterError("ANTHROPIC_API_KEY is not set in .env")
+    try:
+        import anthropic
+    except ImportError as exc:  # pragma: no cover
+        raise PrompterError("the 'anthropic' package is not installed") from exc
+
+    from . import video as _video
+    moves = ", ".join(_video.CAMERA_MOVES.keys())
+    wardrobe = ", ".join(wardrobe_ids or []) or "(none available)"
+    total = max(4, min(30, int(total_duration)))
+
+    client = anthropic.Anthropic()
+    try:
+        msg = client.messages.create(
+            model="claude-opus-4-8", max_tokens=2000, system=_STORYBOARD_SYSTEM,
+            messages=[{"role": "user",
+                       "content": (f"Scenario: {scenario.strip()}\n\n"
+                                   f"Target total length: about {total} seconds.\n"
+                                   f"Valid camera_move values: {moves}\n"
+                                   f"Wardrobe ids to choose from: {wardrobe}\n\n"
+                                   "Write the JSON storyboard now.")}])
+    except anthropic.APIStatusError as exc:
+        raise PrompterError(f"Claude API error: {exc.message}"[:300]) from exc
+    except anthropic.APIConnectionError as exc:
+        raise PrompterError("could not reach the Claude API") from exc
+
+    import json
+    import re
+    text = "".join(b.text for b in msg.content if b.type == "text").strip()
+    m = re.search(r"\{.*\}", text, re.S)
+    if not m:
+        raise PrompterError("the director did not return a storyboard")
+    try:
+        d = json.loads(m.group(0))
+    except json.JSONDecodeError as exc:
+        raise PrompterError("could not parse the storyboard") from exc
+
+    raw_scenes = d.get("scenes") or []
+    if not raw_scenes:
+        raise PrompterError("the storyboard had no scenes")
+    scenes = []
+    any_dialogue = False
+    for s in raw_scenes[:8]:   # cap at 8 scenes
+        cam = str(s.get("camera_move", "dolly-in"))
+        try:
+            sdur = max(2, min(8, int(s.get("duration", 3))))
+        except (TypeError, ValueError):
+            sdur = 3
+        dlg = str(s.get("dialogue") or "").strip()
+        any_dialogue = any_dialogue or bool(dlg)
+        scenes.append({
+            "location": str(s.get("location") or "").strip(),
+            "action": str(s.get("action") or "").strip(),
+            "expression": str(s.get("expression") or "").strip(),
+            "image_brief": str(s.get("image_brief") or "").strip(),
+            "motion": str(s.get("motion") or s.get("action") or "").strip(),
+            "camera_move": cam if cam in _video.CAMERA_MOVES else "dolly-in",
+            "dialogue": dlg,
+            "duration": sdur,
+        })
+    ward = str(d.get("wardrobe") or "").strip()
+    if wardrobe_ids is not None and ward and ward not in wardrobe_ids:
+        ward = ""
+    mdl = str(d.get("model") or "").strip()
+    if mdl not in ("happy-horse", "seedance"):
+        mdl = "happy-horse" if any_dialogue else "seedance"
+    return {"wardrobe": ward, "model": mdl, "note": str(d.get("note") or "").strip(),
+            "scenes": scenes}
+
+
 def direct_video(scenario: str, wardrobe_ids: list[str] | None = None) -> dict:
     """Expand a scenario into a clip plan for the video studio. Raises PrompterError."""
     if not scenario.strip():

@@ -211,6 +211,46 @@ def animate(still: Path, *, camera_move: str = "dolly-in", model: str = "seedanc
     return row
 
 
+def stitch(clip_paths: list[Path], out: Path | None = None,
+           durations: list[int] | None = None) -> Path:
+    """Concatenate clips (cover-cropped to 1080x1920, audio preserved) into one.
+
+    `durations` (per clip) trims each to its intended length — models with a 5s
+    minimum otherwise pad short storyboard beats and bloat the total."""
+    import os
+    os.environ.setdefault("IMAGEIO_FFMPEG_EXE", __import__("imageio_ffmpeg").get_ffmpeg_exe())
+    from moviepy import VideoFileClip, concatenate_videoclips
+    W, H = 1080, 1920
+
+    def cover(c):
+        c = c.resized(height=H)
+        if c.w < W:
+            c = c.resized(width=W)
+        return c.cropped(x_center=c.w / 2, y_center=c.h / 2, width=W, height=H)
+
+    clips = []
+    for i, p in enumerate(clip_paths):
+        if not (p and p.exists()):
+            continue
+        c = cover(VideoFileClip(str(p)))
+        if durations and i < len(durations) and durations[i] and durations[i] < c.duration:
+            c = c.subclipped(0, durations[i])
+        clips.append(c)
+    if not clips:
+        raise RuntimeError("no clips to stitch")
+    final = concatenate_videoclips(clips, method="compose")
+    out = out or (VIDEOS / f"{uuid.uuid4().hex[:10]}.mp4")
+    final.write_videofile(str(out), fps=24, codec="libx264", audio_codec="aac",
+                          preset="veryfast", logger=None)
+    return out
+
+
+def record(row: dict) -> None:
+    rows = _ledger()
+    rows.append(row)
+    VIDEOS_META.write_text(json.dumps(rows, indent=2) + "\n")
+
+
 def _ledger() -> list[dict]:
     return json.loads(VIDEOS_META.read_text()) if VIDEOS_META.exists() else []
 

@@ -1420,6 +1420,101 @@ def video_file(name: str):
     return FileResponse(p)
 
 
+def _run_shot_sync(brief: str, wardrobe_id: str | None = None, *,
+                   aspect: str = "9:16", resolution: str = "2K") -> dict:
+    """The still-generation core of /api/shot, callable synchronously — used by the
+    make-video orchestration to generate a scene still. Returns the run row."""
+    face = REFS / _bio_ref()
+    if not face.exists():
+        raise RuntimeError("no BIO reference set")
+    refs = [face]
+    has_wardrobe = False
+    if wardrobe_id:
+        w = _find_by_id(WARDROBE, wardrobe_id)
+        if w:
+            refs.append(_outfit_ref(w))
+            has_wardrobe = True
+    else:
+        body = REFS / _bio_cfg()["body_reference"]
+        if body.exists():
+            refs.append(body)
+    build_text = promptlib.build_clause(_load_parts())
+    text, sanitised = promptlib.compose_tagged(
+        brief, has_wardrobe=has_wardrobe, build_text=build_text, shot_type="candid")
+    return generate.generate(
+        prompt=text, system="", refs=refs, aspect=aspect,
+        session=generate.new_session(brief[:60]), fallback_endpoint=SCENE_EDIT,
+        resolution=resolution,
+        meta={"brief": brief, "wardrobe": wardrobe_id, "sanitised": sanitised,
+              "scene_video": True})
+
+
+class MakeVideoReq(BaseModel):
+    scenario: str = ""
+    wardrobe: str | None = None   # override; else the director picks
+    duration: int = 15            # target total seconds
+
+
+@app.post("/api/make-video")
+def make_video(req: MakeVideoReq):
+    """Storyboard a scenario into N scenes, generate a wardrobe-matched still per
+    scene (parallel), animate each (parallel), and stitch into one clip."""
+    import concurrent.futures
+    import time
+
+    def run(job: dict) -> dict:
+        job["stage"] = "storyboarding"
+        sb = prompter.storyboard(req.scenario, [w["id"] for w in _wardrobe()], req.duration)
+        wardrobe = req.wardrobe or sb["wardrobe"] or None
+        scenes, model = sb["scenes"], sb["model"]
+
+        job["stage"] = f"generating {len(scenes)} scene stills"
+
+        def make_still(s):
+            try:
+                return (IMAGES / _run_shot_sync(s["image_brief"], wardrobe)["file"], s)
+            except Exception:  # noqa: BLE001 — one bad scene shouldn't sink the video
+                return None
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as ex:
+            pairs = [p for p in ex.map(make_still, scenes) if p]
+        if not pairs:
+            raise RuntimeError("all scene stills failed to generate")
+
+        job["stage"] = f"animating {len(pairs)} scenes"
+
+        def make_clip(pair):
+            still, s = pair
+            try:
+                row = videolib.animate(
+                    still, model=model, extra=s["motion"], camera_move=s["camera_move"],
+                    dialogue=s["dialogue"], duration=s["duration"], resolution="1080p",
+                    enable_safety_checker=False, keep_audio=True)
+                return VIDEOS / row["file"]
+            except Exception:  # noqa: BLE001
+                return None
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as ex:
+            clips = [c for c in ex.map(make_clip, pairs) if c]
+        if not clips:
+            raise RuntimeError("all scenes failed to animate")
+
+        job["stage"] = "stitching"
+        out = videolib.stitch(clips, durations=[s["duration"] for _, s in pairs[:len(clips)]])
+        job["stage"] = "gating"
+        row = {
+            "id": out.stem, "file": out.name, "still": None, "model": model,
+            "camera_move": "storyboard", "prompt": req.scenario,
+            "dialogue": " ".join(s["dialogue"] for _, s in pairs if s["dialogue"]) or None,
+            "resolution": "1080p", "duration": sum(s["duration"] for _, s in pairs),
+            "audio": model == "happy-horse", "scenes": len(clips),
+            "wardrobe": wardrobe, "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "frames": videolib._score_frames(out),
+        }
+        videolib.record(row)
+        return row
+
+    return {"job": generate.start_job("make video", run)}
+
+
 @app.get("/api/health")
 def health():
     return {"ok": True, "root": str(ROOT)}
