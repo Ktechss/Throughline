@@ -267,8 +267,10 @@ def videos_all(newest_first: bool = False) -> list[dict]:
     return [json.loads(d) for (d,) in rows]
 
 
-def videos_insert(row: dict) -> dict:
-    cid = config.get_active()
+def videos_insert(row: dict, character_id: str | None = None) -> dict:
+    """character_id is pinned by the caller (the character the video STARTED
+    under) so a mid-render character switch can't misfile it."""
+    cid = character_id or config.get_active()
     with _conn() as con:
         con.execute("INSERT INTO videos (id, character_id, doc) VALUES (?, ?, ?)",
                     (row["id"], cid, json.dumps(row)))

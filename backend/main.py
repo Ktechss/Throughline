@@ -929,12 +929,15 @@ def bio_reference_from_run(payload: dict = Body(...)):
     the same 'look'.
     """
     run_id = payload["run_id"]
-    name = payload.get("name") or f"identity-{run_id}"
     row = next((r for r in generate.all_runs() if r["id"] == run_id), None)
     if not row:
         raise HTTPException(404, run_id)
-    safe = "".join(c for c in name if c.isalnum() or c in "-_") or run_id
-    dest = REFS / f"{safe}.png"
+    # Name the identity per-character (e.g. robin-identity.png). A shared name
+    # ('kiara-identity.png' for everyone) made the thumbnail URL identical across
+    # profiles, so the browser served a CACHED face from another character even
+    # though the file on disk was correct. Per-character names keep URLs distinct.
+    cid = config.get_active()
+    dest = REFS / f"{cid}-identity.png"
     shutil.copy2(IMAGES / row["file"], dest)
     try:
         gate.analyze(dest)   # must contain a detectable face

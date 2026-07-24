@@ -17,7 +17,7 @@ from pathlib import Path
 
 import fal_client
 
-from . import db, gate
+from . import config, db, gate
 from .config import VIDEOS, VIDEOS_META
 
 # fal image-to-video endpoints. Seedance 1.0 Pro is permissive + realistic (the
@@ -142,6 +142,7 @@ def animate(still: Path, *, camera_move: str = "dolly-in", model: str = "seedanc
     prompt_override wins if given; else the prompt is built from the camera move +
     extra. `dialogue` (happy-horse only) is appended so the model lip-syncs speech.
     """
+    owner = config.get_active()   # pin the character NOW — a mid-render switch must not misfile this clip
     frag, camera_fixed = CAMERA_MOVES.get(camera_move, CAMERA_MOVES["dolly-in"])
     if prompt_override.strip():
         prompt = prompt_override.strip()
@@ -205,7 +206,7 @@ def animate(still: Path, *, camera_move: str = "dolly-in", model: str = "seedanc
            "resolution": resolution, "duration": int(duration),
            "audio": not muted, "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
            "frames": frames}
-    db.videos_insert(row)
+    db.videos_insert(row, character_id=owner)
     return row
 
 

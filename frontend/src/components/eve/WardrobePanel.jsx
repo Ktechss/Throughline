@@ -43,7 +43,7 @@ export default function WardrobePanel({ items, selected, onSelect, onDelete, onU
             className={`group relative cursor-pointer overflow-hidden rounded-md border transition ${selected === item.id
               ? 'border-[#4ea1ff] ring-1 ring-[#4ea1ff]'
               : 'border-[#2a2a34] hover:border-[#3a3a46]'}`}>
-            <img src={`/api/wardrobe/${item.file}/thumb`} loading="lazy" decoding="async"
+            <img src={`/api/wardrobe/${item.file}/thumb?t=${stamp}`} loading="lazy" decoding="async"
               className="aspect-[3/4] w-full object-cover" alt={item.id} />
             <span className="block truncate px-1 py-0.5 text-[9px] text-[#aaaab6]">{item.id}</span>
             <button onClick={(e) => { e.stopPropagation(); onDelete(item) }} title="delete outfit"

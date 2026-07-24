@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { LoaderCircle } from 'lucide-react'
 import Header from '@/components/eve/Header'
 import Landing from '@/components/eve/Landing'
@@ -17,6 +17,8 @@ export default function App() {
   const [activeChar, setActiveChar] = useState(null)   // { id, name }
   const [loading, setLoading] = useState(false)        // studio data loading after a switch
   const [buildStage, setBuildStage] = useState(null)   // guided-creation progress label
+  const switchEpoch = useRef(0)                         // bumped on every character switch;
+                                                        // in-flight polls bail when it changes
   const [tab, setTab] = useState('shoot')
   const [parts, setParts] = useState([])
   const [runs, setRuns] = useState([])
@@ -81,12 +83,16 @@ export default function App() {
   // Wipe ALL per-character client state so nothing bleeds across profiles — the
   // live generation queue especially, which is client-only and never refetched.
   const clearStudio = () => {
+    switchEpoch.current += 1     // invalidate every in-flight poll (gen/body/outfit/video/build)
     setGenerations([]); setDetail(null)
     setRuns([]); setBio(null); setWardrobe([]); setGallery({ entries: [] })
     setVideos([]); setStats(null); setPoseRefs([]); setBodies([]); setParts([])
     setOutfit(''); setPoseRef(''); setPoseId(''); setBrief(''); setAiPrompt('')
-    setOutfitPreview(null); setBodyPreview(null); setDrawerOpen(false)
-    setDetails(null); setOutfitImageUrl(null)
+    setOutfitPreview(null); setBodyPreview(null); setOutfitImageUrl(null)
+    setDrawerOpen(false); setDetails(null)
+    // reset every busy/spinner flag so none lingers on the next profile
+    setAiBusy(false); setDescribing(false); setCreating(null); setBodyCreating(null)
+    setVideoBusy(null); setMakeBusy(null)
   }
 
   const enterCharacter = async (id) => {
@@ -110,9 +116,12 @@ export default function App() {
             : 'Building her…')
 
   const pollBuild = (jid) => new Promise((resolve) => {
+    const epoch = switchEpoch.current
     const tick = async () => {
+      if (epoch !== switchEpoch.current) { resolve(null); return }   // switched away
       try {
         const st = await api.get(`/api/jobs/${jid}`)
+        if (epoch !== switchEpoch.current) { resolve(null); return }
         setBuildStage(BUILD_LABEL(st.stage))
         if (st.done) {
           if (st.error) setErr(st.error)
@@ -161,11 +170,13 @@ export default function App() {
   }
 
   const pollGen = useCallback((jid) => {
+    const epoch = switchEpoch.current
     let alive = true
     const tick = async () => {
-      if (!alive) return
+      if (!alive || epoch !== switchEpoch.current) return   // switched character — stop
       try {
         const st = await api.get(`/api/jobs/${jid}`)
+        if (epoch !== switchEpoch.current) return
         setGenerations((gs) => gs.map((g) => (g.jid === jid ? { ...g, status: st, run: st.run || g.run } : g)))
         if (st.done) { refresh().catch(() => {}); return }
       } catch { /* transient */ }
@@ -196,41 +207,51 @@ export default function App() {
   }
 
   const aiWrite = async () => {
+    const epoch = switchEpoch.current
     setAiBusy(true); setErr(null)
     try {
       const r = await api.send('/api/shot/ai-prompt', 'POST',
         { brief, wardrobe_id: outfit || null, pose_ref_id: poseRef || null, pose_id: poseId || null })
+      if (epoch !== switchEpoch.current) return
       setAiPrompt(r.prompt)
-    } catch (e) { setErr(String(e)) } finally { setAiBusy(false) }
+    } catch (e) { if (epoch === switchEpoch.current) setErr(String(e)) }
+    finally { if (epoch === switchEpoch.current) setAiBusy(false) }
   }
 
   const describe = async (e) => {
     const f = e.target.files?.[0]; e.target.value = ''
     if (!f) return
+    const epoch = switchEpoch.current
     // Open the side drawer immediately with the uploaded image + a reading state.
     setOutfitImageUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(f) })
     setDrawerOpen(true); setDescribing(true); setErr(null)
     try {
       const d = await api.upload('/api/wardrobe/describe', f)
+      if (epoch !== switchEpoch.current) return
       setOutfitText(d.outfit)
       setDetails(d.details || {})
-    } catch (e2) { setErr(String(e2)); setDrawerOpen(false) } finally { setDescribing(false) }
+    } catch (e2) { if (epoch === switchEpoch.current) { setErr(String(e2)); setDrawerOpen(false) } }
+    finally { if (epoch === switchEpoch.current) setDescribing(false) }
   }
   const setDetailField = (key, value) => setDetails((d) => ({ ...(d || {}), [key]: value }))
 
   // Generate the outfit turnaround, then PREVIEW it — no name asked up front.
   const createOutfit = async () => {
+    const epoch = switchEpoch.current
     setCreating('starting…'); setErr(null); setOutfitPreview(null)
     try {
       const { job: jid } = await api.send('/api/wardrobe/create', 'POST',
         { outfit: mergeOutfit(outfitText, details) })   // fold in the key details
       for (;;) {
         await new Promise((r) => setTimeout(r, 1500))
+        if (epoch !== switchEpoch.current) return   // switched away — don't leak into the other profile
         const st = await api.get(`/api/jobs/${jid}`)
+        if (epoch !== switchEpoch.current) return
         setCreating(STAGE[st.stage] || st.stage || 'generating…')
         if (st.done) { if (st.error) setErr(st.error); else setOutfitPreview(st.run); break }
       }
-    } catch (e) { setErr(String(e)) } finally { setCreating(null) }
+    } catch (e) { if (epoch === switchEpoch.current) setErr(String(e)) }
+    finally { if (epoch === switchEpoch.current) setCreating(null) }
   }
 
   // Like the preview -> name it and save into the wardrobe.
@@ -248,17 +269,21 @@ export default function App() {
   // Upload a body-SHAPE reference (no face required); returns { name }.
   const uploadShape = async (f) => await api.upload('/api/bio/shape-ref/upload', f)
   const createBodyRef = async (shapeRef) => {
+    const epoch = switchEpoch.current   // this body belongs to the character active NOW
     setBodyCreating('starting…'); setErr(null); setBodyPreview(null)
     try {
       const { job: jid } = await api.send('/api/bio/body-ref/create', 'POST',
         shapeRef ? { shape_ref: shapeRef } : {})
       for (;;) {
         await new Promise((r) => setTimeout(r, 1500))
+        if (epoch !== switchEpoch.current) return   // switched away — don't leak into the other profile
         const st = await api.get(`/api/jobs/${jid}`)
+        if (epoch !== switchEpoch.current) return
         setBodyCreating(STAGE[st.stage] || st.stage || 'generating…')
         if (st.done) { if (st.error) setErr(st.error); else setBodyPreview(st.run); break }
       }
-    } catch (e) { setErr(String(e)) } finally { setBodyCreating(null) }
+    } catch (e) { if (epoch === switchEpoch.current) setErr(String(e)) }
+    finally { if (epoch === switchEpoch.current) setBodyCreating(null) }
   }
   // Save the generated body as a NAMED body type in the library, and make it active.
   const saveBodyRef = async () => {
@@ -315,51 +340,63 @@ export default function App() {
     } catch (e) { setErr(String(e)) }
   }
   const videoDirect = async (scenario) => {
+    const epoch = switchEpoch.current
     setErr(null)
     try { return await api.send('/api/video-direct', 'POST', { scenario }) }
-    catch (e) { setErr(String(e)); throw e }
+    catch (e) { if (epoch === switchEpoch.current) setErr(String(e)); throw e }
   }
   // Phase 3: generate the scene still (brief + matched wardrobe) to animate.
   const generateSceneStill = async ({ brief, wardrobe }) => {
+    const epoch = switchEpoch.current
     setErr(null)
     const { job: jid } = await api.send('/api/shot', 'POST', {
       brief, wardrobe_id: wardrobe || null, aspect: '9:16', resolution: '2K',
     })
     for (;;) {
       await new Promise((r) => setTimeout(r, 1800))
+      if (epoch !== switchEpoch.current) throw new Error('cancelled — switched character')
       const st = await api.get(`/api/jobs/${jid}`)
       if (st.done) {
         if (st.error) throw new Error(String(st.error))
+        if (epoch !== switchEpoch.current) throw new Error('cancelled — switched character')
         await refresh()
         return st.run   // { id, file, verdict, ... }
       }
     }
   }
   const makeVideo = async (payload) => {
+    const epoch = switchEpoch.current
     setMakeBusy('starting…'); setErr(null)
     try {
       const { job: jid } = await api.send('/api/make-video', 'POST', payload)
       for (;;) {
         await new Promise((r) => setTimeout(r, 3000))
+        if (epoch !== switchEpoch.current) return
         const st = await api.get(`/api/jobs/${jid}`)
+        if (epoch !== switchEpoch.current) return
         setMakeBusy(st.stage || 'working…')
         if (st.done) { if (st.error) setErr(String(st.error)); break }
       }
-      await refresh()
-    } catch (e) { setErr(String(e)) } finally { setMakeBusy(null) }
+      if (epoch === switchEpoch.current) await refresh()
+    } catch (e) { if (epoch === switchEpoch.current) setErr(String(e)) }
+    finally { if (epoch === switchEpoch.current) setMakeBusy(null) }
   }
   const animate = async (payload) => {
+    const epoch = switchEpoch.current
     setVideoBusy('starting…'); setErr(null)
     try {
       const { job: jid } = await api.send('/api/animate', 'POST', payload)
       for (;;) {
         await new Promise((r) => setTimeout(r, 2000))
+        if (epoch !== switchEpoch.current) return
         const st = await api.get(`/api/jobs/${jid}`)
+        if (epoch !== switchEpoch.current) return
         setVideoBusy(STAGE[st.stage] || st.stage || 'generating…')
         if (st.done) { if (st.error) setErr(String(st.error)); break }
       }
-      await refresh()
-    } catch (e) { setErr(String(e)) } finally { setVideoBusy(null) }
+      if (epoch === switchEpoch.current) await refresh()
+    } catch (e) { if (epoch === switchEpoch.current) setErr(String(e)) }
+    finally { if (epoch === switchEpoch.current) setVideoBusy(null) }
   }
   const purgeRejected = async () => {
     if (!window.confirm('Delete all rejected images from disk? This cannot be undone.')) return
