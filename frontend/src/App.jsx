@@ -110,10 +110,11 @@ export default function App() {
 
   const BUILD_LABEL = (stage) => (
     stage === 'writing bio' ? 'Writing her bio…'
-      : (stage === 'generating face' || stage === 'generating' || stage === 'starting') ? 'Generating her first face…'
-        : (stage === 'gating') ? 'Checking her face…'
-          : /retry/i.test(stage || '') ? 'Retrying (moderation)…'
-            : 'Building her…')
+      : stage === 'generating body' ? 'Generating her body…'
+        : (stage === 'generating face' || stage === 'generating' || stage === 'starting') ? 'Generating her first face…'
+          : (stage === 'gating') ? 'Checking her face…'
+            : /retry/i.test(stage || '') ? 'Retrying (moderation)…'
+              : 'Building her…')
 
   const pollBuild = (jid) => new Promise((resolve) => {
     const epoch = switchEpoch.current
@@ -133,7 +134,7 @@ export default function App() {
     tick()
   })
 
-  const createCharacter = async ({ name, description, face_shape, file }) => {
+  const createCharacter = async ({ name, description, face_shape, build, height_cm, file }) => {
     setErr(null)
     clearStudio()                     // start her studio clean
     setActiveChar({ id: '', name })   // optimistic label for the overlay
@@ -145,6 +146,8 @@ export default function App() {
       fd.append('name', name)
       fd.append('description', description || '')
       fd.append('face_shape', face_shape || '')
+      fd.append('build', build || '')
+      fd.append('height_cm', height_cm || '')
       if (file) fd.append('reference', file)
       const r = await fetch('/api/characters/guided', { method: 'POST', body: fd })
       if (!r.ok) throw new Error((await r.text()).slice(0, 300))

@@ -133,33 +133,68 @@ def create_character(req: CharacterReq):
 # description (the diverse default).
 FACE_SHAPES = ["oval", "round", "square", "heart", "diamond", "oblong"]
 
+# Body builds the picker offers. The EXPLICIT figure text drives the body-ref
+# generation (a clothed solo figure on the permissive model, so strong shape
+# wording is safe there and renders the build faithfully — text alone in the bio
+# regresses to slim). The FRAME text is the tasteful version stored in the bio and
+# attached to every shot.
+BUILDS = ["slim", "athletic", "curvy", "voluptuous", "full-figured"]
+_BUILD_FIGURE = {
+    "slim": "a slim, slender build with a narrow frame and a modest bust",
+    "athletic": "a toned, athletic build — lean and fit with subtle muscle definition",
+    "curvy": "a curvy hourglass figure: a full rounded bust, a clearly defined narrow waist, and full rounded hips",
+    "voluptuous": "a dramatically curvy, voluptuous hourglass: a very full, heavy bust, a deeply cinched narrow waist, and wide, full, rounded hips; distinctly full-figured, not slim",
+    "full-figured": "a full-figured, plus-size build: a full bust, a soft rounded midsection, and wide, full hips",
+}
+_BUILD_FRAME = {
+    "slim": "slim, slender build",
+    "athletic": "toned athletic build",
+    "curvy": "curvy hourglass",
+    "voluptuous": "pronounced curvy, full-figured hourglass",
+    "full-figured": "soft, full-figured build",
+}
+
+
+def _height_text(cm: int) -> str:
+    total_in = round(cm / 2.54)
+    return f"{cm}cm ({total_in // 12}'{total_in % 12}\")"
+
 
 @app.post("/api/characters/guided")
 async def create_character_guided(
     name: str = Form(...),
     description: str = Form(""),
     face_shape: str = Form(""),
+    build: str = Form(""),
+    height_cm: str = Form(""),
     reference: UploadFile | None = File(None),
 ):
-    """Create a character the good way: Claude writes her bio from a description
-    (optionally pinned to a chosen face shape), we generate her first face — from
-    an uploaded reference image if the user gave one, otherwise from the written
-    bio — and set it as the calibration seed. The user lands ready to calibrate
-    for strong consistency. Returns a job id; the slow work runs in the background
-    and the client polls /api/jobs/{id}."""
+    """Create a character from EXPLICIT essentials — face shape, body build and
+    height — plus an optional description/reference. Claude writes her bio, we
+    generate her first face AND a body reference that matches the chosen build,
+    and set the face as the calibration seed. She lands ready to calibrate.
+    Returns a job id; the slow work runs in the background (poll /api/jobs/{id})."""
     name = name.strip()
     if not name:
         raise HTTPException(400, "name required")
     shape = face_shape.strip().lower()
     if shape and shape not in FACE_SHAPES:
         shape = ""
+    build = build.strip().lower()
+    if build and build not in BUILDS:
+        build = ""
+    try:
+        height = int(float(height_cm))
+        if not (120 <= height <= 210):
+            height = 0
+    except (ValueError, TypeError):
+        height = 0
+
     cid = _unique_char_id(name)
     config.ensure_char_dirs(cid)
     char = db.chars_create(cid, name)
     config.set_active(cid)                # the build job runs on the now-active char
 
-    # Save the uploaded reference (if any) into the new character's refs NOW, while
-    # the request is alive — the background job only gets a path.
     seed_upload: Path | None = None
     if reference is not None:
         data = await reference.read()
@@ -171,23 +206,34 @@ async def create_character_guided(
             seed_upload.write_bytes(data)
 
     def run(job: dict) -> dict:
-        # 1) Claude writes her identity fields from the description (+ face shape)
+        # 1) Claude writes her identity fields; the explicit pickers OVERRIDE
         job["stage"] = "writing bio"
         parts = _load_parts()
         writable = [p for p in parts
                     if p.section in ("subject", "face", "hair", "skin", "body")
                     and p.id != "subject.energy"]
         fields = [{"id": p.id, "label": p.label, "hint": p.text} for p in writable]
-        desc = description + (f"\nHer face shape is {shape}." if shape else "")
+        desc = description
+        if shape:
+            desc += f"\nHer face shape is {shape}."
+        if build:
+            desc += f"\nHer body build is {build}."
+        if height:
+            desc += f"\nHer height is {_height_text(height)}."
         try:
             updates = prompter.write_bio(name, desc, fields)
         except prompter.PrompterError as exc:
             updates = {}
             job["note"] = f"bio auto-write skipped ({exc}); used defaults"
-        if shape:   # the picker is authoritative — make sure the shape is honoured
+        # the pickers are authoritative — apply them ON TOP of the AI's text
+        if shape:
             cur = updates.get("face.shape", "")
             if shape not in cur.lower():
                 updates["face.shape"] = f"a {shape} face" + (f", {cur}" if cur else "")
+        if build:
+            updates["body.frame"] = _BUILD_FRAME[build]
+        if height:
+            updates["body.height"] = _height_text(height)
         if updates:
             parts = [promptlib.Part(**{**p.dict(), "text": updates.get(p.id, p.text)})
                      for p in parts]
@@ -196,7 +242,6 @@ async def create_character_guided(
         # 2) generate her first face
         job["stage"] = "generating face"
         if seed_upload and seed_upload.exists():
-            # from the uploaded reference — a clean, normalised frontal of THAT face
             prompt = ("Clean, well-lit frontal headshot of @image1 — head and "
                       "shoulders, plain neutral studio background, looking straight "
                       "into the lens, natural relaxed expression. "
@@ -207,7 +252,6 @@ async def create_character_guided(
                 session=generate.new_session(f"seed face: {name}"), progress=job,
                 meta={"guided_seed": True, "from_upload": True})
         else:
-            # from the written bio (text-to-image seed hunt — no reference yet)
             portrait = promptlib.compose(
                 parts, has_reference=False,
                 pose_note="a clean, well-lit frontal headshot — head and shoulders, "
@@ -218,16 +262,49 @@ async def create_character_guided(
                 session=generate.new_session(f"seed face: {name}"), progress=job,
                 meta={"guided_seed": True})
 
-        # 3) set the generated face as the CALIBRATION SEED (never the locked BIO
-        #    identity — that is earned only by promoting a calibrated face)
+        # 3) set the generated face as the CALIBRATION SEED
         src = IMAGES / row["file"]
+        seed_ref = None
         if src.exists():
-            dst = _unique_ref_path("seed-face.png")
-            shutil.copy2(src, dst)
+            seed_ref = _unique_ref_path("seed-face.png")
+            shutil.copy2(src, seed_ref)
             cfg = _bio_cfg()
-            cfg["calib_seed"] = dst.name
+            cfg["calib_seed"] = seed_ref.name
             BIO_REF_PATH.write_text(json.dumps(cfg, indent=2) + "\n")
-            row.setdefault("meta", {})["seed_ref"] = dst.name
+            row.setdefault("meta", {})["seed_ref"] = seed_ref.name
+
+        # 4) generate a BODY reference matching the chosen build — the strong lever
+        #    for proportions. Explicit figure text renders the build faithfully;
+        #    best-effort, so a body failure never breaks the character.
+        if seed_ref and seed_ref.exists():
+            job["stage"] = "generating body"
+            figure = _BUILD_FIGURE.get(build) or promptlib.build_clause(parts)
+            body_prompt = (
+                "Full-body studio photograph of @image1 on a plain white seamless "
+                "background, lit flat and even. She stands straight and relaxed "
+                "facing the camera, arms at her sides, neutral expression, wearing "
+                "simple fitted plain activewear (a fitted tank top and leggings) so "
+                "her figure is clearly visible. Her FIGURE is the whole point of "
+                "this image: render her exact build faithfully and prominently, "
+                f"never substituting a generic slim fashion-model physique. Her "
+                f"build: {figure}. Her face and identity exactly match @image1. "
+                "Photorealistic, real skin texture, natural anatomy.")
+            try:
+                body_row = generate.generate(
+                    prompt=body_prompt, refs=[seed_ref], aspect="3:4",
+                    session=generate.new_session(f"body: {name}"), progress=job,
+                    meta={"body_ref_create": True, "guided": True},
+                    fallback_endpoint=SCENE_EDIT)
+                bsrc = IMAGES / body_row["file"]
+                if bsrc.exists():
+                    bdst = REFS / "body-canonical.png"
+                    shutil.copy2(bsrc, bdst)
+                    cfg = _bio_cfg()
+                    cfg["body_reference"] = bdst.name
+                    BIO_REF_PATH.write_text(json.dumps(cfg, indent=2) + "\n")
+                    row.setdefault("meta", {})["body_ref"] = bdst.name
+            except Exception as exc:  # noqa: BLE001 — body is a bonus, not required
+                job["note"] = f"body generation skipped ({exc})"
         return row
 
     jid = generate.start_job(f"create {name}", run)

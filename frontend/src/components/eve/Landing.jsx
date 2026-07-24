@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { Plus, Trash2, ShieldCheck, CircleDashed, LoaderCircle, ImagePlus, X } from 'lucide-react'
 
 const FACE_SHAPES = ['oval', 'round', 'square', 'heart', 'diamond', 'oblong']
+const BUILDS = ['slim', 'athletic', 'curvy', 'voluptuous', 'full-figured']
+const cmToFtIn = (cm) => { const t = Math.round(cm / 2.54); return `${Math.floor(t / 12)}'${t % 12}"` }
 
 // Netflix-style profile picker: every character is a face you step into. Pick one
 // to enter its studio (its own identity, calibration, wardrobe and generations),
@@ -27,11 +29,13 @@ export default function Landing({ characters, active, onSelect, onCreate, onDele
   const [name, setName] = useState('')
   const [desc, setDesc] = useState('')
   const [shape, setShape] = useState('')
+  const [build, setBuild] = useState('')
+  const [height, setHeight] = useState(165)
   const [file, setFile] = useState(null)
   const [preview, setPreview] = useState(null)
   const [busy, setBusy] = useState(false)
 
-  const reset = () => { setName(''); setDesc(''); setShape(''); setFile(null); setPreview(null) }
+  const reset = () => { setName(''); setDesc(''); setShape(''); setBuild(''); setHeight(165); setFile(null); setPreview(null) }
   const pickFile = (e) => {
     const f = e.target.files?.[0]; e.target.value = ''
     if (!f) return
@@ -43,7 +47,7 @@ export default function Landing({ characters, active, onSelect, onCreate, onDele
     const n = name.trim()
     if (!n || busy) return
     setBusy(true)
-    try { await onCreate({ name: n, description: desc.trim(), face_shape: shape, file }) }
+    try { await onCreate({ name: n, description: desc.trim(), face_shape: shape, build, height_cm: height, file }) }
     finally { setBusy(false); setCreating(false); reset() }
   }
 
@@ -114,6 +118,24 @@ export default function Landing({ characters, active, onSelect, onCreate, onDele
                     : 'border-[#2a2a34] text-[#a9a9b6] hover:border-[#3a3a46]'}`}>{s}</button>
               ))}
             </div>
+
+            <label className="mt-3 block eve-label text-[#8a8a99]">body type</label>
+            <div className="mt-1 flex flex-wrap gap-1.5">
+              {BUILDS.map((b) => (
+                <button key={b} type="button" onClick={() => setBuild(build === b ? '' : b)}
+                  className={`rounded-full border px-3 py-1 text-xs capitalize transition ${build === b
+                    ? 'border-[#4ea1ff] bg-[#123049] text-[#9fd0ff]'
+                    : 'border-[#2a2a34] text-[#a9a9b6] hover:border-[#3a3a46]'}`}>{b}</button>
+              ))}
+            </div>
+
+            <div className="mt-3 flex items-center justify-between">
+              <label className="block eve-label text-[#8a8a99]">height</label>
+              <span className="font-mono text-xs text-[#9fd0ff]">{cmToFtIn(height)} · {height}cm</span>
+            </div>
+            <input type="range" min={148} max={190} value={height}
+              onChange={(e) => setHeight(+e.target.value)}
+              className="mt-1 w-full accent-[#4ea1ff]" />
 
             <label className="mt-3 block eve-label text-[#8a8a99]">reference image <span className="text-[#5f5f6c]">— optional, guides her look</span></label>
             {preview ? (
