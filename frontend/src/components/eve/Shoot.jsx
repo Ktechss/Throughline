@@ -7,12 +7,13 @@ import GenerationCard from './GenerationCard'
 
 // Group the text-pose presets by posture so the picker reads at a glance.
 // Portrait/headshot framings come first — they're the highest-scoring shots.
-const PORTRAIT = new Set(['headshot', 'portrait', 'close-up', 'beauty'])
+const PORTRAIT = new Set(['headshot', 'portrait', 'close-up', 'beauty',
+  'three-quarter', 'profile', 'laughing', 'looking-away', 'chin-hand'])
 const POSE_CAT = (id) =>
   PORTRAIT.has(id) ? 'portrait'
     : id.startsWith('seated') ? 'sitting'
-      : (id.startsWith('reclining') || id.startsWith('lying') || id === 'lounging') ? 'lying down'
-        : (id === 'kneeling' || id === 'crouching') ? 'low'
+      : (id.startsWith('reclining') || id.startsWith('lying') || id.startsWith('lounging')) ? 'lying down'
+        : (id.startsWith('kneeling') || id.startsWith('crouching') || id === 'squatting') ? 'low'
           : 'standing'
 const POSE_ORDER = ['portrait', 'standing', 'sitting', 'low', 'lying down']
 

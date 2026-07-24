@@ -459,6 +459,74 @@ POSES_LIBRARY = {
                    "crossed behind her, looking toward the camera",
     "lounging": "Reclining back against cushions on a sofa, languid and at ease, "
                 "one arm draped along the backrest",
+    # --- portrait / face framings (add ids here to PORTRAIT set in Shoot.jsx) ---
+    "three-quarter": "Three-quarter portrait, body angled slightly away, face "
+                     "turned toward the camera, relaxed",
+    "profile": "Side-profile portrait, face turned to show a clean profile line, "
+               "chin lifted slightly",
+    "laughing": "Candid portrait caught mid-laugh, genuine warm expression, "
+                "looking just off camera",
+    "looking-away": "Waist-up portrait looking away from the camera, soft "
+                    "thoughtful expression",
+    "chin-hand": "Waist-up portrait resting her chin lightly on one hand, "
+                 "looking into the lens",
+    # --- standing ---
+    "hair-touch": "Standing, one hand lifting or touching her hair, relaxed, "
+                  "looking toward the camera",
+    "twirl": "Caught mid-twirl, fabric and hair in motion, joyful and candid",
+    "back-to-camera": "Standing with her back to the camera, head turned to "
+                      "glance over her shoulder",
+    "looking-up": "Standing with chin lifted, gazing upward, serene",
+    "adjusting-sleeve": "Standing, glancing down while adjusting a sleeve or "
+                        "cuff, candid and unposed",
+    "power-stance": "Feet planted wide, hands on hips, strong confident stance, "
+                    "looking into the lens",
+    "against-railing": "Leaning back against a railing, elbows resting on it, "
+                       "relaxed, looking toward the camera",
+    "crossed-ankles-lean": "Leaning against a wall with ankles crossed, casual "
+                           "and cool, looking toward the camera",
+    "reaching-up": "Reaching one arm upward, long extended line through the "
+                   "body, looking toward the camera",
+    "hands-clasped": "Standing with hands loosely clasped in front, poised and "
+                     "elegant, looking toward the camera",
+    "windswept": "Standing as a breeze catches her hair and clothing, eyes "
+                 "toward the camera",
+    "stairs": "Pausing on a set of steps, one foot raised to the next step, "
+              "looking back toward the camera",
+    "doorway-lean": "Leaning in a doorway, one shoulder against the frame, "
+                    "relaxed, looking toward the camera",
+    "walk-away": "Walking away from the camera down a street, not looking back",
+    "runway": "Mid-stride runway walk, one hand on hip, editorial energy, "
+              "straight toward the camera",
+    # --- seated ---
+    "seated-chair-back": "Sitting backwards on a chair, arms folded over the "
+                         "backrest, chin resting on her arms",
+    "seated-stool": "Perched on a high stool, one foot on the rung, relaxed, "
+                    "looking toward the camera",
+    "seated-edge": "Sitting on the edge of a surface, hands beside her, legs "
+                   "relaxed, looking toward the camera",
+    "seated-knees-up": "Seated with knees drawn up, arms wrapped loosely around "
+                       "them, looking toward the camera",
+    "seated-side-saddle": "Seated with both legs swept to one side, elegant and "
+                          "poised, looking toward the camera",
+    "seated-cafe": "Seated at a cafe table, leaning on one elbow, candid, "
+                   "looking toward the camera",
+    # --- low ---
+    "squatting": "In a low relaxed squat, balanced on her feet, forearms resting "
+                 "on her knees, looking toward the camera",
+    "kneeling-heels": "Kneeling and sitting back on her heels, hands resting on "
+                      "her thighs, looking toward the camera",
+    "crouching-fashion": "Low editorial fashion crouch, one knee down, weight "
+                         "forward, looking into the lens",
+    # --- lying down ---
+    "reclining-prop": "Reclining back on both hands, legs extended in a long "
+                      "line, relaxed, looking toward the camera",
+    "lying-hair-fanned": "Lying back with hair fanned out, arms relaxed, serene, "
+                         "looking up toward the camera",
+    "lounging-window": "Lounging on a window seat, back against the frame, knees "
+                       "drawn up, looking toward the camera",
+    "reclining-chaise": "Reclining along a chaise longue, one arm resting above "
+                        "her head, languid and at ease",
 }
 
 
