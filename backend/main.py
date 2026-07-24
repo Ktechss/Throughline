@@ -1015,7 +1015,10 @@ def body_ref_create(req: BodyRefCreateReq):
             "exact side profile, panel 3 facing directly away, panel 4 at a "
             "45-degree three-quarter angle.\n\n"
             "The woman is @image1 — replicate her face, bone structure, skin and "
-            f"hair exactly in every panel. {shape_clean}{shape_ref_clause} She "
+            "hair exactly in every panel. Her FIGURE is the whole point of this "
+            "sheet: render her exact build faithfully and prominently as "
+            "specified below, never substituting a generic slim fashion-model "
+            f"physique. {shape_clean}{shape_ref_clause} She "
             "wears simple fitted plain activewear (a fitted tank top and "
             "leggings) so her figure and proportions are clearly visible. "
             "Identical figure, proportions, stance and lighting across all four "
@@ -1028,9 +1031,12 @@ def body_ref_create(req: BodyRefCreateReq):
             "background, lit flat and even. She stands straight and relaxed "
             "facing the camera, arms at her sides, neutral expression, wearing "
             "simple fitted plain activewear (a fitted tank top and leggings) so "
-            f"her figure and proportions are clearly visible. {shape_clean}"
-            f"{shape_ref_clause} Her face and identity exactly match @image1. "
-            "Photorealistic, real skin texture, natural anatomy.")
+            "her figure and proportions are clearly visible. Her FIGURE is the "
+            "whole point of this image: render her exact build faithfully and "
+            "prominently as specified, never substituting a generic slim "
+            f"fashion-model physique. {shape_clean}{shape_ref_clause} Her face "
+            "and identity exactly match @image1. Photorealistic, real skin "
+            "texture, natural anatomy.")
         aspect, extra = "3:4", None
 
     def run(job: dict) -> dict:

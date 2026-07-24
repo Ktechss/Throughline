@@ -9,6 +9,7 @@ export default function Bio({
 }) {
   const [view, setView] = useState('overview')
   const [shapeRef, setShapeRef] = useState(null)   // optional body-shape reference for the next body-ref generation
+  const [figure, setFigure] = useState('')         // explicit figure text for the body-ref generation (curvy control)
   const sections = [...new Set(parts.map((p) => p.section))]
   const uploadShape = async (e) => {
     const f = e.target.files?.[0]; e.target.value = ''
@@ -146,7 +147,14 @@ export default function Bio({
                   locked. Use a generated or non-identifiable figure, <b>not a photo of a real person</b>.
                 </p>
               </div>
-              <button onClick={() => onCreateBody(shapeRef)} disabled={!!bodyCreating}
+              {/* Explicit figure text — this drives the body image (a clothed solo figure on
+                  the permissive model), so strong curve wording is fine HERE and renders far
+                  curvier than the tasteful bio text. Blank = use her bio build. */}
+              <label className="mb-1 block eve-label text-[#8a8a99]">figure for this body <span className="text-[#5f5f6c]">— optional, be explicit for curvy</span></label>
+              <textarea value={figure} onChange={(e) => setFigure(e.target.value)} rows={2}
+                placeholder="e.g. dramatically curvy voluptuous hourglass — a very full heavy bust, cinched narrow waist, wide full hips; full-figured, not slim"
+                className="mb-2 w-full resize-none rounded-md border border-[#2a2a34] bg-[#0e0e12] px-3 py-2 text-xs leading-relaxed text-[#e6e6ea] outline-none focus:border-[#4ea1ff]" />
+              <button onClick={() => onCreateBody(shapeRef, figure.trim())} disabled={!!bodyCreating}
                 className="eve-button bg-[#4ea1ff] text-[#07111b] hover:bg-[#70b3ff]">
                 {bodyCreating ? 'generating…' : `generate body reference${shapeRef ? ' (+ shape ref)' : ''}`}
               </button>

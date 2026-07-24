@@ -268,12 +268,14 @@ export default function App() {
   // Generate a canonical body image (text-driven, no competing body ref) → preview.
   // Upload a body-SHAPE reference (no face required); returns { name }.
   const uploadShape = async (f) => await api.upload('/api/bio/shape-ref/upload', f)
-  const createBodyRef = async (shapeRef) => {
+  const createBodyRef = async (shapeRef, shape) => {
     const epoch = switchEpoch.current   // this body belongs to the character active NOW
     setBodyCreating('starting…'); setErr(null); setBodyPreview(null)
     try {
-      const { job: jid } = await api.send('/api/bio/body-ref/create', 'POST',
-        shapeRef ? { shape_ref: shapeRef } : {})
+      const body = {}
+      if (shapeRef) body.shape_ref = shapeRef
+      if (shape) body.shape = shape     // explicit figure text (curvy control)
+      const { job: jid } = await api.send('/api/bio/body-ref/create', 'POST', body)
       for (;;) {
         await new Promise((r) => setTimeout(r, 1500))
         if (epoch !== switchEpoch.current) return   // switched away — don't leak into the other profile
