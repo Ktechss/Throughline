@@ -1,6 +1,6 @@
-import { Circle } from 'lucide-react'
+import { Circle, ChevronsUpDown } from 'lucide-react'
 
-export default function Header({ tab, setTab, count, gallery }) {
+export default function Header({ tab, setTab, count, gallery, character, onSwitchCharacter }) {
   const angles = gallery?.entries?.length || 0
   return (
     <header className="sticky top-0 z-40 border-b border-[#24242e] bg-[#0c0c0f]/95 backdrop-blur">
@@ -18,9 +18,23 @@ export default function Header({ tab, setTab, count, gallery }) {
             </button>
           ))}
         </nav>
-        <div className="ml-auto hidden items-center gap-2 font-mono text-[11px] text-[#8a8a99] sm:flex">
-          <span className={`h-1.5 w-1.5 rounded-full ${angles ? 'bg-[#33c07f]' : 'bg-[#d99a2b]'}`} />
-          gallery: {angles ? `${angles} angles ready` : 'empty — ungated'}
+        <div className="ml-auto flex items-center gap-4">
+          <div className="hidden items-center gap-2 font-mono text-[11px] text-[#8a8a99] sm:flex">
+            <span className={`h-1.5 w-1.5 rounded-full ${angles ? 'bg-[#33c07f]' : 'bg-[#d99a2b]'}`} />
+            gallery: {angles ? `${angles} angles ready` : 'empty — ungated'}
+          </div>
+          {character && (
+            <button onClick={onSwitchCharacter} title="switch character"
+              className="flex items-center gap-2 rounded-full border border-[#24242e] bg-[#111117] py-1 pl-1 pr-2.5 transition hover:border-[#3a4a5e]">
+              <span className="h-6 w-6 overflow-hidden rounded-full bg-[#1b2b3d]">
+                <img src={`/api/characters/${character.id}/avatar`} alt={character.name}
+                  onError={(e) => { e.currentTarget.style.display = 'none' }}
+                  className="h-full w-full object-cover" />
+              </span>
+              <span className="max-w-[90px] truncate text-xs font-medium text-[#cdcdd6]">{character.name}</span>
+              <ChevronsUpDown className="h-3.5 w-3.5 text-[#6b6b78]" />
+            </button>
+          )}
         </div>
       </div>
     </header>

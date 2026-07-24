@@ -30,7 +30,7 @@ function Dot({ v }) {
   )
 }
 
-export default function Review({ runs, onOpen, onMark, stats, onExportGold, onPurgeRejected }) {
+export default function Review({ runs, onOpen, onMark, onDelete, stats, onExportGold, onPurgeRejected }) {
   const [open, setOpen] = useState(false)   // stats panel collapsed by default
   // Only actual SHOTS — hide wardrobe/body/calibration generations. One flat grid,
   // latest first (runs already newest-first).
@@ -99,6 +99,10 @@ export default function Review({ runs, onOpen, onMark, stats, onExportGold, onPu
               className={`eve-card group relative overflow-hidden ${marked === 'approve' ? 'ring-1 ring-[#33c07f]' : marked === 'reject' ? 'ring-1 ring-[#e2564a] opacity-60' : ''}`}>
               <button onClick={() => onOpen(r)} className="block w-full">
                 <img src={v.thumb} loading="lazy" decoding="async" className="aspect-[3/4] w-full object-cover transition group-hover:scale-[1.03]" alt={v.label} />
+              </button>
+              <button onClick={() => onDelete(r)} title="delete image"
+                className="absolute left-1.5 top-1.5 z-10 rounded bg-black/60 p-1 text-[#e2564a] opacity-0 transition hover:bg-black/85 group-hover:opacity-100">
+                <Trash2 className="h-3.5 w-3.5" />
               </button>
               {marked && (
                 <span className={`absolute right-1.5 top-1.5 rounded-full p-0.5 ${marked === 'approve' ? 'bg-[#33c07f] text-black' : 'bg-[#e2564a] text-black'}`}>

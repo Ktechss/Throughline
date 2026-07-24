@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
+import { LoaderCircle } from 'lucide-react'
 import Header from '@/components/eve/Header'
+import Landing from '@/components/eve/Landing'
 import Shoot from '@/components/eve/Shoot'
 import Bio from '@/components/eve/Bio'
 import Review from '@/components/eve/Review'
@@ -10,6 +12,11 @@ import OutfitDrawer from '@/components/eve/OutfitDrawer'
 import { api, genView, mergeOutfit, STAGE } from '@/lib/eve'
 
 export default function App() {
+  const [view, setView] = useState('landing')          // 'landing' (profile picker) | 'studio'
+  const [characters, setCharacters] = useState([])
+  const [activeChar, setActiveChar] = useState(null)   // { id, name }
+  const [loading, setLoading] = useState(false)        // studio data loading after a switch
+  const [buildStage, setBuildStage] = useState(null)   // guided-creation progress label
   const [tab, setTab] = useState('shoot')
   const [parts, setParts] = useState([])
   const [runs, setRuns] = useState([])
@@ -61,7 +68,84 @@ export default function App() {
     setStamp(Date.now())   // bust the cache for refs overwritten under a stable filename
   }, [])
 
-  useEffect(() => { refresh().catch((e) => setErr(String(e))) }, [refresh])
+  const loadChars = useCallback(async () => {
+    const r = await api.get('/api/characters')
+    setCharacters(r.characters)
+    setActiveChar(r.characters.find((c) => c.id === r.active) || null)
+    return r
+  }, [])
+
+  // First screen is the profile picker — load the roster, don't auto-enter a studio.
+  useEffect(() => { loadChars().catch((e) => setErr(String(e))) }, [loadChars])
+
+  // Wipe ALL per-character client state so nothing bleeds across profiles — the
+  // live generation queue especially, which is client-only and never refetched.
+  const clearStudio = () => {
+    setGenerations([]); setDetail(null)
+    setRuns([]); setBio(null); setWardrobe([]); setGallery({ entries: [] })
+    setVideos([]); setStats(null); setPoseRefs([]); setBodies([]); setParts([])
+    setOutfit(''); setPoseRef(''); setPoseId(''); setBrief(''); setAiPrompt('')
+    setOutfitPreview(null); setBodyPreview(null); setDrawerOpen(false)
+    setDetails(null); setOutfitImageUrl(null)
+  }
+
+  const enterCharacter = async (id) => {
+    setErr(null)
+    clearStudio()           // no cross-character contamination
+    setActiveChar(characters.find((c) => c.id === id) || { id, name: id })
+    setTab('shoot')
+    setView('studio')       // switch INSTANTLY — the overlay covers the data load
+    setLoading(true)
+    try {
+      await api.send('/api/characters/active', 'PUT', { id })
+      await refresh()
+    } catch (e) { setErr(String(e)) } finally { setLoading(false) }
+  }
+
+  const BUILD_LABEL = (stage) => (
+    stage === 'writing bio' ? 'Writing her bio…'
+      : (stage === 'generating face' || stage === 'generating' || stage === 'starting') ? 'Generating her first face…'
+        : (stage === 'gating') ? 'Checking her face…'
+          : /retry/i.test(stage || '') ? 'Retrying (moderation)…'
+            : 'Building her…')
+
+  const pollBuild = (jid) => new Promise((resolve) => {
+    const tick = async () => {
+      try {
+        const st = await api.get(`/api/jobs/${jid}`)
+        setBuildStage(BUILD_LABEL(st.stage))
+        if (st.done) {
+          if (st.error) setErr(st.error)
+          resolve(st); return
+        }
+      } catch { /* transient */ }
+      setTimeout(tick, 1200)
+    }
+    tick()
+  })
+
+  const createCharacter = async (name, description) => {
+    setErr(null)
+    clearStudio()                     // start her studio clean
+    setActiveChar({ id: '', name })   // optimistic label for the overlay
+    setTab('calibrate')               // land where she gets calibrated
+    setView('studio')
+    setLoading(true); setBuildStage('Writing her bio…')
+    try {
+      const { character, job } = await api.send('/api/characters/guided', 'POST', { name, description })
+      setActiveChar(character)
+      await pollBuild(job)            // Claude writes bio → generates face → sets seed
+      await refresh()
+    } catch (e) { setErr(String(e)); setView('landing') } finally { setLoading(false); setBuildStage(null) }
+  }
+
+  const deleteCharacter = async (c) => {
+    if (!window.confirm(`Delete "${c.name}" and all of her images, wardrobe and generations? This cannot be undone.`)) return
+    try { await api.send(`/api/characters/${c.id}`, 'DELETE'); await loadChars() }
+    catch (e) { setErr(String(e)) }
+  }
+
+  const backToLanding = () => { clearStudio(); setView('landing'); loadChars().catch((e) => setErr(String(e))) }
 
   const savePart = async (id, patch) => {
     const next = parts.map((p) => (p.id === id ? { ...p, ...patch } : p))
@@ -200,6 +284,14 @@ export default function App() {
       await refresh()
     } catch (e) { setErr(String(e)) }
   }
+  const deleteRun = async (run) => {
+    if (!window.confirm('Delete this image? This removes it permanently.')) return
+    try {
+      await fetch(`/api/runs/${run.id}`, { method: 'DELETE' })
+      setDetail((d) => (d && d.id === run.id ? null : d))
+      await refresh()
+    } catch (e) { setErr(String(e)) }
+  }
 
   const mark = async (id, decision) => {
     try {
@@ -299,10 +391,36 @@ export default function App() {
 
   const gens = generations.map(genView)
 
+  if (view === 'landing') {
+    return (
+      <>
+        <Landing characters={characters} active={activeChar?.id}
+          onSelect={enterCharacter} onCreate={createCharacter} onDelete={deleteCharacter} />
+        {err && (
+          <div onClick={() => setErr(null)}
+            className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 cursor-pointer rounded-md border border-[#5d2926] bg-[#211313] px-4 py-2 text-xs text-[#f18b84]">
+            {err} <span className="text-[#9b6764]">· dismiss</span>
+          </div>
+        )}
+      </>
+    )
+  }
+
   return (
     <div className="min-h-screen bg-[#0c0c0f] text-[#e6e6ea]">
       <Header tab={tab} setTab={setTab} gallery={gallery}
+        character={activeChar} onSwitchCharacter={backToLanding}
         count={runs.filter((r) => !r.meta?.outfit_create && !r.meta?.body_ref_create && !r.meta?.calibrate).length} />
+
+      {loading && (
+        <div className="fixed inset-0 top-16 z-30 flex flex-col items-center justify-center gap-3 bg-[#0c0c0f]/85 backdrop-blur-sm">
+          <div className="flex items-center gap-3 text-sm text-[#9fd0ff]">
+            <LoaderCircle className="h-5 w-5 animate-spin" />
+            {buildStage || `Loading ${activeChar?.name || 'character'}…`}
+          </div>
+          {buildStage && <p className="text-xs text-[#767684]">Creating {activeChar?.name} — this takes a minute.</p>}
+        </div>
+      )}
 
       {err && (
         <div onClick={() => setErr(null)}
@@ -343,7 +461,7 @@ export default function App() {
       )}
 
       {tab === 'calibrate' && (
-        <Calibrate bio={bio} gallery={gallery} onRefresh={refresh} stamp={stamp}
+        <Calibrate bio={bio} gallery={gallery} charId={activeChar?.id} onRefresh={refresh} stamp={stamp}
           onEditBio={() => setTab('bio')}
           onUploadBase={async (e) => {
             const f = e.target.files?.[0]; e.target.value = ''
@@ -361,7 +479,7 @@ export default function App() {
 
       {tab === 'video' && <VideoStudio runs={runs} cameraMoves={cameraMoves.moves} models={cameraMoves.models} videos={videos} wardrobe={wardrobe} onAnimate={animate} onDirect={videoDirect} onGenerateStill={generateSceneStill} onMakeVideo={makeVideo} busy={videoBusy} makeBusy={makeBusy} stamp={stamp} />}
 
-      {tab === 'review' && <Review runs={runs} onOpen={setDetail} onMark={mark} stats={stats} onExportGold={exportGold} onPurgeRejected={purgeRejected} />}
+      {tab === 'review' && <Review runs={runs} onOpen={setDetail} onMark={mark} onDelete={deleteRun} stats={stats} onExportGold={exportGold} onPurgeRejected={purgeRejected} />}
 
       <OutfitDrawer open={drawerOpen} imageUrl={outfitImageUrl} describing={describing}
         outfitText={outfitText} setOutfitText={setOutfitText} details={details} onDetail={setDetailField}

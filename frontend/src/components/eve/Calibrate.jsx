@@ -6,29 +6,31 @@ import { api, STAGE } from '@/lib/eve'
 //   1. SEED   — base image + BIO (who she is; drives all generation)
 //   2. GENERATE & APPROVE — canonical faces from the seed; pick the on-model ones
 //   3. LOCK   — approved faces seed the fingerprint + recalibrate the threshold
-export default function Calibrate({ bio, gallery, onRefresh, onUploadBase, onEditBio, stamp }) {
+export default function Calibrate({ bio, gallery, charId, onRefresh, onUploadBase, onEditBio, stamp }) {
   const [count, setCount] = useState(6)
   const [cands, setCands] = useState([])
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState(null)
   const [err, setErr] = useState(null)
 
-  // Re-load already-generated calibration faces on mount so a browser refresh
-  // (or a server restart that killed the in-flight jobs) never loses finished
-  // work — they live in the ledger, not just in this component's state. Give
-  // each a `jid` = its run id so the render keys + toggle (which key on jid)
-  // work exactly like freshly-generated ones.
+  // Load this character's already-generated calibration faces — on mount AND
+  // whenever the active character changes. They live in the ledger, not just in
+  // this component's state, so a browser refresh, a server restart that killed
+  // the in-flight jobs, OR switching to another character and back never loses
+  // finished work: the saved faces just reappear. Always replace with exactly
+  // what the server returns for THIS character (empty included) so no other
+  // character's faces can linger. `jid` = run id so keys/toggle match fresh ones.
   useEffect(() => {
     let alive = true
     api.get('/api/calibrate/candidates')
       .then(({ candidates }) => {
-        if (alive && candidates?.length)
-          setCands(candidates.map((c) => ({ jid: c.id, id: c.id, file: c.file,
-                                            angle: c.angle, verdict: c.verdict })))
+        if (alive)
+          setCands((candidates || []).map((c) => ({ jid: c.id, id: c.id, file: c.file,
+                                                    angle: c.angle, verdict: c.verdict })))
       })
-      .catch(() => { /* first run / empty ledger */ })
+      .catch(() => { if (alive) setCands([]) })
     return () => { alive = false }
-  }, [])
+  }, [charId])
 
   const pollOne = (jid) => {
     const tick = async () => {

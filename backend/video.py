@@ -17,7 +17,7 @@ from pathlib import Path
 
 import fal_client
 
-from . import gate
+from . import db, gate
 from .config import VIDEOS, VIDEOS_META
 
 # fal image-to-video endpoints. Seedance 1.0 Pro is permissive + realistic (the
@@ -205,9 +205,7 @@ def animate(still: Path, *, camera_move: str = "dolly-in", model: str = "seedanc
            "resolution": resolution, "duration": int(duration),
            "audio": not muted, "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
            "frames": frames}
-    rows = _ledger()
-    rows.append(row)
-    VIDEOS_META.write_text(json.dumps(rows, indent=2) + "\n")
+    db.videos_insert(row)
     return row
 
 
@@ -246,14 +244,8 @@ def stitch(clip_paths: list[Path], out: Path | None = None,
 
 
 def record(row: dict) -> None:
-    rows = _ledger()
-    rows.append(row)
-    VIDEOS_META.write_text(json.dumps(rows, indent=2) + "\n")
-
-
-def _ledger() -> list[dict]:
-    return json.loads(VIDEOS_META.read_text()) if VIDEOS_META.exists() else []
+    db.videos_insert(row)
 
 
 def all_videos() -> list[dict]:
-    return list(reversed(_ledger()))
+    return db.videos_all(newest_first=True)

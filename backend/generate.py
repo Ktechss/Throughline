@@ -15,7 +15,7 @@ from pathlib import Path
 
 import fal_client
 
-from . import gate
+from . import config, db, gate
 from .config import (GPT_IMAGE, GPT_IMAGE_SIZE, IMAGES, LOCAL_ENDPOINT,
                      LOCAL_PY, LOCAL_WORKER, RESOLUTION, RUNS_PATH, SCENE_EDIT,
                      SCENE_TEXT2IMG)
@@ -30,11 +30,7 @@ PRIMARY_T2I = SCENE_TEXT2IMG
 
 
 def _runs() -> list[dict]:
-    return json.loads(RUNS_PATH.read_text()) if RUNS_PATH.exists() else []
-
-
-def _save_runs(rows: list[dict]) -> None:
-    RUNS_PATH.write_text(json.dumps(rows, indent=2) + "\n")
+    return db.runs_all()
 
 
 def upload(path: Path) -> str:
@@ -144,6 +140,7 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
     """
     refs = refs or []
     rid = uuid.uuid4().hex[:10]
+    owner = config.get_active()   # pin the character NOW — a mid-render switch must not misfile this
     dest = IMAGES / f"{rid}.png"
     primary = endpoint or (PRIMARY_EDIT if refs else PRIMARY_T2I)
 
@@ -271,9 +268,7 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
     except ValueError as exc:
         row["verdict"] = {"status": "error", "reason": str(exc)[:120]}
 
-    rows = _runs()
-    rows.append(row)
-    _save_runs(rows)
+    db.runs_insert(row, character_id=owner)   # atomic + pinned to the owning character
     return row
 
 
@@ -287,6 +282,7 @@ def _generate_local(rid, dest, *, prompt, system, refs, seed, session,
     """
     if not refs:
         raise RuntimeError("local generation needs a face reference")
+    owner = config.get_active()   # pin the character for this record
     face = refs[0]
     job = {"prompt": f"{system}\n\n{prompt}" if system else prompt,
            "face": str(face), "out": str(dest),
@@ -334,9 +330,7 @@ def _generate_local(rid, dest, *, prompt, system, refs, seed, session,
     except ValueError as exc:
         row["verdict"] = {"status": "error", "reason": str(exc)[:120]}
 
-    rows = _runs()
-    rows.append(row)
-    _save_runs(rows)
+    db.runs_insert(row, character_id=owner)   # atomic + pinned to the owning character
     return row
 
 
@@ -344,12 +338,10 @@ def mark(run_id: str, decision: str | None) -> dict:
     """Human verdict. Distinct from the gate's — the gate measures her face; a
     human is the only thing that can judge her BODY, since person re-ID keys on
     clothing and clothing varies by design."""
-    rows = _runs()
-    for r in rows:
+    for r in _runs():
         if r["id"] == run_id:
             r["mark"] = decision
-            _save_runs(rows)
-            return r
+            return db.runs_update(run_id, r)
     raise KeyError(run_id)
 
 
@@ -360,11 +352,7 @@ def all_runs() -> list[dict]:
 def delete_runs(ids: set[str]) -> list[dict]:
     """Remove runs by id from the ledger; return the removed rows so the caller
     can delete their image files. The ledger and disk are cleaned together."""
-    rows = _runs()
-    removed = [r for r in rows if r["id"] in ids]
-    if removed:
-        _save_runs([r for r in rows if r["id"] not in ids])
-    return removed
+    return db.runs_delete(set(ids))
 
 
 # --------------------------------------------------------------------------

@@ -14,6 +14,7 @@ to edit before it is ever sent. Nothing here bypasses review.
 
 from __future__ import annotations
 
+import json
 import os
 
 from . import config  # noqa: F401 — runs load_dotenv(.env)
@@ -141,6 +142,94 @@ def rewrite(brief: str, *, shot_type: str = "candid", has_wardrobe: bool = False
     if not text:
         raise PrompterError("Claude returned an empty prompt")
     return text
+
+
+# --------------------------------------------------------------------------
+# Character bio writer (phase 4): turn a name + short description into the
+# concrete, photographable identity fields the pipeline generates HER from.
+# Unlike rewrite() — which must NOT describe her — this is the ONE place we DO
+# write her description, because a brand-new character has no reference yet, and
+# the seed face has to come from words. Once she is calibrated, the reference
+# takes over and these fields stop mattering (compose() drops them).
+# --------------------------------------------------------------------------
+_BIO_SYSTEM = (
+    "You design fictional characters for a photorealistic image pipeline. Given a "
+    "name and a short description of a woman, you write the concrete VISUAL "
+    "identity fields she will be generated from.\n\n"
+    "RULES:\n"
+    "1. Fill EVERY requested field. Each value is a short, specific noun phrase in "
+    "the style of the given example — a photographable fact ('large almond "
+    "dark-brown eyes'), never a vague adjective ('pretty eyes') or a sentence.\n"
+    "2. Make her ONE coherent, distinctive person who matches the description, "
+    "drawing on the REAL, WIDE DIVERSITY of human faces. Vary the actual "
+    "structure from character to character — eye shape and spacing, brow "
+    "character, nose bridge and tip, lip proportion, face shape and jawline, "
+    "cheekbones, hairline, skin texture and undertone — so no two characters "
+    "look alike. Prefer real, natural, lived-in features over a generic "
+    "'attractive' template. Where the description is silent, invent specific, "
+    "believable features that genuinely fit her.\n"
+    "3. Distinguishing marks are OPTIONAL and MUST VARY — do NOT give every "
+    "character a mole. Most faces have none prominent; let bone structure and "
+    "proportion carry the identity. Only SOMETIMES add one subtle real-skin "
+    "detail, and vary its kind when you do (light freckles, a single beauty "
+    "spot, a faint scar, a dimple, a slightly crooked tooth). If the description "
+    "names a mark, honour it; otherwise decide naturally, and for many "
+    "characters write something like 'clear even skin, no prominent marks'.\n"
+    "4. Body fields: real, natural adult proportions. Keep them TASTEFUL and "
+    "NON-EXPLICIT — never bra/cup sizes, measurements of intimate areas, or "
+    "sexualised wording; an image model's moderation refuses those and the whole "
+    "generation fails. Describe shape and balance, not numbers.\n"
+    "5. She is ENTIRELY fictional. Never reference or resemble a real person or "
+    "celebrity, and never use a real person's name in a value.\n"
+    "6. Output ONLY a JSON object mapping each field id to its value — no prose, "
+    "no markdown fences."
+)
+
+
+def _strip_fence(text: str) -> str:
+    t = text.strip()
+    if t.startswith("```"):
+        t = t.split("\n", 1)[-1] if "\n" in t else t
+        if t.endswith("```"):
+            t = t[: t.rfind("```")]
+    return t.strip()
+
+
+def write_bio(name: str, description: str, fields: list[dict]) -> dict:
+    """Claude writes a value for each identity field. `fields` is a list of
+    {id, label, hint}. Returns {id: value} for known ids. Raises PrompterError."""
+    if not os.getenv("ANTHROPIC_API_KEY"):
+        raise PrompterError("ANTHROPIC_API_KEY is not set in .env")
+    try:
+        import anthropic
+    except ImportError as exc:  # pragma: no cover
+        raise PrompterError("the 'anthropic' package is not installed") from exc
+
+    field_lines = "\n".join(f'- {f["id"]} ({f["label"]}) — example style: "{f["hint"]}"'
+                            for f in fields)
+    desc = description.strip() or "(no description given — invent a coherent, natural, distinctive woman)"
+    user = (f"Character name: {name}\nDescription: {desc}\n\n"
+            f"Write a value for each field (id, label, example style):\n{field_lines}\n\n"
+            "Return ONLY the JSON object {id: value, ...}.")
+
+    client = anthropic.Anthropic()
+    try:
+        msg = client.messages.create(
+            model="claude-opus-4-8", max_tokens=1500,
+            system=_BIO_SYSTEM, messages=[{"role": "user", "content": user}])
+    except anthropic.APIStatusError as exc:
+        raise PrompterError(f"Claude API error: {exc.message}"[:300]) from exc
+    except anthropic.APIConnectionError as exc:
+        raise PrompterError("could not reach the Claude API") from exc
+
+    text = _strip_fence("".join(b.text for b in msg.content if b.type == "text"))
+    try:
+        data = json.loads(text)
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise PrompterError("Claude returned malformed bio JSON") from exc
+    allowed = {f["id"] for f in fields}
+    return {k: str(v).strip() for k, v in data.items()
+            if k in allowed and str(v).strip()}
 
 
 # The video director: a scenario -> a full clip plan (dialogue, scene, camera,

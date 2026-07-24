@@ -1,7 +1,17 @@
-"""Paths and env. Single source of truth — nothing else builds a path by hand."""
+"""Paths and env. Single source of truth — nothing else builds a path by hand.
+
+MULTI-CHARACTER (phase 4): the per-character state (images, refs, gallery, bio,
+wardrobe, …) now lives under data/characters/<id>/, and the path constants below
+are LIVE PROXIES that resolve against whichever character is ACTIVE. That is what
+lets `from .config import IMAGES` stay unchanged in every module while IMAGES
+follows the active character — single user, single process, so one process-global
+active id is enough. The global database (data/eve1.db) and the fal endpoint
+config are NOT per-character and stay plain constants.
+"""
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -10,30 +20,104 @@ ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env")
 
 DATA = ROOT / "data"
-IMAGES = DATA / "images"          # generated images
-REFS = DATA / "refs"              # identity references — the face we're holding
-WARDROBE = DATA / "wardrobe"      # outfit reference images (@image2 per shot)
-POSE_REFS = DATA / "pose-refs"    # pose reference images of HER (keyword-selected)
-POSES = DATA / "poses"            # saved skeletons
-BODIES = DATA / "bodies"          # saved BODY types (figure references, selectable)
-GOLD = DATA / "gold"              # human-APPROVED shots — the curated LoRA dataset.
-                                  # Approvals accumulate HERE, never in the gallery
-                                  # (that stays frozen — feeding it generated output
-                                  # drifts the yardstick; see gate.py).
-VIDEOS = DATA / "videos"          # generated video clips (fal image-to-video)
-STATE = DATA / "state"            # part tree, gallery, threshold
+CHARACTERS = DATA / "characters"      # one folder per character
+DEFAULT_CHARACTER = "kiara"           # the original single-character build
+_ACTIVE_FILE = DATA / "active_character.json"
 
-GALLERY_PATH = STATE / "gallery.npz"
-GALLERY_META = STATE / "gallery.json"   # per-entry yaw/face_px — needed to know
-                                        # whether a comparison is even fair
-THRESHOLD_PATH = STATE / "threshold.json"
-PARTS_PATH = STATE / "parts.json"
-RUNS_PATH = STATE / "runs.json"
-BODIES_META = STATE / "bodies.json"     # body-type metadata: build text + active
-VIDEOS_META = STATE / "videos.json"     # video clip ledger: still, camera move, verdict
+CHARACTERS.mkdir(parents=True, exist_ok=True)
 
-for d in (IMAGES, REFS, WARDROBE, POSE_REFS, POSES, BODIES, GOLD, VIDEOS, STATE):
-    d.mkdir(parents=True, exist_ok=True)
+# The active character is cached in a module global and mirrored to a tiny file
+# so it survives a restart. set_active() is the ONLY writer.
+_active_id: str | None = None
+
+
+def get_active() -> str:
+    global _active_id
+    if _active_id is None:
+        try:
+            _active_id = json.loads(_ACTIVE_FILE.read_text())["id"]
+        except Exception:  # noqa: BLE001 — missing/corrupt file -> the default
+            _active_id = DEFAULT_CHARACTER
+    return _active_id
+
+
+def set_active(cid: str) -> None:
+    global _active_id
+    _active_id = cid
+    _ACTIVE_FILE.write_text(json.dumps({"id": cid}))
+
+
+def char_base(cid: str | None = None) -> Path:
+    """The folder holding one character's entire state."""
+    return CHARACTERS / (cid or get_active())
+
+
+class CharPath:
+    """A Path-like proxy that resolves against the ACTIVE character's folder on
+    every operation. `IMAGES = CharPath("images")` makes `IMAGES / "x.png"`,
+    `IMAGES.glob(...)`, `open(IMAGES/..)` and `str(IMAGES)` all follow whichever
+    character is active — so no call site has to thread a character id through."""
+
+    __slots__ = ("_parts",)
+
+    def __init__(self, *parts: str):
+        self._parts = parts
+
+    def _resolve(self) -> Path:
+        return char_base().joinpath(*self._parts)
+
+    def __truediv__(self, other) -> Path:
+        return self._resolve() / other
+
+    def __fspath__(self) -> str:            # open(), os.path, shutil, FileResponse
+        return str(self._resolve())
+
+    def __str__(self) -> str:               # f-strings, str()
+        return str(self._resolve())
+
+    def __repr__(self) -> str:
+        return f"CharPath({'/'.join(self._parts)!r} -> {self._resolve()})"
+
+    def __getattr__(self, name):            # .exists/.glob/.mkdir/.iterdir/.name/…
+        return getattr(self._resolve(), name)
+
+
+# --- per-character paths (resolve against the active character) ---------------
+IMAGES = CharPath("images")           # generated images
+REFS = CharPath("refs")               # identity references — the face we're holding
+WARDROBE = CharPath("wardrobe")       # outfit reference images (@image2 per shot)
+POSE_REFS = CharPath("pose-refs")     # pose reference images of HER (keyword-selected)
+POSES = CharPath("poses")             # saved skeletons
+BODIES = CharPath("bodies")           # saved BODY types (figure references, selectable)
+GOLD = CharPath("gold")               # human-APPROVED shots — the curated LoRA dataset.
+                                      # Approvals accumulate HERE, never in the gallery
+                                      # (that stays frozen — feeding it generated output
+                                      # drifts the yardstick; see gate.py).
+VIDEOS = CharPath("videos")           # generated video clips (fal image-to-video)
+STATE = CharPath("state")             # part tree, gallery, threshold, bio (per character)
+
+GALLERY_PATH = CharPath("state", "gallery.npz")
+GALLERY_META = CharPath("state", "gallery.json")   # per-entry yaw/face_px — needed to
+                                                   # know whether a comparison is fair
+THRESHOLD_PATH = CharPath("state", "threshold.json")
+PARTS_PATH = CharPath("state", "parts.json")
+RUNS_PATH = CharPath("state", "runs.json")         # cold backup; runs live in eve1.db
+BODIES_META = CharPath("state", "bodies.json")     # body-type metadata: build text + active
+VIDEOS_META = CharPath("state", "videos.json")     # cold backup; videos live in eve1.db
+BIO_PATH = CharPath("state", "bio.json")           # reference / body_reference / calib_seed
+
+
+def ensure_char_dirs(cid: str | None = None) -> None:
+    """Create the full folder skeleton for one character (idempotent)."""
+    base = char_base(cid)
+    for name in ("images", "refs", "wardrobe", "pose-refs", "poses",
+                 "bodies", "gold", "videos", "state"):
+        (base / name).mkdir(parents=True, exist_ok=True)
+
+
+# Ensure the active character's folders exist on import (fresh installs + the
+# default character). Other characters get their dirs at creation time.
+ensure_char_dirs()
 
 # fal endpoints. Local inference is off the table — an 8GB laptop GPU cannot run
 # FLUX.2 (32B) or klein 4B (~13GB).
@@ -85,11 +169,6 @@ RESOLUTION = "4K"
 # --------------------------------------------------------------------------
 # Local generation — $0 per image, on the 8GB RTX 5070 (Blackwell, sm_120).
 # --------------------------------------------------------------------------
-# The project long assumed local inference was impossible here. It is not:
-# torch 2.11+cu128 runs on this card, and SDXL fits with model CPU offload.
-# gpt-image-2 (0.813) still leads on quality; this trades quality for zero
-# marginal cost. The gate scores both the same way, so the trade is measured.
-#
 # The torch/diffusers stack lives in a SEPARATE venv (.venv-gen) and runs as a
 # subprocess — the web backend never imports torch. LOCAL_ENDPOINT is the
 # sentinel generate() keys off to shell out instead of calling fal.
