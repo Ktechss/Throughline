@@ -170,10 +170,10 @@ def default_parts() -> list[Part]:
         P("face.lips", "face", "Lips", "medium-full lips, muted dusty rose", identity=True),
         P("face.shape", "face", "Face shape", "a soft oval face with a gently tapered jaw", identity=True),
         P("face.marks", "face", "Distinguishing marks",
-          "a small mole above the left side of the upper lip, one beneath the "
-          "right cheekbone, faint freckles across the nose bridge", identity=True,
-          note="Asymmetric marks are the cheapest identity anchor there is — "
-               "but only during the seed hunt."),
+          "clear even skin, no prominent marks", identity=True,
+          note="Marks are OFF by default — a character should not get a mole she "
+               "wasn't asked for. Add a specific mole/freckle/scar here only if "
+               "you actually want one on every generation of her."),
 
         # -- body ------------------------------------------------------------
         # Granular on purpose. "Athletic build" is a wish; a generator resolves
