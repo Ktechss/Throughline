@@ -124,17 +124,24 @@ export default function App() {
     tick()
   })
 
-  const createCharacter = async (name, description) => {
+  const createCharacter = async ({ name, description, face_shape, file }) => {
     setErr(null)
     clearStudio()                     // start her studio clean
     setActiveChar({ id: '', name })   // optimistic label for the overlay
     setTab('calibrate')               // land where she gets calibrated
     setView('studio')
-    setLoading(true); setBuildStage('Writing her bio…')
+    setLoading(true); setBuildStage(file ? 'Generating her face from your image…' : 'Writing her bio…')
     try {
-      const { character, job } = await api.send('/api/characters/guided', 'POST', { name, description })
+      const fd = new FormData()
+      fd.append('name', name)
+      fd.append('description', description || '')
+      fd.append('face_shape', face_shape || '')
+      if (file) fd.append('reference', file)
+      const r = await fetch('/api/characters/guided', { method: 'POST', body: fd })
+      if (!r.ok) throw new Error((await r.text()).slice(0, 300))
+      const { character, job } = await r.json()   // Claude writes bio → generates face → sets seed
       setActiveChar(character)
-      await pollBuild(job)            // Claude writes bio → generates face → sets seed
+      await pollBuild(job)
       await refresh()
     } catch (e) { setErr(String(e)); setView('landing') } finally { setLoading(false); setBuildStage(null) }
   }

@@ -10,7 +10,7 @@ from pathlib import Path
 
 import shutil
 
-from fastapi import Body, FastAPI, File, HTTPException, UploadFile
+from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
@@ -129,61 +129,97 @@ def create_character(req: CharacterReq):
     return _char_view(row)
 
 
-class GuidedReq(BaseModel):
-    name: str
-    description: str = ""
+# The standard face shapes the picker offers. "" = let Claude decide from the
+# description (the diverse default).
+FACE_SHAPES = ["oval", "round", "square", "heart", "diamond", "oblong"]
 
 
 @app.post("/api/characters/guided")
-def create_character_guided(req: GuidedReq):
-    """Create a character the good way: Claude writes her bio from a description,
-    we generate her first face from it, and set that as the calibration seed — so
-    the user lands ready to calibrate for strong consistency, not staring at a
-    blank template. Returns immediately with a job id; the slow work (LLM + image
-    generation) runs in the background and the client polls /api/jobs/{id}."""
-    name = req.name.strip()
+async def create_character_guided(
+    name: str = Form(...),
+    description: str = Form(""),
+    face_shape: str = Form(""),
+    reference: UploadFile | None = File(None),
+):
+    """Create a character the good way: Claude writes her bio from a description
+    (optionally pinned to a chosen face shape), we generate her first face — from
+    an uploaded reference image if the user gave one, otherwise from the written
+    bio — and set it as the calibration seed. The user lands ready to calibrate
+    for strong consistency. Returns a job id; the slow work runs in the background
+    and the client polls /api/jobs/{id}."""
+    name = name.strip()
     if not name:
         raise HTTPException(400, "name required")
-    description = req.description
+    shape = face_shape.strip().lower()
+    if shape and shape not in FACE_SHAPES:
+        shape = ""
     cid = _unique_char_id(name)
     config.ensure_char_dirs(cid)
     char = db.chars_create(cid, name)
     config.set_active(cid)                # the build job runs on the now-active char
 
+    # Save the uploaded reference (if any) into the new character's refs NOW, while
+    # the request is alive — the background job only gets a path.
+    seed_upload: Path | None = None
+    if reference is not None:
+        data = await reference.read()
+        if data:
+            ext = Path(reference.filename or "seed.png").suffix.lower()
+            if ext not in (".png", ".jpg", ".jpeg", ".webp"):
+                ext = ".png"
+            seed_upload = _unique_ref_path(f"seed-upload{ext}")
+            seed_upload.write_bytes(data)
+
     def run(job: dict) -> dict:
-        # 1) Claude writes her identity fields from the description
+        # 1) Claude writes her identity fields from the description (+ face shape)
         job["stage"] = "writing bio"
-        parts = _load_parts()             # defaults for the fresh character
+        parts = _load_parts()
         writable = [p for p in parts
                     if p.section in ("subject", "face", "hair", "skin", "body")
                     and p.id != "subject.energy"]
         fields = [{"id": p.id, "label": p.label, "hint": p.text} for p in writable]
+        desc = description + (f"\nHer face shape is {shape}." if shape else "")
         try:
-            updates = prompter.write_bio(name, description, fields)
+            updates = prompter.write_bio(name, desc, fields)
         except prompter.PrompterError as exc:
             updates = {}
             job["note"] = f"bio auto-write skipped ({exc}); used defaults"
+        if shape:   # the picker is authoritative — make sure the shape is honoured
+            cur = updates.get("face.shape", "")
+            if shape not in cur.lower():
+                updates["face.shape"] = f"a {shape} face" + (f", {cur}" if cur else "")
         if updates:
             parts = [promptlib.Part(**{**p.dict(), "text": updates.get(p.id, p.text)})
                      for p in parts]
             _save_parts(parts)
 
-        # 2) generate her first face from that written identity (text-to-image,
-        #    no reference exists yet — this is the seed hunt for a new person)
+        # 2) generate her first face
         job["stage"] = "generating face"
-        portrait = promptlib.compose(
-            parts, has_reference=False,
-            pose_note="a clean, well-lit frontal headshot — head and shoulders, "
-                      "plain neutral studio background, looking straight into the "
-                      "lens, natural relaxed expression")
-        row = generate.generate(
-            prompt=portrait, refs=None, aspect="3:4",
-            session=generate.new_session(f"seed face: {name}"), progress=job,
-            meta={"guided_seed": True})
+        if seed_upload and seed_upload.exists():
+            # from the uploaded reference — a clean, normalised frontal of THAT face
+            prompt = ("Clean, well-lit frontal headshot of @image1 — head and "
+                      "shoulders, plain neutral studio background, looking straight "
+                      "into the lens, natural relaxed expression. "
+                      f"{IDENTITY_LOCK_LINE} Photorealistic, real skin texture, "
+                      "sharp focus on the face.")
+            row = generate.generate(
+                prompt=prompt, refs=[seed_upload], aspect="3:4",
+                session=generate.new_session(f"seed face: {name}"), progress=job,
+                meta={"guided_seed": True, "from_upload": True})
+        else:
+            # from the written bio (text-to-image seed hunt — no reference yet)
+            portrait = promptlib.compose(
+                parts, has_reference=False,
+                pose_note="a clean, well-lit frontal headshot — head and shoulders, "
+                          "plain neutral studio background, looking straight into "
+                          "the lens, natural relaxed expression")
+            row = generate.generate(
+                prompt=portrait, refs=None, aspect="3:4",
+                session=generate.new_session(f"seed face: {name}"), progress=job,
+                meta={"guided_seed": True})
 
-        # 3) save the face as a reference and set it as the CALIBRATION SEED (not
-        #    the locked BIO identity — that is earned only by promoting a
-        #    calibrated face). Now the user can calibrate for strong consistency.
+        # 3) set the generated face as the CALIBRATION SEED (never the locked BIO
+        #    identity — that is earned only by promoting a calibrated face)
         src = IMAGES / row["file"]
         if src.exists():
             dst = _unique_ref_path("seed-face.png")

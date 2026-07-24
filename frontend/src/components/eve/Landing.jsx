@@ -1,5 +1,7 @@
 import { useState } from 'react'
-import { Plus, Trash2, ShieldCheck, CircleDashed, LoaderCircle } from 'lucide-react'
+import { Plus, Trash2, ShieldCheck, CircleDashed, LoaderCircle, ImagePlus, X } from 'lucide-react'
+
+const FACE_SHAPES = ['oval', 'round', 'square', 'heart', 'diamond', 'oblong']
 
 // Netflix-style profile picker: every character is a face you step into. Pick one
 // to enter its studio (its own identity, calibration, wardrobe and generations),
@@ -24,13 +26,25 @@ export default function Landing({ characters, active, onSelect, onCreate, onDele
   const [creating, setCreating] = useState(false)
   const [name, setName] = useState('')
   const [desc, setDesc] = useState('')
+  const [shape, setShape] = useState('')
+  const [file, setFile] = useState(null)
+  const [preview, setPreview] = useState(null)
   const [busy, setBusy] = useState(false)
+
+  const reset = () => { setName(''); setDesc(''); setShape(''); setFile(null); setPreview(null) }
+  const pickFile = (e) => {
+    const f = e.target.files?.[0]; e.target.value = ''
+    if (!f) return
+    setFile(f); setPreview(URL.createObjectURL(f))
+  }
+  const clearFile = () => { setFile(null); setPreview(null) }
 
   const submit = async () => {
     const n = name.trim()
     if (!n || busy) return
     setBusy(true)
-    try { await onCreate(n, desc.trim()) } finally { setBusy(false); setCreating(false); setName(''); setDesc('') }
+    try { await onCreate({ name: n, description: desc.trim(), face_shape: shape, file }) }
+    finally { setBusy(false); setCreating(false); reset() }
   }
 
   return (
@@ -90,6 +104,34 @@ export default function Landing({ characters, active, onSelect, onCreate, onDele
               placeholder="e.g. 24, Punjabi, warm honey skin, sharp jawline and high cheekbones, long wavy dark-brown hair, athletic hourglass build, a small mole near her lip"
               className="mt-1 w-full resize-none rounded-lg border border-[#2a2a34] bg-[#08080b] px-3 py-2.5 text-sm leading-relaxed outline-none focus:border-[#4ea1ff]" />
             <p className="mt-1.5 text-[10px] text-[#5f5f6c]">Optional — leave blank and Claude invents a coherent person. Keep it visual; avoid explicit wording.</p>
+
+            <label className="mt-3 block eve-label text-[#8a8a99]">face shape <span className="text-[#5f5f6c]">— optional</span></label>
+            <div className="mt-1 flex flex-wrap gap-1.5">
+              {FACE_SHAPES.map((s) => (
+                <button key={s} type="button" onClick={() => setShape(shape === s ? '' : s)}
+                  className={`rounded-full border px-3 py-1 text-xs capitalize transition ${shape === s
+                    ? 'border-[#4ea1ff] bg-[#123049] text-[#9fd0ff]'
+                    : 'border-[#2a2a34] text-[#a9a9b6] hover:border-[#3a3a46]'}`}>{s}</button>
+              ))}
+            </div>
+
+            <label className="mt-3 block eve-label text-[#8a8a99]">reference image <span className="text-[#5f5f6c]">— optional, guides her look</span></label>
+            {preview ? (
+              <div className="mt-1 flex items-center gap-3">
+                <img src={preview} alt="reference" className="h-20 w-16 rounded-md border border-[#284d72] object-cover" />
+                <button type="button" onClick={clearFile}
+                  className="flex items-center gap-1 rounded-md border border-[#2a2a34] px-2.5 py-1.5 text-xs text-[#a9a9b6] transition hover:border-[#5d2926] hover:text-[#f18b84]">
+                  <X className="h-3.5 w-3.5" /> remove
+                </button>
+              </div>
+            ) : (
+              <label className="mt-1 flex cursor-pointer items-center gap-2 rounded-lg border border-dashed border-[#3a3a46] px-3 py-2.5 text-xs text-[#8a8a99] transition hover:border-[#4ea1ff] hover:text-[#cfe0f5]">
+                <ImagePlus className="h-4 w-4" /> upload a face to base her on
+                <input type="file" accept="image/*" hidden onChange={pickFile} />
+              </label>
+            )}
+            <p className="mt-1.5 text-[10px] text-[#5f5f6c]">With an image, her first face is generated from it. Without one, it's generated from the written bio.</p>
+
             <div className="mt-4 flex justify-end gap-2">
               <button onClick={() => setCreating(false)} disabled={busy}
                 className="rounded-lg border border-[#2a2a34] px-4 py-2 text-sm text-[#a9a9b6] transition hover:border-[#3a3a46]">Cancel</button>
