@@ -1,10 +1,12 @@
-import { X, LoaderCircle, Wand2, Sparkles } from 'lucide-react'
+import { X, LoaderCircle, Wand2, Sparkles, ImagePlus } from 'lucide-react'
 import { DETAIL_FIELDS, OUTFIT_PICKERS } from '@/lib/eve'
 
-// Right-side drawer for the design/describe → review → generate outfit flow.
+// Right-side drawer — the single outfit builder. Two ways to fill the same
+// description box: upload a reference photo (Claude describes it) OR type an idea
+// + pick attributes (Claude writes it). Then review/edit → generate.
 export default function OutfitDrawer({
   open, imageUrl, describing, outfitText, setOutfitText,
-  details, onDetail, creating, onGenerate, onClose,
+  details, onDetail, creating, onGenerate, onClose, onDescribe,
   idea, setIdea, pickers, onPicker, enriching, onEnrich,
 }) {
   if (!open) return null
@@ -30,8 +32,19 @@ export default function OutfitDrawer({
             </div>
           ) : (
             <>
-              {/* Design from a short idea + structured picks — Claude expands it
-                  into a rich, opaque garment description that fills the box below. */}
+              {/* Option A — describe from a reference photo. */}
+              <label className="eve-label">reference photo <span className="text-[#5f6b7a]">— optional, describe an outfit from an image</span></label>
+              <label className="mb-4 mt-1 flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-[#3a3a46] px-3 py-3 text-xs text-[#8a8a99] transition hover:border-[#4ea1ff] hover:text-[#cfe0f5]">
+                <ImagePlus className="h-4 w-4" /> upload an outfit photo to describe
+                <input type="file" accept="image/*" hidden onChange={onDescribe} />
+              </label>
+
+              <div className="mb-4 flex items-center gap-2 text-[10px] uppercase tracking-wider text-[#565663]">
+                <span className="h-px flex-1 bg-[#24242e]" />or design one<span className="h-px flex-1 bg-[#24242e]" />
+              </div>
+
+              {/* Option B — design from a short idea + structured picks; Claude
+                  expands it into a rich, opaque garment description below. */}
               <label className="eve-label">idea <span className="text-[#5f6b7a]">— a short outfit idea (optional)</span></label>
               <input value={idea || ''} onChange={(e) => setIdea(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter' && !enriching) onEnrich() }}

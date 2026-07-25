@@ -77,12 +77,8 @@ export default function Shoot({
               className="eve-input h-10 flex-1 min-w-[220px]"
               placeholder="describe an outfit — 'red satin slip dress, strappy heels'" />
             <button onClick={onOpenDesigner} className="eve-button shrink-0 border border-[#315d88] bg-[#101b27] text-[#8fb6dd] hover:border-[#4ea1ff]">
-              <Sparkles /> write outfit
+              <Sparkles /> outfit designer
             </button>
-            <label className="eve-button shrink-0 border border-[#353541] cursor-pointer">
-              <ImagePlus /> {describing ? 'describing…' : 'describe image'}
-              <input type="file" accept="image/*" hidden disabled={describing} onChange={onDescribe} />
-            </label>
             <button onClick={onCreateOutfit} disabled={!!creating || !outfitText.trim()}
               className="eve-button shrink-0 border border-[#353541]">{creating ? 'creating…' : 'create outfit'}</button>
           </div>

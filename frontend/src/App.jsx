@@ -629,7 +629,7 @@ export default function App() {
       <OutfitDrawer open={drawerOpen} imageUrl={outfitImageUrl} describing={describing}
         outfitText={outfitText} setOutfitText={setOutfitText} details={details} onDetail={setDetailField}
         idea={idea} setIdea={setIdea} pickers={pickers} onPicker={setPicker}
-        enriching={enriching} onEnrich={enrichOutfit}
+        enriching={enriching} onEnrich={enrichOutfit} onDescribe={describe}
         creating={creating} onClose={() => setDrawerOpen(false)}
         onGenerate={() => { setDrawerOpen(false); createOutfit() }} />
 
