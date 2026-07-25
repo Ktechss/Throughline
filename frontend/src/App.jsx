@@ -48,6 +48,7 @@ export default function App() {
   const [poseRef, setPoseRef] = useState('')
   const [poseId, setPoseId] = useState('')                   // selected text-pose preset
   const [resolution, setResolution] = useState('4K')         // 1K | 2K | 4K
+  const [faceAcc, setFaceAcc] = useState(true)               // render outfit's face-worn items (sunglasses/hats)
   const [poseLibrary, setPoseLibrary] = useState([])         // { id, text } presets
   const [bodies, setBodies] = useState([])                   // saved body-type library
   const [stats, setStats] = useState(null)                   // approval analytics + gold set
@@ -217,7 +218,7 @@ export default function App() {
       const { job: jid } = await api.send('/api/shot', 'POST', {
         brief, aspect: '3:4', prompt: aiPrompt.trim() || null,
         wardrobe_id: outfit || null, pose_ref_id: poseRef || null,
-        pose_id: poseId || null, resolution,
+        pose_id: poseId || null, resolution, face_accessories: faceAcc,
       })
       setGenerations((gs) => gs.map((g) => (g.jid === tmp ? { ...g, jid } : g)))   // swap tmp → real job id
       pollGen(jid)
@@ -580,6 +581,7 @@ export default function App() {
           outfit={outfit} setOutfit={setOutfit} poseRef={poseRef} setPoseRef={setPoseRef}
           poseId={poseId} setPoseId={setPoseId} poseLibrary={poseLibrary}
           resolution={resolution} setResolution={setResolution}
+          faceAcc={faceAcc} setFaceAcc={setFaceAcc}
           wardrobe={wardrobe} poseRefs={poseRefs}
           outfitText={outfitText} setOutfitText={setOutfitText}
           describing={describing} onDescribe={describe} creating={creating} onCreateOutfit={createOutfit}

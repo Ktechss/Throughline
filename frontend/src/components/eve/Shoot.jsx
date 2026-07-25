@@ -21,7 +21,7 @@ export default function Shoot({
   bio, gens, onOpen, goBio,
   brief, setBrief, aiPrompt, setAiPrompt, aiBusy, onAiPrompt, onGenerate,
   outfit, setOutfit, poseRef, setPoseRef, wardrobe, poseRefs,
-  poseId, setPoseId, poseLibrary, resolution, setResolution,
+  poseId, setPoseId, poseLibrary, resolution, setResolution, faceAcc, setFaceAcc,
   outfitText, setOutfitText, describing, onDescribe, creating, onCreateOutfit,
   outfitPreview, onSaveOutfit, onDiscardOutfit, onOpenDesigner,
   onUploadOutfit, onUploadPose, onDeleteWardrobe, stamp,
@@ -68,6 +68,23 @@ export default function Shoot({
           </div>
           <span className="font-mono text-[10px] text-[#666674]">
             {resolution === '4K' ? '~20 MB/image' : resolution === '2K' ? '~5 MB/image' : '~1.5 MB/image · smaller face, may abstain on full-body'}
+          </span>
+        </div>
+
+        {/* Face-worn accessories (sunglasses, hats) from the selected outfit. Off
+            keeps her face clear → best identity score; on renders the full look. */}
+        <div className="flex items-center gap-3">
+          <span className="eve-label">face accessories</span>
+          <button onClick={() => setFaceAcc(!faceAcc)} role="switch" aria-checked={faceAcc}
+            className={`relative h-5 w-9 rounded-full border transition ${faceAcc
+              ? 'border-[#4ea1ff] bg-[#123049]' : 'border-[#2a2a34] bg-[#0e0e12]'}`}>
+            <span className={`absolute top-0.5 h-3.5 w-3.5 rounded-full transition-all ${faceAcc
+              ? 'left-4 bg-[#4ea1ff]' : 'left-0.5 bg-[#565663]'}`} />
+          </button>
+          <span className="font-mono text-[10px] text-[#666674]">
+            {faceAcc
+              ? 'sunglasses / hats from the outfit render (may lower identity score)'
+              : 'face kept clear — no sunglasses/hats · best for identity'}
           </span>
         </div>
         <div>

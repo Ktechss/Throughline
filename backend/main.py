@@ -1644,6 +1644,8 @@ class ShotReq(BaseModel):
     pose_ref_id: str | None = None   # a pose REFERENCE image, attached as @image3
     shot_type: str = "candid"
     resolution: str | None = None    # "1K" | "2K" | "4K" (nano). None -> config default
+    face_accessories: bool = True    # render face-worn items (sunglasses/hats) from the
+                                     # outfit; off = keep her face clear (better identity)
 
 
 class AiPromptReq(BaseModel):
@@ -1744,17 +1746,29 @@ def shot(req: ShotReq):
     if has_wardrobe:
         desc = (_wardrobe_meta().get(req.wardrobe_id, {}) or {}).get("description")
         if desc and desc.strip():
-            styling, _ = promptlib.sanitise(
-                "She is WEARING this complete look in the shot — show every element "
-                "on her, not only the clothing: reproduce the garments from @image2, "
-                "and also render her lip colour, nail colours, jewellery, bag, belt, "
-                "watch, and any eyewear/sunglasses, hat or hair accessory from the "
-                "description. If the look includes sunglasses or glasses she is "
-                "wearing them over her eyes; a hat or hair piece she wears on her "
-                "head — render these worn items clearly and do NOT omit them. Her "
-                "facial identity, bone structure and features stay exactly hers "
-                "from @image1 — she is simply shown wearing these items: "
-                f"{desc.strip()}")
+            if req.face_accessories:
+                styling, _ = promptlib.sanitise(
+                    "She is WEARING this complete look in the shot — show every "
+                    "element on her, not only the clothing: reproduce the garments "
+                    "from @image2, and also render her lip colour, nail colours, "
+                    "jewellery, bag, belt, watch, and any eyewear/sunglasses, hat "
+                    "or hair accessory from the description. If the look includes "
+                    "sunglasses or glasses she is wearing them over her eyes; a hat "
+                    "or hair piece she wears on her head — render these worn items "
+                    "clearly and do NOT omit them. Her facial identity, bone "
+                    "structure and features stay exactly hers from @image1 — she "
+                    f"is simply shown wearing these items: {desc.strip()}")
+            else:
+                # Face clear — apply everything EXCEPT items that cover the face,
+                # so identity stays fully readable (the gate can score it).
+                styling, _ = promptlib.sanitise(
+                    "She is wearing this look — reproduce the garments from @image2 "
+                    "and apply its lip colour, nail colours, jewellery, bag, belt "
+                    "and watch. But do NOT add any sunglasses, glasses, eyewear, "
+                    "hat or anything covering or obscuring her face — keep her face "
+                    "fully clear, uncovered and visible, even if the description "
+                    "mentions such items. Her facial identity comes only from "
+                    f"@image1: {desc.strip()}")
             text = f"{text} {styling}"
     label = req.brief.strip()[:60] or "untitled shot"
     session = generate.new_session(label)
