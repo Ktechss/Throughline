@@ -35,8 +35,8 @@ _MEDIA = {
 # The detail fields the turnaround needs but a reference photo often doesn't show
 # (heels cropped out, hands out of frame, no feet, lips not clear). Keys here are
 # the contract with the frontend; order is display order.
-DETAIL_KEYS = ["outfit_color", "lower_garment", "shoes", "jewellery", "bag",
-               "outerwear", "belt", "sunglasses", "watch", "hair_accessory",
+DETAIL_KEYS = ["outfit_color", "lower_garment", "shoes", "hair", "jewellery",
+               "bag", "outerwear", "belt", "sunglasses", "watch", "hair_accessory",
                "hosiery", "fingernails", "toenails", "lipstick"]
 
 _SCHEMA = {
@@ -64,6 +64,8 @@ _PROMPT = (
     "- `lower_garment`: the lower-body garment TYPE (e.g. shorts, mini skirt, "
     "wide-leg trousers, jeans, or 'dress' if one-piece)\n"
     "- `shoes`: footwear / heels (type, colour, heel height)\n"
+    "- `hair`: the hairstyle AND hair colour (e.g. 'sleek high ponytail, jet "
+    "black', 'loose beach waves, honey brown', 'braided updo, dark brown')\n"
     "- `jewellery`: earrings, necklace, bracelets, rings (type, metal, stones)\n"
     "- `bag`: handbag or clutch (type, colour, hardware)\n"
     "- `outerwear`: any jacket, coat, blazer, shrug or dupatta layered over\n"

@@ -27,6 +27,7 @@ export const DETAIL_FIELDS = [
   { key: 'outfit_color', label: 'Outfit colour', hint: 'e.g. emerald green', clause: 'Outfit colour' },
   { key: 'lower_garment', label: 'Lower garment', hint: 'shorts / skirt / pants / jeans / dress', clause: 'Lower garment' },
   { key: 'shoes', label: 'Shoes / heels', hint: 'e.g. black strappy heels', clause: 'Footwear' },
+  { key: 'hair', label: 'Hair (style & colour)', hint: 'e.g. sleek high ponytail, jet black', clause: 'Hairstyle' },
   { key: 'jewellery', label: 'Jewellery', hint: 'earrings, necklace, bracelets', clause: 'Jewellery' },
   { key: 'bag', label: 'Bag / clutch', hint: 'e.g. black leather shoulder bag', clause: 'Bag' },
   { key: 'outerwear', label: 'Outerwear / layer', hint: 'jacket, coat, blazer, dupatta', clause: 'Outerwear' },

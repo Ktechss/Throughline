@@ -1802,9 +1802,11 @@ def shot(req: ShotReq):
                 styling, _ = promptlib.sanitise(
                     "She is WEARING this complete look in the shot — show every "
                     "element on her, not only the clothing: reproduce the garments "
-                    "from @image2, and also render her lip colour, nail colours, "
-                    "jewellery, bag, belt, watch, and any eyewear/sunglasses, hat "
-                    "or hair accessory from the description. If the look includes "
+                    "from @image2, and also render her hairstyle and hair colour, "
+                    "lip colour, nail colours, jewellery, bag, belt, watch, and any "
+                    "eyewear/sunglasses, hat or hair accessory from the "
+                    "description (if a hairstyle/colour is given, style her hair "
+                    "that way for this look). If the look includes "
                     "sunglasses or glasses she is wearing them over her eyes; a hat "
                     "or hair piece she wears on her head — render these worn items "
                     "clearly and do NOT omit them. Her facial identity, bone "
@@ -1815,8 +1817,9 @@ def shot(req: ShotReq):
                 # so identity stays fully readable (the gate can score it).
                 styling, _ = promptlib.sanitise(
                     "She is wearing this look — reproduce the garments from @image2 "
-                    "and apply its lip colour, nail colours, jewellery, bag, belt "
-                    "and watch. But do NOT add any sunglasses, glasses, eyewear, "
+                    "and apply its hairstyle and hair colour, lip colour, nail "
+                    "colours, jewellery, bag, belt and watch. But do NOT add any "
+                    "sunglasses, glasses, eyewear, "
                     "hat or anything covering or obscuring her face — keep her face "
                     "fully clear, uncovered and visible, even if the description "
                     "mentions such items. Her facial identity comes only from "
