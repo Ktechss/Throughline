@@ -1,83 +1,31 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { LoaderCircle, ScanFace, Wand2, Check, ImagePlus, Star } from 'lucide-react'
-import { api, STAGE } from '@/lib/eve'
+import { api } from '@/lib/eve'
 
 // The character-origin flow, staged:
 //   1. SEED   — base image + BIO (who she is; drives all generation)
 //   2. GENERATE & APPROVE — canonical faces from the seed; pick the on-model ones
 //   3. LOCK   — approved faces seed the fingerprint + recalibrate the threshold
-export default function Calibrate({ bio, gallery, charId, onRefresh, onUploadBase, onEditBio, stamp }) {
+//
+// The calibration faces (`cands`) and their generation/polling live in App, NOT
+// here — so leaving this tab (or switching characters) never throws them away.
+// This component only renders them and forwards actions up.
+export default function Calibrate({ bio, gallery, stamp, onRefresh,
+    cands = [], onGenerate, onToggle, onAddSelected, onSetIdentity,
+    onUploadBase, onEditBio }) {
   const [count, setCount] = useState(6)
-  const [cands, setCands] = useState([])
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState(null)
   const [err, setErr] = useState(null)
 
-  // Load this character's already-generated calibration faces — on mount AND
-  // whenever the active character changes. They live in the ledger, not just in
-  // this component's state, so a browser refresh, a server restart that killed
-  // the in-flight jobs, OR switching to another character and back never loses
-  // finished work: the saved faces just reappear. Always replace with exactly
-  // what the server returns for THIS character (empty included) so no other
-  // character's faces can linger. `jid` = run id so keys/toggle match fresh ones.
-  useEffect(() => {
-    let alive = true
-    api.get('/api/calibrate/candidates')
-      .then(({ candidates }) => {
-        if (alive)
-          setCands((candidates || []).map((c) => ({ jid: c.id, id: c.id, file: c.file,
-                                                    angle: c.angle, verdict: c.verdict })))
-      })
-      .catch(() => { if (alive) setCands([]) })
-    return () => { alive = false }
-  }, [charId])
-
-  const pollOne = (jid) => {
-    const tick = async () => {
-      try {
-        const st = await api.get(`/api/jobs/${jid}`)
-        if (st.done) {
-          setCands((cs) => cs.map((c) => (c.jid === jid
-            ? (st.error ? { ...c, running: false, error: String(st.error).slice(0, 100) }
-              : { ...c, running: false, id: st.run.id, file: st.run.file, verdict: st.run.verdict })
-            : c)))
-          return
-        }
-        setCands((cs) => cs.map((c) => (c.jid === jid ? { ...c, stage: STAGE[st.stage] || st.stage } : c)))
-      } catch { /* transient */ }
-      setTimeout(tick, 2000)
-    }
-    tick()
-  }
-
   const generate = async () => {
     if (!bio?.calib_seed && !bio?.reference) { setErr('Upload a base image first (Step 1).'); return }
     setBusy(true); setErr(null); setResult(null)
-    try {
-      const { jobs } = await api.send('/api/calibrate/faces', 'POST', { count })
-      // Prepend the new batch; keep any already-loaded faces below so a second
-      // "generate" never wipes the earlier ones from view.
-      setCands((cs) => [...jobs.map((j) => ({ jid: j.job, angle: j.angle, running: true })), ...cs])
-      jobs.forEach((j) => pollOne(j.job))
-    } catch (e) { setErr(String(e)) } finally { setBusy(false) }
+    try { await onGenerate(count) } finally { setBusy(false) }
   }
-  const toggle = (jid) => setCands((cs) => cs.map((c) => (c.jid === jid ? { ...c, sel: !c.sel } : c)))
-  const addSelected = async () => {
-    const sel = cands.filter((c) => c.sel && c.id)
-    if (!sel.length) { setErr('Select at least one on-model face first.'); return }
-    setBusy(true); setErr(null)
-    try {
-      for (const c of sel) await api.send('/api/calibrate/gallery/add', 'POST', { run_id: c.id, view: c.angle })
-      await onRefresh()
-    } catch (e) { setErr(String(e)) } finally { setBusy(false) }
-  }
-  const setIdentity = async (runId) => {
-    setErr(null)
-    try {
-      await api.send('/api/bio/reference/from-run', 'POST', { run_id: runId, name: 'kiara-identity' })
-      await onRefresh()
-    } catch (e) { setErr(String(e)) }
-  }
+  const toggle = (jid) => onToggle(jid)
+  const addSelected = () => onAddSelected()
+  const setIdentity = (runId) => onSetIdentity(runId)
   const recalibrate = async () => {
     setErr(null)
     try { setResult(await api.send('/api/calibrate/recalibrate', 'POST', {})); await onRefresh() }

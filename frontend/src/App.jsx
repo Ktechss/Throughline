@@ -53,6 +53,7 @@ export default function App() {
   const [videoBusy, setVideoBusy] = useState(null)           // current animate status
   const [makeBusy, setMakeBusy] = useState(null)             // make-video status
   const [generations, setGenerations] = useState([])
+  const [calibCands, setCalibCands] = useState([])   // calibration faces — app-level so tab switches don't lose them
   const [detail, setDetail] = useState(null)
   const [err, setErr] = useState(null)
 
@@ -84,7 +85,7 @@ export default function App() {
   // live generation queue especially, which is client-only and never refetched.
   const clearStudio = () => {
     switchEpoch.current += 1     // invalidate every in-flight poll (gen/body/outfit/video/build)
-    setGenerations([]); setDetail(null)
+    setGenerations([]); setCalibCands([]); setDetail(null)
     setRuns([]); setBio(null); setWardrobe([]); setGallery({ entries: [] })
     setVideos([]); setStats(null); setPoseRefs([]); setBodies([]); setParts([])
     setOutfit(''); setPoseRef(''); setPoseId(''); setBrief(''); setAiPrompt('')
@@ -105,6 +106,7 @@ export default function App() {
     try {
       await api.send('/api/characters/active', 'PUT', { id })
       await refresh()
+      await loadCalib()   // load her saved calibration faces into app-level state
     } catch (e) { setErr(String(e)) } finally { setLoading(false) }
   }
 
@@ -280,6 +282,64 @@ export default function App() {
     } catch (e) { setErr(String(e)) }
   }
   const discardOutfit = () => setOutfitPreview(null)
+
+  // --- calibration faces, lifted to APP level so switching tabs (or characters)
+  //     never throws away the generation. They live here exactly like the shot
+  //     queue, and polling continues across tab mounts. ---
+  const loadCalib = useCallback(async () => {
+    try {
+      const { candidates } = await api.get('/api/calibrate/candidates')
+      setCalibCands((candidates || []).map((c) => ({ jid: c.id, id: c.id, file: c.file, angle: c.angle, verdict: c.verdict })))
+    } catch { setCalibCands([]) }
+  }, [])
+
+  const pollCalib = (jid) => {
+    const epoch = switchEpoch.current
+    const tick = async () => {
+      if (epoch !== switchEpoch.current) return
+      try {
+        const st = await api.get(`/api/jobs/${jid}`)
+        if (epoch !== switchEpoch.current) return
+        if (st.done) {
+          setCalibCands((cs) => cs.map((c) => (c.jid === jid
+            ? (st.error ? { ...c, running: false, error: String(st.error).slice(0, 100) }
+              : { ...c, running: false, id: st.run.id, file: st.run.file, verdict: st.run.verdict })
+            : c)))
+          return
+        }
+        setCalibCands((cs) => cs.map((c) => (c.jid === jid ? { ...c, stage: STAGE[st.stage] || st.stage } : c)))
+      } catch { /* transient */ }
+      setTimeout(tick, 2000)
+    }
+    tick()
+  }
+
+  const generateCalibFaces = async (count) => {
+    setErr(null)
+    try {
+      const { jobs } = await api.send('/api/calibrate/faces', 'POST', { count })
+      // prepend running cards; keep any already-loaded faces below
+      setCalibCands((cs) => [...jobs.map((j) => ({ jid: j.job, angle: j.angle, running: true })), ...cs])
+      jobs.forEach((j) => pollCalib(j.job))
+    } catch (e) { setErr(String(e)) }
+  }
+
+  const toggleCalib = (jid) => setCalibCands((cs) => cs.map((c) => (c.jid === jid ? { ...c, sel: !c.sel } : c)))
+
+  const addCalibToGallery = async () => {
+    const sel = calibCands.filter((c) => c.sel && c.id)
+    if (!sel.length) { setErr('Select at least one on-model face first.'); return }
+    try {
+      for (const c of sel) await api.send('/api/calibrate/gallery/add', 'POST', { run_id: c.id, view: c.angle })
+      await refresh()
+    } catch (e) { setErr(String(e)) }
+  }
+
+  const setCalibIdentity = async (runId) => {
+    setErr(null)
+    try { await api.send('/api/bio/reference/from-run', 'POST', { run_id: runId, name: 'identity' }); await refresh() }
+    catch (e) { setErr(String(e)) }
+  }
 
   // Generate a canonical body image (text-driven, no competing body ref) → preview.
   // Upload a body-SHAPE reference (no face required); returns { name }.
@@ -523,7 +583,9 @@ export default function App() {
       )}
 
       {tab === 'calibrate' && (
-        <Calibrate bio={bio} gallery={gallery} charId={activeChar?.id} onRefresh={refresh} stamp={stamp}
+        <Calibrate bio={bio} gallery={gallery} stamp={stamp} onRefresh={refresh}
+          cands={calibCands} onGenerate={generateCalibFaces} onToggle={toggleCalib}
+          onAddSelected={addCalibToGallery} onSetIdentity={setCalibIdentity}
           onEditBio={() => setTab('bio')}
           onUploadBase={async (e) => {
             const f = e.target.files?.[0]; e.target.value = ''
