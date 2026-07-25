@@ -1735,6 +1735,21 @@ def shot(req: ShotReq):
         text, sanitised = promptlib.compose_tagged(
             req.brief, pose_text=pose_text, has_wardrobe=has_wardrobe,
             pose_ref_tag=pose_ref_tag, build_text=build_text, shot_type=req.shot_type)
+
+    # Carry the outfit's FULL styling into the shot. The turnaround (@image2) has
+    # her head cropped and may not show every accessory, so the saved outfit
+    # description supplies the lip colour, nail colours, jewellery, bag and
+    # accessories the image alone would drop. These are STYLING, not identity —
+    # her face still comes only from @image1.
+    if has_wardrobe:
+        desc = (_wardrobe_meta().get(req.wardrobe_id, {}) or {}).get("description")
+        if desc and desc.strip():
+            styling, _ = promptlib.sanitise(
+                "Style her in this complete look — reproduce the clothing from "
+                "@image2 and also apply its lip colour, nail colours, jewellery, "
+                "bag and every accessory exactly as described (styling only; her "
+                f"facial identity stays from @image1): {desc.strip()}")
+            text = f"{text} {styling}"
     label = req.brief.strip()[:60] or "untitled shot"
     session = generate.new_session(label)
 
