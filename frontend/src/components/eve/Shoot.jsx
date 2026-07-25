@@ -174,7 +174,7 @@ export default function Shoot({
                   className={`flex flex-col items-center gap-1 rounded-lg border p-2 text-center transition ${on
                     ? 'border-[#4ea1ff] bg-[#123049] text-[#9fd0ff]'
                     : 'border-[#2a2a34] text-[#a9a9b6] hover:border-[#3a4a5e] hover:text-[#e6e6ea]'}`}>
-                  <PoseIcon id={p.id} className="h-8 w-8" />
+                  <PoseIcon id={p.id} category={p.category} className="h-8 w-8" />
                   <span className="w-full truncate text-[10px] leading-tight">{p.id}</span>
                 </button>
               )

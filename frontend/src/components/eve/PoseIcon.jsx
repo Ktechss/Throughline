@@ -40,11 +40,23 @@ const FIGURES = {
   recline: <><circle cx="4.5" cy="13" r="2.3" /><path d="M6.8 13.5h8M14.8 13.5l4.5 2M8 13.5l1.5 3M11 13.5l1.5 3" /></>,
 }
 
-export default function PoseIcon({ id, className = 'h-7 w-7' }) {
+// One silhouette per pose CATEGORY — the reliable signal now that poses are
+// categorised. An id-keyword match (walk/sit/kneel/hip/…) overrides it for finer
+// detail within a mixed category.
+const CAT_KEY = {
+  'Portrait': 'portrait', 'Standing': 'stand', 'Walking & Motion': 'walk',
+  'Sitting': 'sit', 'Floor & Ground': 'floor', 'Kneeling & Crouching': 'kneel',
+  'Lying Down': 'recline', 'Leaning': 'lean', 'Editorial & Fashion': 'hip',
+  'Candid & Lifestyle': 'stand',
+}
+
+export default function PoseIcon({ id, category, className = 'h-7 w-7' }) {
+  const byId = glyphKey(id)
+  const key = byId !== 'stand' ? byId : (CAT_KEY[category] || 'stand')
   return (
     <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor"
       strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      {FIGURES[glyphKey(id)] || FIGURES.stand}
+      {FIGURES[key] || FIGURES.stand}
     </svg>
   )
 }
