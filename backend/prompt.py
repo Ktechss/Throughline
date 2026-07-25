@@ -408,126 +408,13 @@ SHOT_TYPES = {
 # someone tuned until they reliably produce each stance. These are the primary
 # pose direction; the reference images carry identity, the pose text carries the
 # body. "" = let the brief describe the pose.
-POSES_LIBRARY = {
-    "": "",
-    "headshot": "Head-and-shoulders headshot, facing the camera directly, close "
-                "framing on her face, looking into the lens",
-    "portrait": "Waist-up portrait, facing the camera, relaxed and natural, "
-                "looking toward the camera",
-    "close-up": "Tight close-up, her face filling much of the frame, looking "
-                "straight into the lens",
-    "beauty": "Beauty headshot, straight to camera, chin level, soft even light, "
-              "looking into the lens",
-    "front": "Facing the camera directly, confident and composed",
-    "walking": "Mid-stride, walking naturally, not looking at the camera",
-    "over-shoulder": "Body turned away from camera, looking back over the shoulder",
-    "mid-turn": "Caught mid-turn as if just hearing her name called — body still "
-                "turning, head looking back",
-    "hip-pop": "Natural S-curve with one hip shifted out to the side, looking "
-               "toward the camera",
-    "triangle": "One hand on hip, natural triangle shape with the arm, relaxed "
-                "pose, looking toward the camera",
-    "lean": "Leaning casually against a wall or surface, relaxed and at ease, "
-            "looking toward the camera",
-    "hands-pockets": "Hands in pockets, relaxed and natural, not performing, "
-                     "looking toward the camera",
-    "long-line": "Tall elegant pose, one leg extended forward, long clean line "
-                 "through the body, looking toward the camera",
-    "handheld-selfie": "Handheld selfie — one arm extended toward the camera "
-                       "holding the phone, looking into the front lens, the face "
-                       "filling much of the frame",
-    "contrapposto": "Standing in a relaxed contrapposto, weight on one leg, the "
-                    "other knee soft, looking toward the camera",
-    "arms-crossed": "Standing with arms lightly crossed, confident and composed, "
-                    "looking toward the camera",
-    "seated-casual": "Seated casually, relaxed and natural, looking toward the camera",
-    "seated-crossed": "Seated cross-legged, comfortable and grounded, looking "
-                      "toward the camera",
-    "seated-lean": "Seated and leaning slightly forward, relaxed and engaged, "
-                   "looking toward the camera",
-    "seated-floor": "Seated on the floor, legs folded to one side, weight on one "
-                    "hand, looking toward the camera",
-    "kneeling": "Kneeling upright, tall elegant posture, hands resting easily, "
-                "looking toward the camera",
-    "crouching": "Crouching low, balanced on the balls of her feet, forearms on "
-                 "her knees, looking toward the camera",
-    "reclining-side": "Lying on her side, propped up on one elbow, body in a long "
-                      "relaxed line, looking toward the camera",
-    "lying-back": "Lying on her back, one knee raised, arms relaxed, head turned "
-                  "toward the camera",
-    "lying-front": "Lying on her front, propped up on both forearms, ankles "
-                   "crossed behind her, looking toward the camera",
-    "lounging": "Reclining back against cushions on a sofa, languid and at ease, "
-                "one arm draped along the backrest",
-    # --- portrait / face framings (add ids here to PORTRAIT set in Shoot.jsx) ---
-    "three-quarter": "Three-quarter portrait, body angled slightly away, face "
-                     "turned toward the camera, relaxed",
-    "profile": "Side-profile portrait, face turned to show a clean profile line, "
-               "chin lifted slightly",
-    "laughing": "Candid portrait caught mid-laugh, genuine warm expression, "
-                "looking just off camera",
-    "looking-away": "Waist-up portrait looking away from the camera, soft "
-                    "thoughtful expression",
-    "chin-hand": "Waist-up portrait resting her chin lightly on one hand, "
-                 "looking into the lens",
-    # --- standing ---
-    "hair-touch": "Standing, one hand lifting or touching her hair, relaxed, "
-                  "looking toward the camera",
-    "twirl": "Caught mid-twirl, fabric and hair in motion, joyful and candid",
-    "back-to-camera": "Standing with her back to the camera, head turned to "
-                      "glance over her shoulder",
-    "looking-up": "Standing with chin lifted, gazing upward, serene",
-    "adjusting-sleeve": "Standing, glancing down while adjusting a sleeve or "
-                        "cuff, candid and unposed",
-    "power-stance": "Feet planted wide, hands on hips, strong confident stance, "
-                    "looking into the lens",
-    "against-railing": "Leaning back against a railing, elbows resting on it, "
-                       "relaxed, looking toward the camera",
-    "crossed-ankles-lean": "Leaning against a wall with ankles crossed, casual "
-                           "and cool, looking toward the camera",
-    "reaching-up": "Reaching one arm upward, long extended line through the "
-                   "body, looking toward the camera",
-    "hands-clasped": "Standing with hands loosely clasped in front, poised and "
-                     "elegant, looking toward the camera",
-    "windswept": "Standing as a breeze catches her hair and clothing, eyes "
-                 "toward the camera",
-    "stairs": "Pausing on a set of steps, one foot raised to the next step, "
-              "looking back toward the camera",
-    "doorway-lean": "Leaning in a doorway, one shoulder against the frame, "
-                    "relaxed, looking toward the camera",
-    "walk-away": "Walking away from the camera down a street, not looking back",
-    "runway": "Mid-stride runway walk, one hand on hip, editorial energy, "
-              "straight toward the camera",
-    # --- seated ---
-    "seated-chair-back": "Sitting backwards on a chair, arms folded over the "
-                         "backrest, chin resting on her arms",
-    "seated-stool": "Perched on a high stool, one foot on the rung, relaxed, "
-                    "looking toward the camera",
-    "seated-edge": "Sitting on the edge of a surface, hands beside her, legs "
-                   "relaxed, looking toward the camera",
-    "seated-knees-up": "Seated with knees drawn up, arms wrapped loosely around "
-                       "them, looking toward the camera",
-    "seated-side-saddle": "Seated with both legs swept to one side, elegant and "
-                          "poised, looking toward the camera",
-    "seated-cafe": "Seated at a cafe table, leaning on one elbow, candid, "
-                   "looking toward the camera",
-    # --- low ---
-    "squatting": "In a low relaxed squat, balanced on her feet, forearms resting "
-                 "on her knees, looking toward the camera",
-    "kneeling-heels": "Kneeling and sitting back on her heels, hands resting on "
-                      "her thighs, looking toward the camera",
-    "crouching-fashion": "Low editorial fashion crouch, one knee down, weight "
-                         "forward, looking into the lens",
-    # --- lying down ---
-    "reclining-prop": "Reclining back on both hands, legs extended in a long "
-                      "line, relaxed, looking toward the camera",
-    "lying-hair-fanned": "Lying back with hair fanned out, arms relaxed, serene, "
-                         "looking up toward the camera",
-    "lounging-window": "Lounging on a window seat, back against the frame, knees "
-                       "drawn up, looking toward the camera",
-    "reclining-chaise": "Reclining along a chaise longue, one arm resting above "
-                        "her head, languid and at ease",
-}
+from .poses_data import POSE_GROUPS  # noqa: E402 — large generated pose library
+
+# Flat {id: text} for generation lookup (compose/shot). "" = let the brief
+# describe the pose. The categorised source of truth is POSE_GROUPS.
+POSES_LIBRARY = {"": ""}
+for _cat_poses in POSE_GROUPS.values():
+    POSES_LIBRARY.update(_cat_poses)
 
 
 def build_clause(parts: list["Part"]) -> str:

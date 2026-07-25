@@ -1618,7 +1618,10 @@ def wardrobe_delete(name: str):
 
 @app.get("/api/pose-library")
 def list_pose_library():
-    return {"poses": [{"id": k, "text": v} for k, v in promptlib.POSES_LIBRARY.items()]}
+    poses = [{"id": pid, "text": text, "category": cat}
+             for cat, group in promptlib.POSE_GROUPS.items()
+             for pid, text in group.items()]
+    return {"poses": poses, "categories": list(promptlib.POSE_GROUPS)}
 
 
 # --------------- pose REFERENCE library (images of her, keyword-selected) -----

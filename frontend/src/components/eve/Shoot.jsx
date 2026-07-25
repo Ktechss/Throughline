@@ -6,18 +6,6 @@ import WardrobePanel from './WardrobePanel'
 import PromptControls from './PromptControls'
 import GenerationCard from './GenerationCard'
 
-// Group the text-pose presets by posture so the picker reads at a glance.
-// Portrait/headshot framings come first — they're the highest-scoring shots.
-const PORTRAIT = new Set(['headshot', 'portrait', 'close-up', 'beauty',
-  'three-quarter', 'profile', 'laughing', 'looking-away', 'chin-hand'])
-const POSE_CAT = (id) =>
-  PORTRAIT.has(id) ? 'portrait'
-    : id.startsWith('seated') ? 'sitting'
-      : (id.startsWith('reclining') || id.startsWith('lying') || id.startsWith('lounging')) ? 'lying down'
-        : (id.startsWith('kneeling') || id.startsWith('crouching') || id === 'squatting') ? 'low'
-          : 'standing'
-const POSE_ORDER = ['portrait', 'standing', 'sitting', 'low', 'lying down']
-
 export default function Shoot({
   bio, gens, onOpen, goBio,
   brief, setBrief, aiPrompt, setAiPrompt, aiBusy, onAiPrompt, onGenerate,
@@ -29,9 +17,9 @@ export default function Shoot({
   onUploadOutfit, onUploadPose, onDeleteWardrobe, stamp,
 }) {
   const canGenerate = !!bio?.reference && (!!brief.trim() || !!outfit || !!poseRef)
-  const [poseTab, setPoseTab] = useState('portrait')
-  const poseCats = POSE_ORDER.filter((cat) => (poseLibrary || []).some((p) => p.id && POSE_CAT(p.id) === cat))
-  const activePoseTab = poseCats.includes(poseTab) ? poseTab : (poseCats[0] || 'standing')
+  const [poseTab, setPoseTab] = useState('')
+  const poseCats = [...new Set((poseLibrary || []).map((p) => p.category).filter(Boolean))]
+  const activePoseTab = poseCats.includes(poseTab) ? poseTab : (poseCats[0] || '')
   const gensRef = useRef(null)
   const handleGenerate = () => {
     onGenerate()
@@ -171,7 +159,7 @@ export default function Shoot({
           <div className="flex flex-wrap gap-1 border-b border-[#24242e]">
             {poseCats.map((cat) => (
               <button key={cat} onClick={() => setPoseTab(cat)}
-                className={`-mb-px border-b-2 px-3 py-1.5 text-xs capitalize transition ${activePoseTab === cat
+                className={`-mb-px border-b-2 px-3 py-1.5 text-xs transition ${activePoseTab === cat
                   ? 'border-[#4ea1ff] text-[#e6e6ea]'
                   : 'border-transparent text-[#70707d] hover:text-[#b8b8c3]'}`}>{cat}</button>
             ))}
@@ -179,7 +167,7 @@ export default function Shoot({
 
           {/* pose cards for the active tab */}
           <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-4">
-            {(poseLibrary || []).filter((p) => p.id && POSE_CAT(p.id) === activePoseTab).map((p) => {
+            {(poseLibrary || []).filter((p) => p.id && p.category === activePoseTab).map((p) => {
               const on = poseId === p.id
               return (
                 <button key={p.id} title={p.text} onClick={() => setPoseId(on ? '' : p.id)}
