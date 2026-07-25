@@ -296,7 +296,8 @@ export default function App() {
     const epoch = switchEpoch.current
     setEnriching(true); setErr(null)
     try {
-      const r = await api.send('/api/wardrobe/enrich', 'POST', { idea, ...pickers })
+      // base = the current description (from a described image or typed) → enriched.
+      const r = await api.send('/api/wardrobe/enrich', 'POST', { base: outfitText, idea, ...pickers })
       if (epoch !== switchEpoch.current) return
       setOutfitText(r.outfit)
     } catch (e) { if (epoch === switchEpoch.current) setErr(String(e)) }

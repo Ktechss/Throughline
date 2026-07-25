@@ -1386,6 +1386,7 @@ async def wardrobe_describe(file: UploadFile = File(...)):
 
 
 class OutfitEnrichReq(BaseModel):
+    base: str = ""       # existing description (e.g. from a described image) to enrich
     idea: str = ""
     occasion: str = ""
     style: str = ""
@@ -1397,15 +1398,17 @@ class OutfitEnrichReq(BaseModel):
 
 @app.post("/api/wardrobe/enrich")
 def wardrobe_enrich(req: OutfitEnrichReq):
-    """Claude expands a short idea + structured picks (occasion/style/fabric/…)
-    into a rich, opaque, garment-only outfit description. The outfit analogue of
-    /api/shot/ai-prompt: stateless, saves nothing, and fills the editable outfit
-    box — the user reviews it, then generates via /api/wardrobe/create as usual.
+    """ENRICH an outfit description with Claude. Primary flow: the user uploads an
+    outfit photo, describe reads it into `base`, and this rewrites it far richer
+    and more precise (same garments) with the picks as optional adaptations. With
+    no base it writes a fresh outfit from idea + picks. Stateless — the result
+    fills the editable outfit box; the user then generates via /api/wardrobe/create.
     """
     try:
         outfit = prompter.write_outfit(
-            req.idea, occasion=req.occasion, style=req.style, fabric=req.fabric,
-            silhouette=req.silhouette, formality=req.formality, season=req.season)
+            req.base, req.idea, occasion=req.occasion, style=req.style,
+            fabric=req.fabric, silhouette=req.silhouette,
+            formality=req.formality, season=req.season)
     except prompter.PrompterError as exc:
         raise HTTPException(400, str(exc)) from exc
     return {"outfit": _clean_outfit_text(outfit)}

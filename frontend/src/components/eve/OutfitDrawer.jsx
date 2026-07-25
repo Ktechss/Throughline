@@ -32,53 +32,18 @@ export default function OutfitDrawer({
             </div>
           ) : (
             <>
-              {/* Option A — describe from a reference photo. */}
-              <label className="eve-label">reference photo <span className="text-[#5f6b7a]">— optional, describe an outfit from an image</span></label>
+              {/* 1) Upload an outfit photo → Claude describes it into the box below. */}
+              <label className="eve-label">reference photo <span className="text-[#5f6b7a]">— upload an outfit to describe</span></label>
               <label className="mb-4 mt-1 flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-[#3a3a46] px-3 py-3 text-xs text-[#8a8a99] transition hover:border-[#4ea1ff] hover:text-[#cfe0f5]">
-                <ImagePlus className="h-4 w-4" /> upload an outfit photo to describe
+                <ImagePlus className="h-4 w-4" /> upload an outfit photo
                 <input type="file" accept="image/*" hidden onChange={onDescribe} />
               </label>
 
-              <div className="mb-4 flex items-center gap-2 text-[10px] uppercase tracking-wider text-[#565663]">
-                <span className="h-px flex-1 bg-[#24242e]" />or design one<span className="h-px flex-1 bg-[#24242e]" />
-              </div>
-
-              {/* Option B — design from a short idea + structured picks; Claude
-                  expands it into a rich, opaque garment description below. */}
-              <label className="eve-label">idea <span className="text-[#5f6b7a]">— a short outfit idea (optional)</span></label>
-              <input value={idea || ''} onChange={(e) => setIdea(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter' && !enriching) onEnrich() }}
-                placeholder="e.g. emerald festive lehenga for a sangeet"
-                className="eve-input mb-3 mt-1" />
-
-              {OUTFIT_PICKERS.map((grp) => (
-                <div key={grp.key} className="mb-2">
-                  <span className="eve-label text-[#8a8a99]">{grp.label}</span>
-                  <div className="mt-1 flex flex-wrap gap-1.5">
-                    {grp.options.map((o) => {
-                      const on = pickers?.[grp.key] === o
-                      return (
-                        <button key={o} type="button" onClick={() => onPicker(grp.key, on ? '' : o)}
-                          className={`rounded-full border px-2.5 py-1 text-[11px] capitalize transition ${on
-                            ? 'border-[#4ea1ff] bg-[#123049] text-[#9fd0ff]'
-                            : 'border-[#2a2a34] text-[#a9a9b6] hover:border-[#3a3a46]'}`}>{o}</button>
-                      )
-                    })}
-                  </div>
-                </div>
-              ))}
-
-              <button onClick={onEnrich} disabled={enriching}
-                className="eve-button mb-5 mt-3 w-full border border-[#315d88] bg-[#101b27] text-[#8fb6dd] hover:border-[#4ea1ff]">
-                {enriching
-                  ? <><LoaderCircle className="h-4 w-4 animate-spin" /> writing…</>
-                  : <><Sparkles className="h-4 w-4" /> write outfit</>}
-              </button>
-
-              <label className="eve-label">description — edit freely</label>
-              <textarea value={outfitText} onChange={(e) => setOutfitText(e.target.value)} rows={9}
-                placeholder="describe the garments — top, bottom, footwear, accessories"
-                className="eve-input mb-5 mt-1 resize-y leading-relaxed" />
+              {/* 2) The outfit description — from the photo, hand-typed, or enriched. */}
+              <label className="eve-label">outfit description <span className="text-[#5f6b7a]">— edit freely</span></label>
+              <textarea value={outfitText} onChange={(e) => setOutfitText(e.target.value)} rows={8}
+                placeholder="upload a photo above, type an outfit, then Enrich — top, bottom, footwear, accessories"
+                className="eve-input mb-4 mt-1 resize-y leading-relaxed" />
 
               <div className="mb-2 flex items-center justify-between">
                 <span className="eve-label text-[#edb755]">key details — fill what the photo didn’t show</span>
@@ -99,7 +64,41 @@ export default function OutfitDrawer({
                   )
                 })}
               </div>
-              <p className="mt-3 text-[11px] text-[#8a8a99]">These fold into the outfit — heels, nail colours (hands + feet), lipstick and lower-garment type the reference may not show.</p>
+
+              {/* 3) Enrich — rewrite the description above far richer/more precise,
+                  optionally adapted by a tweak + attribute chips. */}
+              <div className="my-4 flex items-center gap-2 text-[10px] uppercase tracking-wider text-[#565663]">
+                <span className="h-px flex-1 bg-[#24242e]" /><Sparkles className="h-3 w-3" /> enrich<span className="h-px flex-1 bg-[#24242e]" />
+              </div>
+              <input value={idea || ''} onChange={(e) => setIdea(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && !enriching) onEnrich() }}
+                placeholder="optional tweak — e.g. make it silk · add embroidery · adapt to a sangeet"
+                className="eve-input mb-3" />
+
+              {OUTFIT_PICKERS.map((grp) => (
+                <div key={grp.key} className="mb-2">
+                  <span className="eve-label text-[#8a8a99]">{grp.label}</span>
+                  <div className="mt-1 flex flex-wrap gap-1.5">
+                    {grp.options.map((o) => {
+                      const on = pickers?.[grp.key] === o
+                      return (
+                        <button key={o} type="button" onClick={() => onPicker(grp.key, on ? '' : o)}
+                          className={`rounded-full border px-2.5 py-1 text-[11px] capitalize transition ${on
+                            ? 'border-[#4ea1ff] bg-[#123049] text-[#9fd0ff]'
+                            : 'border-[#2a2a34] text-[#a9a9b6] hover:border-[#3a3a46]'}`}>{o}</button>
+                      )
+                    })}
+                  </div>
+                </div>
+              ))}
+
+              <button onClick={onEnrich} disabled={enriching}
+                className="eve-button mt-3 w-full border border-[#315d88] bg-[#101b27] text-[#8fb6dd] hover:border-[#4ea1ff]">
+                {enriching
+                  ? <><LoaderCircle className="h-4 w-4 animate-spin" /> enriching…</>
+                  : <><Sparkles className="h-4 w-4" /> {outfitText.trim() ? 'enrich outfit' : 'write outfit'}</>}
+              </button>
+              <p className="mt-2 text-[11px] text-[#8a8a99]">Enrich rewrites the description above with far richer garment detail — same outfit, adapted by any tweak/attributes. (Empty box: writes one from your tweak + attributes.)</p>
             </>
           )}
         </div>

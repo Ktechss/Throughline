@@ -232,18 +232,26 @@ def write_bio(name: str, description: str, fields: list[dict]) -> dict:
 
 
 # --------------------------------------------------------------------------
-# Outfit writer (wardrobe enrichment): a short idea + structured picks (occasion,
-# style, fabric, silhouette, formality, season) -> a rich, opaque, GARMENT-ONLY
-# description. This is the outfit analogue of rewrite() for shots — a terse brief
-# alone produces an underspecified garment, so we expand it. The output is dropped
-# verbatim into the wardrobe turnaround (main.wardrobe_create), so it must describe
-# clothes and nothing else.
+# Outfit ENRICHER (wardrobe enrichment). The primary use is: the user uploads an
+# outfit photo, describe_outfit() reads it into a base description, and this then
+# ENRICHES that base — same garments, far richer and more precise detail — with
+# the structured picks (occasion/style/fabric/…) as optional adaptations. With no
+# base it also writes a fresh outfit from the picks/idea. Output is dropped
+# verbatim into the wardrobe turnaround, so it must describe clothes and nothing else.
 # --------------------------------------------------------------------------
 _OUTFIT_SYSTEM = (
-    "You are a fashion stylist writing ONE richly detailed outfit description for "
-    "a photorealistic image pipeline. The text is dropped verbatim into a garment "
-    "turnaround, so it must describe ONLY the clothes.\n\n"
+    "You are a fashion stylist producing ONE richly detailed outfit description "
+    "for a photorealistic image pipeline. The text is dropped verbatim into a "
+    "garment turnaround, so it must describe ONLY the clothes.\n\n"
     "ABSOLUTE RULES — breaking any of these ruins the image:\n"
+    "0. ENRICH MODE: if a BASE outfit description is given below, your job is to "
+    "ENRICH it — keep the SAME garments and the same overall look, and rewrite it "
+    "with far richer, more precise, photographable detail (exact fabric weave, "
+    "weight and finish; construction, seams, closures; cut, drape and how it "
+    "falls; trims, hardware, stitching, prints/embroidery). Apply ONLY the "
+    "adjustments the idea/attributes ask for (e.g. change the fabric, adapt to an "
+    "occasion) — never swap it for a different outfit or drop its pieces. If NO "
+    "base is given, design a complete new outfit from the idea and attributes.\n"
     "1. Describe ONLY the clothing, footwear and worn accessories, garment by "
     "garment: type, colour(s), fabric/material and finish, cut, fit and "
     "silhouette, neckline, sleeves, hemline/length, prints or embroidery, "
@@ -258,11 +266,11 @@ _OUTFIT_SYSTEM = (
     "explicit. Opaque and fitted is welcome; exposed or transparent is not. Keep "
     "it fashionable, editorial and elegant, never sexualised. This is a hard "
     "moderation limit — a revealing description makes the generation fail.\n"
-    "4. Make ONE coherent, well-styled look that honours every constraint given "
-    "(occasion, style, fabric, silhouette, formality, season) and the idea. Where "
-    "the user is silent, invent specific, believable, on-brief garment details. "
-    "Prefer concrete, photographable facts over vague adjectives, and avoid "
-    "AI-slop words (stunning, ethereal, hyper-realistic, 8k, flawless, gorgeous).\n"
+    "4. Honour every constraint given (occasion, style, fabric, silhouette, "
+    "formality, season) and the idea. Where silent, invent specific, believable, "
+    "on-brief garment details. Prefer concrete, photographable facts over vague "
+    "adjectives, and avoid AI-slop words (stunning, ethereal, hyper-realistic, "
+    "8k, flawless, gorgeous).\n"
     "5. For Indian/ethnic looks (saree, lehenga, salwar kameez, anarkali, "
     "sharara, kurta set) describe the drape, blouse/choli, dupatta, borders, "
     "pleats and motifs precisely — and keep the blouse and coverage modest and "
@@ -276,17 +284,18 @@ _OUTFIT_PICKS = [("occasion", "Occasion"), ("style", "Style / aesthetic"),
                  ("formality", "Formality"), ("season", "Season")]
 
 
-def write_outfit(idea: str = "", *, occasion: str = "", style: str = "",
-                 fabric: str = "", silhouette: str = "", formality: str = "",
-                 season: str = "") -> str:
-    """Expand a short idea + structured picks into a rich, opaque, garment-only
-    outfit description. Mirrors rewrite()/write_bio(). Raises PrompterError."""
+def write_outfit(base: str = "", idea: str = "", *, occasion: str = "",
+                 style: str = "", fabric: str = "", silhouette: str = "",
+                 formality: str = "", season: str = "") -> str:
+    """ENRICH an existing outfit description (`base`, e.g. from a described image)
+    into a richer, precise, opaque garment-only version — or, with no base, write
+    a fresh outfit from the idea + structured picks. Raises PrompterError."""
     picks = {"occasion": occasion, "style": style, "fabric": fabric,
              "silhouette": silhouette, "formality": formality, "season": season}
     provided = {k: v.strip() for k, v in picks.items() if v and v.strip()}
-    if not idea.strip() and not provided:
-        raise PrompterError("pick at least one attribute or type a short outfit "
-                            "idea first")
+    if not base.strip() and not idea.strip() and not provided:
+        raise PrompterError("describe or type an outfit to enrich, or pick at "
+                            "least one attribute / type an idea")
     if not os.getenv("ANTHROPIC_API_KEY"):
         raise PrompterError("ANTHROPIC_API_KEY is not set in .env")
     try:
@@ -296,14 +305,16 @@ def write_outfit(idea: str = "", *, occasion: str = "", style: str = "",
 
     label = dict(_OUTFIT_PICKS)
     lines = []
+    if base.strip():
+        lines.append("BASE outfit to enrich (keep these garments, add rich "
+                     f"detail): {base.strip()}")
     if idea.strip():
-        lines.append(f"Outfit idea: {idea.strip()}")
+        lines.append(f"{'Adjustments' if base.strip() else 'Outfit idea'}: {idea.strip()}")
     lines += [f"{label[k]}: {v}" for k, v in provided.items()]
-    if not idea.strip():
-        lines.append("(No free-text idea — design a complete look from the "
-                     "attributes above.)")
-    user = ("Design one outfit from these constraints (use only the ones given):"
-            "\n" + "\n".join(lines) + "\n\nWrite the single outfit description now.")
+    verb = ("Enrich the base outfit above into one richly detailed description"
+            if base.strip() else
+            "Design one outfit from these constraints (use only the ones given)")
+    user = f"{verb}:\n" + "\n".join(lines) + "\n\nWrite the single outfit description now."
 
     client = anthropic.Anthropic()
     try:
