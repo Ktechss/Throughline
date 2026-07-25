@@ -1,10 +1,11 @@
-import { X, LoaderCircle, Wand2 } from 'lucide-react'
-import { DETAIL_FIELDS } from '@/lib/eve'
+import { X, LoaderCircle, Wand2, Sparkles } from 'lucide-react'
+import { DETAIL_FIELDS, OUTFIT_PICKERS } from '@/lib/eve'
 
-// Right-side drawer for the describe → review → generate outfit flow.
+// Right-side drawer for the design/describe → review → generate outfit flow.
 export default function OutfitDrawer({
   open, imageUrl, describing, outfitText, setOutfitText,
   details, onDetail, creating, onGenerate, onClose,
+  idea, setIdea, pickers, onPicker, enriching, onEnrich,
 }) {
   if (!open) return null
   const missing = details ? DETAIL_FIELDS.filter((f) => !(details[f.key] || '').trim()).length : 0
@@ -12,7 +13,7 @@ export default function OutfitDrawer({
     <div className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-sm" onMouseDown={onClose}>
       <aside className="flex h-full w-full max-w-md flex-col border-l border-[#24242e] bg-[#111117]" onMouseDown={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-[#24242e] px-5 py-4">
-          <h2 className="text-lg font-semibold">Describe outfit</h2>
+          <h2 className="text-lg font-semibold">Outfit designer</h2>
           <button onClick={onClose} className="text-[#777785] hover:text-white"><X className="h-5 w-5" /></button>
         </div>
 
@@ -29,6 +30,38 @@ export default function OutfitDrawer({
             </div>
           ) : (
             <>
+              {/* Design from a short idea + structured picks — Claude expands it
+                  into a rich, opaque garment description that fills the box below. */}
+              <label className="eve-label">idea <span className="text-[#5f6b7a]">— a short outfit idea (optional)</span></label>
+              <input value={idea || ''} onChange={(e) => setIdea(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && !enriching) onEnrich() }}
+                placeholder="e.g. emerald festive lehenga for a sangeet"
+                className="eve-input mb-3 mt-1" />
+
+              {OUTFIT_PICKERS.map((grp) => (
+                <div key={grp.key} className="mb-2">
+                  <span className="eve-label text-[#8a8a99]">{grp.label}</span>
+                  <div className="mt-1 flex flex-wrap gap-1.5">
+                    {grp.options.map((o) => {
+                      const on = pickers?.[grp.key] === o
+                      return (
+                        <button key={o} type="button" onClick={() => onPicker(grp.key, on ? '' : o)}
+                          className={`rounded-full border px-2.5 py-1 text-[11px] capitalize transition ${on
+                            ? 'border-[#4ea1ff] bg-[#123049] text-[#9fd0ff]'
+                            : 'border-[#2a2a34] text-[#a9a9b6] hover:border-[#3a3a46]'}`}>{o}</button>
+                      )
+                    })}
+                  </div>
+                </div>
+              ))}
+
+              <button onClick={onEnrich} disabled={enriching}
+                className="eve-button mb-5 mt-3 w-full border border-[#315d88] bg-[#101b27] text-[#8fb6dd] hover:border-[#4ea1ff]">
+                {enriching
+                  ? <><LoaderCircle className="h-4 w-4 animate-spin" /> writing…</>
+                  : <><Sparkles className="h-4 w-4" /> write outfit</>}
+              </button>
+
               <label className="eve-label">description — edit freely</label>
               <textarea value={outfitText} onChange={(e) => setOutfitText(e.target.value)} rows={9}
                 placeholder="describe the garments — top, bottom, footwear, accessories"

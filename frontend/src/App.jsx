@@ -38,7 +38,10 @@ export default function App() {
   const [outfitPreview, setOutfitPreview] = useState(null)   // generated turnaround awaiting save/discard
   const [details, setDetails] = useState(null)   // structured outfit fields after a describe (null = hidden)
   const [outfitImageUrl, setOutfitImageUrl] = useState(null) // uploaded describe image (drawer preview)
-  const [drawerOpen, setDrawerOpen] = useState(false)        // describe-outfit side drawer
+  const [drawerOpen, setDrawerOpen] = useState(false)        // outfit designer side drawer
+  const [idea, setIdea] = useState('')                       // short outfit idea for the AI expander
+  const [pickers, setPickers] = useState({})                 // occasion/style/fabric/silhouette/formality/season
+  const [enriching, setEnriching] = useState(false)          // write-outfit (enrich) in progress
   const [bodyCreating, setBodyCreating] = useState(null)     // body-ref generation status
   const [bodyPreview, setBodyPreview] = useState(null)       // generated body awaiting save/discard
   const [stamp, setStamp] = useState(0)                      // cache-buster for overwritten refs (body-canonical.png)
@@ -90,10 +93,10 @@ export default function App() {
     setVideos([]); setStats(null); setPoseRefs([]); setBodies([]); setParts([])
     setOutfit(''); setPoseRef(''); setPoseId(''); setBrief(''); setAiPrompt('')
     setOutfitPreview(null); setBodyPreview(null); setOutfitImageUrl(null)
-    setDrawerOpen(false); setDetails(null)
+    setDrawerOpen(false); setDetails(null); setIdea(''); setPickers({})
     // reset every busy/spinner flag so none lingers on the next profile
     setAiBusy(false); setDescribing(false); setCreating(null); setBodyCreating(null)
-    setVideoBusy(null); setMakeBusy(null)
+    setVideoBusy(null); setMakeBusy(null); setEnriching(false)
   }
 
   const enterCharacter = async (id) => {
@@ -282,6 +285,23 @@ export default function App() {
     } catch (e) { setErr(String(e)) }
   }
   const discardOutfit = () => setOutfitPreview(null)
+
+  // Open the outfit designer from scratch (no uploaded image, no describe-details)
+  // so it shows the idea box + pickers for a fresh AI-written outfit.
+  const openDesigner = () => { setDetails(null); setOutfitImageUrl(null); setDrawerOpen(true) }
+  const setPicker = (key, value) => setPickers((p) => ({ ...p, [key]: value }))
+  // Claude expands the idea + picks into a rich, opaque garment description → fills
+  // the editable outfit box. Mirrors aiWrite; epoch-guarded against a mid-write switch.
+  const enrichOutfit = async () => {
+    const epoch = switchEpoch.current
+    setEnriching(true); setErr(null)
+    try {
+      const r = await api.send('/api/wardrobe/enrich', 'POST', { idea, ...pickers })
+      if (epoch !== switchEpoch.current) return
+      setOutfitText(r.outfit)
+    } catch (e) { if (epoch === switchEpoch.current) setErr(String(e)) }
+    finally { if (epoch === switchEpoch.current) setEnriching(false) }
+  }
 
   // --- calibration faces, lifted to APP level so switching tabs (or characters)
   //     never throws away the generation. They live here exactly like the shot
@@ -563,6 +583,7 @@ export default function App() {
           outfitText={outfitText} setOutfitText={setOutfitText}
           describing={describing} onDescribe={describe} creating={creating} onCreateOutfit={createOutfit}
           outfitPreview={outfitPreview} onSaveOutfit={saveOutfit} onDiscardOutfit={discardOutfit}
+          onOpenDesigner={openDesigner}
           onUploadOutfit={uploadTo('/api/wardrobe/upload')} onUploadPose={uploadTo('/api/pose-refs/upload')}
           onDeleteWardrobe={deleteWardrobe} stamp={stamp}
         />
@@ -607,6 +628,8 @@ export default function App() {
 
       <OutfitDrawer open={drawerOpen} imageUrl={outfitImageUrl} describing={describing}
         outfitText={outfitText} setOutfitText={setOutfitText} details={details} onDetail={setDetailField}
+        idea={idea} setIdea={setIdea} pickers={pickers} onPicker={setPicker}
+        enriching={enriching} onEnrich={enrichOutfit}
         creating={creating} onClose={() => setDrawerOpen(false)}
         onGenerate={() => { setDrawerOpen(false); createOutfit() }} />
 

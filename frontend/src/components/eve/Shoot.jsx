@@ -1,5 +1,5 @@
 import { useRef } from 'react'
-import { LockKeyhole, ImagePlus, LoaderCircle } from 'lucide-react'
+import { LockKeyhole, ImagePlus, LoaderCircle, Sparkles } from 'lucide-react'
 import RefStrip from './RefStrip'
 import WardrobePanel from './WardrobePanel'
 import PromptControls from './PromptControls'
@@ -23,7 +23,7 @@ export default function Shoot({
   outfit, setOutfit, poseRef, setPoseRef, wardrobe, poseRefs,
   poseId, setPoseId, poseLibrary, resolution, setResolution,
   outfitText, setOutfitText, describing, onDescribe, creating, onCreateOutfit,
-  outfitPreview, onSaveOutfit, onDiscardOutfit,
+  outfitPreview, onSaveOutfit, onDiscardOutfit, onOpenDesigner,
   onUploadOutfit, onUploadPose, onDeleteWardrobe, stamp,
 }) {
   const canGenerate = !!bio?.reference && (!!brief.trim() || !!outfit || !!poseRef)
@@ -76,6 +76,9 @@ export default function Shoot({
             <input value={outfitText} onChange={(e) => setOutfitText(e.target.value)}
               className="eve-input h-10 flex-1 min-w-[220px]"
               placeholder="describe an outfit — 'red satin slip dress, strappy heels'" />
+            <button onClick={onOpenDesigner} className="eve-button shrink-0 border border-[#315d88] bg-[#101b27] text-[#8fb6dd] hover:border-[#4ea1ff]">
+              <Sparkles /> write outfit
+            </button>
             <label className="eve-button shrink-0 border border-[#353541] cursor-pointer">
               <ImagePlus /> {describing ? 'describing…' : 'describe image'}
               <input type="file" accept="image/*" hidden disabled={describing} onChange={onDescribe} />

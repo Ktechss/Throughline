@@ -1385,6 +1385,32 @@ async def wardrobe_describe(file: UploadFile = File(...)):
     return {"outfit": out["description"], "details": out["details"]}
 
 
+class OutfitEnrichReq(BaseModel):
+    idea: str = ""
+    occasion: str = ""
+    style: str = ""
+    fabric: str = ""
+    silhouette: str = ""
+    formality: str = ""
+    season: str = ""
+
+
+@app.post("/api/wardrobe/enrich")
+def wardrobe_enrich(req: OutfitEnrichReq):
+    """Claude expands a short idea + structured picks (occasion/style/fabric/…)
+    into a rich, opaque, garment-only outfit description. The outfit analogue of
+    /api/shot/ai-prompt: stateless, saves nothing, and fills the editable outfit
+    box — the user reviews it, then generates via /api/wardrobe/create as usual.
+    """
+    try:
+        outfit = prompter.write_outfit(
+            req.idea, occasion=req.occasion, style=req.style, fabric=req.fabric,
+            silhouette=req.silhouette, formality=req.formality, season=req.season)
+    except prompter.PrompterError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"outfit": _clean_outfit_text(outfit)}
+
+
 class OutfitCreateReq(BaseModel):
     outfit: str          # free text: "white crop top, baggy jeans, strappy heels"
     name: str | None = None   # optional label only; the outfit is SAVED later via

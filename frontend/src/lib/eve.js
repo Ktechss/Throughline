@@ -40,6 +40,28 @@ export function mergeOutfit(prose, details) {
   return extra.length ? `${(prose || '').trim()} ${extra.join('. ')}.` : (prose || '').trim()
 }
 
+// Structured outfit pickers → sent to /api/wardrobe/enrich, where Claude expands
+// them + a short idea into a rich, opaque, garment-only description. Single-select
+// per group. Tasteful, fashion-forward, Western + Indian/ethnic (South-Delhi stylist).
+export const OUTFIT_PICKERS = [
+  { key: 'occasion', label: 'Occasion', options: [
+    'everyday', 'work / office', 'brunch', 'date night', 'cocktail party',
+    'wedding guest', 'festive / Diwali', 'sangeet', 'vacation', 'street style', 'athleisure'] },
+  { key: 'style', label: 'Style / aesthetic', options: [
+    'minimal', 'classic', 'boho', 'streetwear', 'old money', 'Y2K', 'edgy',
+    'romantic', 'Indo-western', 'traditional ethnic', 'contemporary ethnic'] },
+  { key: 'fabric', label: 'Fabric', options: [
+    'cotton', 'linen', 'silk', 'satin', 'chiffon', 'georgette', 'velvet',
+    'denim', 'wool', 'knit', 'leather', 'brocade', 'organza', 'crepe'] },
+  { key: 'silhouette', label: 'Silhouette', options: [
+    'fitted', 'tailored', 'A-line', 'bodycon', 'oversized', 'flowy',
+    'wide-leg', 'peplum', 'mermaid', 'draped', 'structured'] },
+  { key: 'formality', label: 'Formality', options: [
+    'casual', 'smart casual', 'business', 'semi-formal', 'formal', 'black tie', 'festive'] },
+  { key: 'season', label: 'Season', options: [
+    'summer', 'monsoon', 'autumn', 'winter', 'spring', 'resort'] },
+]
+
 export const STAGE = {
   starting: 'Starting…',
   generating: 'Generating…',

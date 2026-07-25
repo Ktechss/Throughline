@@ -231,6 +231,96 @@ def write_bio(name: str, description: str, fields: list[dict]) -> dict:
             if k in allowed and str(v).strip()}
 
 
+# --------------------------------------------------------------------------
+# Outfit writer (wardrobe enrichment): a short idea + structured picks (occasion,
+# style, fabric, silhouette, formality, season) -> a rich, opaque, GARMENT-ONLY
+# description. This is the outfit analogue of rewrite() for shots — a terse brief
+# alone produces an underspecified garment, so we expand it. The output is dropped
+# verbatim into the wardrobe turnaround (main.wardrobe_create), so it must describe
+# clothes and nothing else.
+# --------------------------------------------------------------------------
+_OUTFIT_SYSTEM = (
+    "You are a fashion stylist writing ONE richly detailed outfit description for "
+    "a photorealistic image pipeline. The text is dropped verbatim into a garment "
+    "turnaround, so it must describe ONLY the clothes.\n\n"
+    "ABSOLUTE RULES — breaking any of these ruins the image:\n"
+    "1. Describe ONLY the clothing, footwear and worn accessories, garment by "
+    "garment: type, colour(s), fabric/material and finish, cut, fit and "
+    "silhouette, neckline, sleeves, hemline/length, prints or embroidery, "
+    "embellishments and hardware. Cover the top, then the bottom (or the dress/"
+    "one-piece as a whole), then footwear, then jewellery and accessories.\n"
+    "2. NEVER describe the person — not her face, body, hair, skin, age, "
+    "ethnicity, build, expression or pose — and NEVER the background, setting or "
+    "lighting. Those come from her own references. Write about garments only.\n"
+    "3. TASTEFUL AND FULLY OPAQUE. Every garment is opaque and gives normal "
+    "coverage. NEVER sheer, see-through, mesh, net, fishnet, transparent, "
+    "cut-out, lingerie, underwear-as-outerwear, micro or otherwise revealing or "
+    "explicit. Opaque and fitted is welcome; exposed or transparent is not. Keep "
+    "it fashionable, editorial and elegant, never sexualised. This is a hard "
+    "moderation limit — a revealing description makes the generation fail.\n"
+    "4. Make ONE coherent, well-styled look that honours every constraint given "
+    "(occasion, style, fabric, silhouette, formality, season) and the idea. Where "
+    "the user is silent, invent specific, believable, on-brief garment details. "
+    "Prefer concrete, photographable facts over vague adjectives, and avoid "
+    "AI-slop words (stunning, ethereal, hyper-realistic, 8k, flawless, gorgeous).\n"
+    "5. For Indian/ethnic looks (saree, lehenga, salwar kameez, anarkali, "
+    "sharara, kurta set) describe the drape, blouse/choli, dupatta, borders, "
+    "pleats and motifs precisely — and keep the blouse and coverage modest and "
+    "opaque.\n\n"
+    "Output ONLY the outfit description as one flowing paragraph — no preamble, "
+    "no headings, no bullet points, no markdown, no quotes."
+)
+
+_OUTFIT_PICKS = [("occasion", "Occasion"), ("style", "Style / aesthetic"),
+                 ("fabric", "Fabric"), ("silhouette", "Silhouette"),
+                 ("formality", "Formality"), ("season", "Season")]
+
+
+def write_outfit(idea: str = "", *, occasion: str = "", style: str = "",
+                 fabric: str = "", silhouette: str = "", formality: str = "",
+                 season: str = "") -> str:
+    """Expand a short idea + structured picks into a rich, opaque, garment-only
+    outfit description. Mirrors rewrite()/write_bio(). Raises PrompterError."""
+    picks = {"occasion": occasion, "style": style, "fabric": fabric,
+             "silhouette": silhouette, "formality": formality, "season": season}
+    provided = {k: v.strip() for k, v in picks.items() if v and v.strip()}
+    if not idea.strip() and not provided:
+        raise PrompterError("pick at least one attribute or type a short outfit "
+                            "idea first")
+    if not os.getenv("ANTHROPIC_API_KEY"):
+        raise PrompterError("ANTHROPIC_API_KEY is not set in .env")
+    try:
+        import anthropic
+    except ImportError as exc:  # pragma: no cover
+        raise PrompterError("the 'anthropic' package is not installed") from exc
+
+    label = dict(_OUTFIT_PICKS)
+    lines = []
+    if idea.strip():
+        lines.append(f"Outfit idea: {idea.strip()}")
+    lines += [f"{label[k]}: {v}" for k, v in provided.items()]
+    if not idea.strip():
+        lines.append("(No free-text idea — design a complete look from the "
+                     "attributes above.)")
+    user = ("Design one outfit from these constraints (use only the ones given):"
+            "\n" + "\n".join(lines) + "\n\nWrite the single outfit description now.")
+
+    client = anthropic.Anthropic()
+    try:
+        msg = client.messages.create(
+            model="claude-opus-4-8", max_tokens=700,
+            system=_OUTFIT_SYSTEM, messages=[{"role": "user", "content": user}])
+    except anthropic.APIStatusError as exc:
+        raise PrompterError(f"Claude API error: {exc.message}"[:300]) from exc
+    except anthropic.APIConnectionError as exc:
+        raise PrompterError("could not reach the Claude API") from exc
+
+    text = "".join(b.text for b in msg.content if b.type == "text").strip()
+    if not text:
+        raise PrompterError("Claude returned an empty outfit description")
+    return text
+
+
 # The video director: a scenario -> a full clip plan (dialogue, scene, camera,
 # duration) that fills the happy-horse configurator. Same iron rule as the image
 # prompter: it directs the SCENE and her WORDS, never her face — identity lives
