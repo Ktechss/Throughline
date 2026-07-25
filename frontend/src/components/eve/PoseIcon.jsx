@@ -40,32 +40,11 @@ const FIGURES = {
   recline: <><circle cx="4.5" cy="13" r="2.3" /><path d="M6.8 13.5h8M14.8 13.5l4.5 2M8 13.5l1.5 3M11 13.5l1.5 3" /></>,
 }
 
-import { useState } from 'react'
-
-// If you drop pose icons into frontend/public/pose-icons/, they're used
-// automatically. Two levels of granularity, tried in order:
-//   1. /pose-icons/<poseId>.svg   — a specific icon per pose (e.g. hip-pop.svg)
-//   2. /pose-icons/<stanceKey>.svg — one per stance (portrait/stand/walk/…)
-// and if neither exists, the built-in line silhouette below is drawn — so the
-// app always works with zero external assets. Icons render as white silhouettes
-// (filter) to sit on the dark theme; drop that filter for coloured icons.
-// NOTE: third-party icons (e.g. Flaticon) are licensed — add them yourself under
-// their terms and include any required attribution.
 export default function PoseIcon({ id, className = 'h-7 w-7' }) {
-  const key = glyphKey(id)
-  const srcs = [`/pose-icons/${id}.svg`, `/pose-icons/${key}.svg`]
-  const [i, setI] = useState(0)
-  if (i < srcs.length) {
-    return (
-      <img src={srcs[i]} alt="" aria-hidden="true" onError={() => setI(i + 1)}
-        className={`${className} object-contain`}
-        style={{ filter: 'brightness(0) invert(1)' }} />
-    )
-  }
   return (
     <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor"
       strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      {FIGURES[key] || FIGURES.stand}
+      {FIGURES[glyphKey(id)] || FIGURES.stand}
     </svg>
   )
 }
