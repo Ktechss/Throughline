@@ -164,7 +164,20 @@ export default function App() {
     catch (e) { setErr(String(e)) }
   }
 
-  const backToLanding = () => { clearStudio(); setView('landing'); loadChars().catch((e) => setErr(String(e))) }
+  // A generation whose result the user must still SAVE (outfit / body preview) or
+  // that is mid-build — switching away loses it from the UI (it's still recorded
+  // to this character, but the preview/save step is gone). Warn before leaving.
+  const generationInProgress = () =>
+    !!creating || !!bodyCreating || !!buildStage || aiBusy || !!videoBusy || !!makeBusy
+      || generations.some((g) => g.status && !g.status.done)
+
+  const backToLanding = () => {
+    if (generationInProgress() && !window.confirm(
+      'A generation is still in progress. If you switch characters now, its preview '
+      + 'will be lost (the finished result is still saved to this character). Switch anyway?'))
+      return
+    clearStudio(); setView('landing'); loadChars().catch((e) => setErr(String(e)))
+  }
 
   const savePart = async (id, patch) => {
     const next = parts.map((p) => (p.id === id ? { ...p, ...patch } : p))
