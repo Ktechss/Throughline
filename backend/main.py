@@ -1328,6 +1328,30 @@ def _unique_wardrobe_path(name: str) -> Path:
     return WARDROBE / f"{safe}-{n}.png"
 
 
+def _canon_category(category: str) -> str:
+    """Canonical category / name-prefix: alnum only, first letter upper (e.g.
+    'day out' -> 'Dayout', 'night' -> 'Night')."""
+    c = "".join(ch for ch in (category or "") if ch.isalnum())
+    return (c[0].upper() + c[1:]) if c else "Outfit"
+
+
+def _next_wardrobe_name(category: str) -> str:
+    """Auto-name an outfit as <Category><next number> — the number continues that
+    category's existing sequence (Dayout1..9 -> Dayout10)."""
+    import re
+    cat = _canon_category(category)
+    mx = 0
+    for p in (WARDROBE.iterdir() if WARDROBE.exists() else []):
+        if p.suffix.lower() not in (".png", ".jpg", ".jpeg", ".webp"):
+            continue
+        m = re.match(rf"^{re.escape(cat)}(\d+)$", p.stem, re.IGNORECASE)
+        if m:
+            mx = max(mx, int(m.group(1)))
+        elif p.stem.lower() == cat.lower():
+            mx = max(mx, 1)   # an unnumbered existing outfit counts as #1
+    return f"{cat}{mx + 1}"
+
+
 # The wardrobe turnaround is a photo of HER wearing the outfit, so it carries a
 # competing face — measured to drag a headshot's identity ~0.85 -> ~0.64 even
 # with the "clothing only" directive. Crop the head off so @image2 is the garment
@@ -1375,9 +1399,10 @@ async def wardrobe_upload(file: UploadFile = File(...), category: str = Form("")
     wardrobe leak, since the outfit now comes from its own reference rather than
     losing a text tug-of-war with the identity photo. No-clobber name so an
     upload can't overwrite an existing outfit."""
-    dest = _unique_wardrobe_path(Path(file.filename or "outfit").stem)
+    cat = _canon_category(category) if (category or "").strip() else ""
+    name = _next_wardrobe_name(cat) if cat else Path(file.filename or "outfit").stem
+    dest = _unique_wardrobe_path(name)
     dest.write_bytes(await file.read())
-    cat = (category or "").strip()
     if cat:
         meta = _wardrobe_meta()
         meta[dest.stem] = {"description": None, "category": cat, "created": None}
@@ -1553,12 +1578,15 @@ def wardrobe_from_run(payload: dict = Body(...)):
     """Promote a generated image to a saved outfit — its wardrobe becomes
     reusable. (The image's identity is irrelevant here; only the clothing is
     used, via @image2.)"""
-    run_id, name = payload["run_id"], payload["name"]
-    category = (payload.get("category") or "").strip()
+    run_id = payload["run_id"]
+    category = _canon_category(payload.get("category") or payload.get("name") or "")
+    if not (payload.get("category") or payload.get("name")):
+        raise HTTPException(400, "category required")
     row = next((r for r in generate.all_runs() if r["id"] == run_id), None)
     if not row:
         raise HTTPException(404, run_id)
-    dest = _unique_wardrobe_path(name)   # never overwrite an existing outfit
+    # Auto-name <Category><next#>; no-clobber as a final safety net.
+    dest = _unique_wardrobe_path(_next_wardrobe_name(category))
     shutil.copy2(IMAGES / row["file"], dest)
     # Persist the description it was made with + its category, keyed to THIS file's
     # stem, so image and description can never belong to different outfits.

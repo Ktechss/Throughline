@@ -1,6 +1,5 @@
 import { useRef } from 'react'
 import { LockKeyhole, ImagePlus, LoaderCircle, Sparkles } from 'lucide-react'
-import { WARDROBE_CATEGORIES } from '@/lib/eve'
 import RefStrip from './RefStrip'
 import WardrobePanel from './WardrobePanel'
 import PromptControls from './PromptControls'
@@ -25,7 +24,7 @@ export default function Shoot({
   poseId, setPoseId, poseLibrary, resolution, setResolution, faceAcc, setFaceAcc,
   outfitText, setOutfitText, describing, onDescribe, creating, onCreateOutfit,
   outfitPreview, onSaveOutfit, onDiscardOutfit, onOpenDesigner,
-  saveName, setSaveName, saveCategory, setSaveCategory,
+  saveCategory, setSaveCategory,
   onUploadOutfit, onUploadPose, onDeleteWardrobe, stamp,
 }) {
   const canGenerate = !!bio?.reference && (!!brief.trim() || !!outfit || !!poseRef)
@@ -34,6 +33,22 @@ export default function Shoot({
     onGenerate()
     // jump to the queue so the new card is visible (it lives below the fold)
     setTimeout(() => gensRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60)
+  }
+  // Categories present in the wardrobe (+ any just-typed new one), for the save chips.
+  const wardrobeCats = [...new Set((wardrobe || []).map((w) => w.category).filter(Boolean))]
+  const saveCats = [...new Set([...wardrobeCats, ...(saveCategory && !wardrobeCats.includes(saveCategory) ? [saveCategory] : [])])]
+  // Preview the auto name <Category><next#> — mirrors the backend numbering.
+  const nextName = (cat) => {
+    const c = (cat || '').replace(/[^a-zA-Z0-9]/g, '')
+    if (!c) return ''
+    const canon = c[0].toUpperCase() + c.slice(1)
+    let mx = 0
+    for (const w of (wardrobe || [])) {
+      const m = (w.id || '').match(new RegExp(`^${canon}(\\d+)$`, 'i'))
+      if (m) mx = Math.max(mx, +m[1])
+      else if ((w.id || '').toLowerCase() === canon.toLowerCase()) mx = Math.max(mx, 1)
+    }
+    return `${canon}${mx + 1}`
   }
   return (
     <main className="mx-auto max-w-[1340px] space-y-6 px-5 py-7">
@@ -119,18 +134,20 @@ export default function Shoot({
                 {outfitPreview.moderation_fallback && <span className="eve-chip text-[#edb755]">scene-model</span>}
               </div>
               <img src={`/api/images/${outfitPreview.file}`} className="w-full rounded-md border border-[#24242e]" alt="outfit preview" />
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <input value={saveName} onChange={(e) => setSaveName(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter' && saveName.trim()) onSaveOutfit() }}
-                  placeholder="name this outfit"
-                  className="eve-input h-9 flex-1 min-w-[140px]" />
-                <select value={saveCategory} onChange={(e) => setSaveCategory(e.target.value)}
-                  className="h-9 rounded-md border border-[#30303a] bg-[#0e0e12] px-2 text-xs text-[#e6e6ea] outline-none focus:border-[#4ea1ff]">
-                  {WARDROBE_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
-                </select>
+              <p className="mt-3 eve-label text-[#8a8a99]">save to category</p>
+              <div className="mt-1 flex flex-wrap gap-1.5">
+                {saveCats.map((c) => (
+                  <button key={c} onClick={() => setSaveCategory(c)}
+                    className={`rounded-full border px-3 py-1 text-xs transition ${saveCategory === c
+                      ? 'border-[#4ea1ff] bg-[#123049] text-[#9fd0ff]'
+                      : 'border-[#2a2a34] text-[#a9a9b6] hover:border-[#3a3a46]'}`}>{c}</button>
+                ))}
+                <button onClick={() => { const n = window.prompt('New category name:'); if (n && n.trim()) setSaveCategory(n.trim()) }}
+                  className="rounded-full border border-dashed border-[#3a3a46] px-3 py-1 text-xs text-[#8a8a99] transition hover:border-[#4ea1ff] hover:text-[#cfe0f5]">＋ new category</button>
               </div>
+              {saveCategory && <p className="mt-1.5 text-[10px] text-[#5f6b7a]">will save as <b className="text-[#9fd0ff]">{nextName(saveCategory)}</b></p>}
               <div className="mt-2 flex gap-2">
-                <button onClick={onSaveOutfit} disabled={!saveName.trim()}
+                <button onClick={onSaveOutfit} disabled={!saveCategory}
                   className="eve-button bg-[#4ea1ff] text-[#07111b] hover:bg-[#70b3ff] disabled:opacity-40">save to wardrobe</button>
                 <button onClick={onDiscardOutfit} className="eve-button border border-[#353541]">discard</button>
               </div>

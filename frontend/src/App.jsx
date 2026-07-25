@@ -42,8 +42,7 @@ export default function App() {
   const [idea, setIdea] = useState('')                       // short outfit idea for the AI expander
   const [pickers, setPickers] = useState({})                 // occasion/style/fabric/silhouette/formality/season
   const [enriching, setEnriching] = useState(false)          // write-outfit (enrich) in progress
-  const [saveName, setSaveName] = useState('')               // name for the outfit being saved
-  const [saveCategory, setSaveCategory] = useState('Day Out')// category for the outfit being saved
+  const [saveCategory, setSaveCategory] = useState('')       // category the outfit saves into (auto-named)
   const [bodyCreating, setBodyCreating] = useState(null)     // body-ref generation status
   const [bodyPreview, setBodyPreview] = useState(null)       // generated body awaiting save/discard
   const [stamp, setStamp] = useState(0)                      // cache-buster for overwritten refs (body-canonical.png)
@@ -278,16 +277,16 @@ export default function App() {
     finally { if (epoch === switchEpoch.current) setCreating(null) }
   }
 
-  // Like the preview -> name it, categorise it, save into the wardrobe. A unique
-  // name is enforced server-side (no-clobber), so a save can never overwrite and
-  // desync another outfit.
+  // Save the preview into a CATEGORY — the backend auto-names it <Category><next#>
+  // (no manual name), and a unique name is enforced so a save can never overwrite
+  // or desync another outfit.
   const saveOutfit = async () => {
-    const name = saveName.trim()
-    if (!name) { setErr('Name the outfit before saving.'); return }
+    const category = (saveCategory || '').trim()
+    if (!category) { setErr('Pick a category before saving.'); return }
     try {
       const r = await api.send('/api/wardrobe/from-run', 'POST',
-        { run_id: outfitPreview.id, name, category: saveCategory })
-      setOutfitPreview(null); setOutfitText(''); setDetails(null); setSaveName('')
+        { run_id: outfitPreview.id, category })
+      setOutfitPreview(null); setOutfitText(''); setDetails(null)
       setOutfit(r.id)   // auto-select the newly saved outfit
       await refresh()
     } catch (e) { setErr(String(e)) }
@@ -593,7 +592,7 @@ export default function App() {
           outfitText={outfitText} setOutfitText={setOutfitText}
           describing={describing} onDescribe={describe} creating={creating} onCreateOutfit={createOutfit}
           outfitPreview={outfitPreview} onSaveOutfit={saveOutfit} onDiscardOutfit={discardOutfit}
-          saveName={saveName} setSaveName={setSaveName} saveCategory={saveCategory} setSaveCategory={setSaveCategory}
+          saveCategory={saveCategory} setSaveCategory={setSaveCategory}
           onOpenDesigner={openDesigner}
           onUploadOutfit={uploadTo('/api/wardrobe/upload')} onUploadPose={uploadTo('/api/pose-refs/upload')}
           onDeleteWardrobe={deleteWardrobe} stamp={stamp}
