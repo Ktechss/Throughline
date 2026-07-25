@@ -242,11 +242,23 @@ async def create_character_guided(
         # 2) generate her first face
         job["stage"] = "generating face"
         if seed_upload and seed_upload.exists():
-            prompt = ("Clean, well-lit frontal headshot of @image1 — head and "
-                      "shoulders, plain neutral studio background, looking straight "
-                      "into the lens, natural relaxed expression. "
-                      f"{IDENTITY_LOCK_LINE} Photorealistic, real skin texture, "
-                      "sharp focus on the face.")
+            # Base her on the reference's LIKENESS, but always render a REAL,
+            # photorealistic human — so a stylised/anime/drawn reference becomes a
+            # believable real person, never reproduced as art. (A strict identity
+            # copy here made an anime upload come back as anime — wrong for the
+            # realistic pipeline and the ArcFace gate.)
+            prompt = (
+                "A photorealistic portrait headshot of a REAL human woman whose "
+                "face is based on @image1. Take her facial features, structure, "
+                "hairstyle and overall likeness from @image1, but render her as a "
+                "real, photorealistic human being with natural skin and true human "
+                "anatomy. If @image1 is a drawing, anime or stylised art, "
+                "reinterpret it faithfully as a believable real person with those "
+                "same features. Head-and-shoulders framing, plain neutral studio "
+                "background, soft even lighting, looking into the lens, natural "
+                "relaxed expression. Photorealistic RAW photo, real skin texture "
+                "and pores, sharp focus on the face — never illustrated, cartoon "
+                "or CGI.")
             row = generate.generate(
                 prompt=prompt, refs=[seed_upload], aspect="3:4",
                 session=generate.new_session(f"seed face: {name}"), progress=job,

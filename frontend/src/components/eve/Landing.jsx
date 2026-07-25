@@ -137,7 +137,7 @@ export default function Landing({ characters, active, onSelect, onCreate, onDele
               onChange={(e) => setHeight(+e.target.value)}
               className="mt-1 w-full accent-[#4ea1ff]" />
 
-            <label className="mt-3 block eve-label text-[#8a8a99]">reference image <span className="text-[#5f5f6c]">— optional, guides her look</span></label>
+            <label className="mt-3 block eve-label text-[#8a8a99]">reference image <span className="text-[#5f5f6c]">— optional, base her face on this</span></label>
             {preview ? (
               <div className="mt-1 flex items-center gap-3">
                 <img src={preview} alt="reference" className="h-20 w-16 rounded-md border border-[#284d72] object-cover" />
@@ -152,7 +152,7 @@ export default function Landing({ characters, active, onSelect, onCreate, onDele
                 <input type="file" accept="image/*" hidden onChange={pickFile} />
               </label>
             )}
-            <p className="mt-1.5 text-[10px] text-[#5f5f6c]">With an image, her first face is generated from it. Without one, it's generated from the written bio.</p>
+            <p className="mt-1.5 text-[10px] text-[#5f5f6c]">Her face is built as a <b className="text-[#8a8a99]">real human based on this image</b> — even anime/art is humanized, not copied. <b className="text-[#8a8a99]">Leave blank</b> to generate a fresh face from the description.</p>
 
             <div className="mt-4 flex justify-end gap-2">
               <button onClick={() => setCreating(false)} disabled={busy}
