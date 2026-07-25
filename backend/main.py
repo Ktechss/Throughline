@@ -1310,8 +1310,22 @@ def _wardrobe() -> list[dict]:
             m = meta.get(p.stem, {})
             out.append({"id": p.stem, "file": p.name,
                         "description": m.get("description"),
+                        "category": m.get("category") or "",
                         "created": m.get("created")})
     return out
+
+
+def _unique_wardrobe_path(name: str) -> Path:
+    """No-clobber outfit filename: never overwrite an existing outfit (that is how
+    an image and a different outfit's description desync). Suffixes -2, -3, … ."""
+    safe = "".join(c for c in name if c.isalnum() or c in "-_ ").strip() or "outfit"
+    safe = "-".join(safe.split())
+    if not (WARDROBE / f"{safe}.png").exists():
+        return WARDROBE / f"{safe}.png"
+    n = 2
+    while (WARDROBE / f"{safe}-{n}.png").exists():
+        n += 1
+    return WARDROBE / f"{safe}-{n}.png"
 
 
 # The wardrobe turnaround is a photo of HER wearing the outfit, so it carries a
@@ -1355,14 +1369,20 @@ def list_wardrobe():
 
 
 @app.post("/api/wardrobe/upload")
-async def wardrobe_upload(file: UploadFile = File(...)):
+async def wardrobe_upload(file: UploadFile = File(...), category: str = Form("")):
     """An outfit is saved as a reference image. It becomes @image2 on any shot
     that selects it, with a 'reproduce exactly' directive — the fix for the
     wardrobe leak, since the outfit now comes from its own reference rather than
-    losing a text tug-of-war with the identity photo."""
-    dest = WARDROBE / Path(file.filename).name
+    losing a text tug-of-war with the identity photo. No-clobber name so an
+    upload can't overwrite an existing outfit."""
+    dest = _unique_wardrobe_path(Path(file.filename or "outfit").stem)
     dest.write_bytes(await file.read())
-    return {"id": dest.stem, "file": dest.name}   # saved as-is, never rotated
+    cat = (category or "").strip()
+    if cat:
+        meta = _wardrobe_meta()
+        meta[dest.stem] = {"description": None, "category": cat, "created": None}
+        _save_wardrobe_meta(meta)
+    return {"id": dest.stem, "file": dest.name, "category": cat}
 
 
 @app.post("/api/wardrobe/describe")
@@ -1534,18 +1554,19 @@ def wardrobe_from_run(payload: dict = Body(...)):
     reusable. (The image's identity is irrelevant here; only the clothing is
     used, via @image2.)"""
     run_id, name = payload["run_id"], payload["name"]
+    category = (payload.get("category") or "").strip()
     row = next((r for r in generate.all_runs() if r["id"] == run_id), None)
     if not row:
         raise HTTPException(404, run_id)
-    safe = "".join(c for c in name if c.isalnum() or c in "-_") or run_id
-    dest = WARDROBE / f"{safe}.png"
+    dest = _unique_wardrobe_path(name)   # never overwrite an existing outfit
     shutil.copy2(IMAGES / row["file"], dest)
-    # Persist the outfit description it was made with, so the UI can show it.
+    # Persist the description it was made with + its category, keyed to THIS file's
+    # stem, so image and description can never belong to different outfits.
     meta = _wardrobe_meta()
     meta[dest.stem] = {"description": row.get("meta", {}).get("outfit_create"),
-                       "created": row.get("created")}
+                       "category": category, "created": row.get("created")}
     _save_wardrobe_meta(meta)
-    return {"id": dest.stem, "file": dest.name}   # saved as-is, never rotated
+    return {"id": dest.stem, "file": dest.name, "category": category}
 
 
 @app.get("/api/wardrobe/{name}/file")

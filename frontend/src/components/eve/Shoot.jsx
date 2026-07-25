@@ -1,5 +1,6 @@
 import { useRef } from 'react'
 import { LockKeyhole, ImagePlus, LoaderCircle, Sparkles } from 'lucide-react'
+import { WARDROBE_CATEGORIES } from '@/lib/eve'
 import RefStrip from './RefStrip'
 import WardrobePanel from './WardrobePanel'
 import PromptControls from './PromptControls'
@@ -24,6 +25,7 @@ export default function Shoot({
   poseId, setPoseId, poseLibrary, resolution, setResolution, faceAcc, setFaceAcc,
   outfitText, setOutfitText, describing, onDescribe, creating, onCreateOutfit,
   outfitPreview, onSaveOutfit, onDiscardOutfit, onOpenDesigner,
+  saveName, setSaveName, saveCategory, setSaveCategory,
   onUploadOutfit, onUploadPose, onDeleteWardrobe, stamp,
 }) {
   const canGenerate = !!bio?.reference && (!!brief.trim() || !!outfit || !!poseRef)
@@ -117,8 +119,19 @@ export default function Shoot({
                 {outfitPreview.moderation_fallback && <span className="eve-chip text-[#edb755]">scene-model</span>}
               </div>
               <img src={`/api/images/${outfitPreview.file}`} className="w-full rounded-md border border-[#24242e]" alt="outfit preview" />
-              <div className="mt-3 flex gap-2">
-                <button onClick={onSaveOutfit} className="eve-button bg-[#4ea1ff] text-[#07111b] hover:bg-[#70b3ff]">save to wardrobe</button>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <input value={saveName} onChange={(e) => setSaveName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' && saveName.trim()) onSaveOutfit() }}
+                  placeholder="name this outfit"
+                  className="eve-input h-9 flex-1 min-w-[140px]" />
+                <select value={saveCategory} onChange={(e) => setSaveCategory(e.target.value)}
+                  className="h-9 rounded-md border border-[#30303a] bg-[#0e0e12] px-2 text-xs text-[#e6e6ea] outline-none focus:border-[#4ea1ff]">
+                  {WARDROBE_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+              <div className="mt-2 flex gap-2">
+                <button onClick={onSaveOutfit} disabled={!saveName.trim()}
+                  className="eve-button bg-[#4ea1ff] text-[#07111b] hover:bg-[#70b3ff] disabled:opacity-40">save to wardrobe</button>
                 <button onClick={onDiscardOutfit} className="eve-button border border-[#353541]">discard</button>
               </div>
             </div>

@@ -42,6 +42,8 @@ export default function App() {
   const [idea, setIdea] = useState('')                       // short outfit idea for the AI expander
   const [pickers, setPickers] = useState({})                 // occasion/style/fabric/silhouette/formality/season
   const [enriching, setEnriching] = useState(false)          // write-outfit (enrich) in progress
+  const [saveName, setSaveName] = useState('')               // name for the outfit being saved
+  const [saveCategory, setSaveCategory] = useState('Day Out')// category for the outfit being saved
   const [bodyCreating, setBodyCreating] = useState(null)     // body-ref generation status
   const [bodyPreview, setBodyPreview] = useState(null)       // generated body awaiting save/discard
   const [stamp, setStamp] = useState(0)                      // cache-buster for overwritten refs (body-canonical.png)
@@ -276,13 +278,18 @@ export default function App() {
     finally { if (epoch === switchEpoch.current) setCreating(null) }
   }
 
-  // Like the preview -> name it and save into the wardrobe.
+  // Like the preview -> name it, categorise it, save into the wardrobe. A unique
+  // name is enforced server-side (no-clobber), so a save can never overwrite and
+  // desync another outfit.
   const saveOutfit = async () => {
-    const name = window.prompt('Name this outfit:', '')
-    if (!name) return
+    const name = saveName.trim()
+    if (!name) { setErr('Name the outfit before saving.'); return }
     try {
-      await api.send('/api/wardrobe/from-run', 'POST', { run_id: outfitPreview.id, name })
-      setOutfitPreview(null); setOutfitText(''); setDetails(null); await refresh()
+      const r = await api.send('/api/wardrobe/from-run', 'POST',
+        { run_id: outfitPreview.id, name, category: saveCategory })
+      setOutfitPreview(null); setOutfitText(''); setDetails(null); setSaveName('')
+      setOutfit(r.id)   // auto-select the newly saved outfit
+      await refresh()
     } catch (e) { setErr(String(e)) }
   }
   const discardOutfit = () => setOutfitPreview(null)
@@ -586,6 +593,7 @@ export default function App() {
           outfitText={outfitText} setOutfitText={setOutfitText}
           describing={describing} onDescribe={describe} creating={creating} onCreateOutfit={createOutfit}
           outfitPreview={outfitPreview} onSaveOutfit={saveOutfit} onDiscardOutfit={discardOutfit}
+          saveName={saveName} setSaveName={setSaveName} saveCategory={saveCategory} setSaveCategory={setSaveCategory}
           onOpenDesigner={openDesigner}
           onUploadOutfit={uploadTo('/api/wardrobe/upload')} onUploadPose={uploadTo('/api/pose-refs/upload')}
           onDeleteWardrobe={deleteWardrobe} stamp={stamp}

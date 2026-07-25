@@ -48,6 +48,12 @@ export function mergeOutfit(prose, details) {
   return extra.length ? `${(prose || '').trim()} ${extra.join('. ')}.` : (prose || '').trim()
 }
 
+// Wardrobe categories — grouping for the saved outfit library (a stylist's rack).
+export const WARDROBE_CATEGORIES = [
+  'Day Out', 'Night Out', 'Office', 'Party', 'Date', 'Ethnic',
+  'Casual', 'Vacation', 'Festive', 'Costume', 'Other',
+]
+
 // Structured outfit pickers → sent to /api/wardrobe/enrich, where Claude expands
 // them + a short idea into a rich, opaque, garment-only description. Single-select
 // per group. Tasteful, fashion-forward, Western + Indian/ethnic (South-Delhi stylist).
