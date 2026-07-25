@@ -1,5 +1,6 @@
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 import { LockKeyhole, ImagePlus, LoaderCircle, Sparkles } from 'lucide-react'
+import PoseIcon from './PoseIcon'
 import RefStrip from './RefStrip'
 import WardrobePanel from './WardrobePanel'
 import PromptControls from './PromptControls'
@@ -28,6 +29,9 @@ export default function Shoot({
   onUploadOutfit, onUploadPose, onDeleteWardrobe, stamp,
 }) {
   const canGenerate = !!bio?.reference && (!!brief.trim() || !!outfit || !!poseRef)
+  const [poseTab, setPoseTab] = useState('portrait')
+  const poseCats = POSE_ORDER.filter((cat) => (poseLibrary || []).some((p) => p.id && POSE_CAT(p.id) === cat))
+  const activePoseTab = poseCats.includes(poseTab) ? poseTab : (poseCats[0] || 'standing')
   const gensRef = useRef(null)
   const handleGenerate = () => {
     onGenerate()
@@ -155,30 +159,36 @@ export default function Shoot({
           )}
         </div>
 
-        {/* Text pose presets — native, no reference slot spent, no identity tax. */}
+        {/* Text pose presets — category TABS + visual pose cards. */}
         <div>
           <div className="mb-2 flex items-center gap-2">
             <p className="eve-label">pose</p>
             <span className="font-mono text-[9px] text-[#666674]">native · text-driven</span>
             {poseId && <button onClick={() => setPoseId('')} className="ml-auto text-[10px] text-[#8a8a99] hover:text-[#e6e6ea]">clear</button>}
           </div>
-          <div className="space-y-2">
-            {POSE_ORDER.map((cat) => {
-              const items = (poseLibrary || []).filter((p) => p.id && POSE_CAT(p.id) === cat)
-              if (!items.length) return null
+
+          {/* category tabs */}
+          <div className="flex flex-wrap gap-1 border-b border-[#24242e]">
+            {poseCats.map((cat) => (
+              <button key={cat} onClick={() => setPoseTab(cat)}
+                className={`-mb-px border-b-2 px-3 py-1.5 text-xs capitalize transition ${activePoseTab === cat
+                  ? 'border-[#4ea1ff] text-[#e6e6ea]'
+                  : 'border-transparent text-[#70707d] hover:text-[#b8b8c3]'}`}>{cat}</button>
+            ))}
+          </div>
+
+          {/* pose cards for the active tab */}
+          <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-4">
+            {(poseLibrary || []).filter((p) => p.id && POSE_CAT(p.id) === activePoseTab).map((p) => {
+              const on = poseId === p.id
               return (
-                <div key={cat} className="flex flex-wrap items-center gap-1.5">
-                  <span className="w-16 shrink-0 font-mono text-[9px] uppercase tracking-wider text-[#5f6b7a]">{cat}</span>
-                  {items.map((p) => (
-                    <button key={p.id} title={p.text}
-                      onClick={() => setPoseId(poseId === p.id ? '' : p.id)}
-                      className={`rounded-full border px-2.5 py-1 text-[11px] transition ${poseId === p.id
-                        ? 'border-[#4ea1ff] bg-[#123049] text-[#9fd0ff]'
-                        : 'border-[#2a2a34] text-[#a9a9b6] hover:border-[#3a3a46] hover:text-[#e6e6ea]'}`}>
-                      {p.id}
-                    </button>
-                  ))}
-                </div>
+                <button key={p.id} title={p.text} onClick={() => setPoseId(on ? '' : p.id)}
+                  className={`flex flex-col items-center gap-1 rounded-lg border p-2 text-center transition ${on
+                    ? 'border-[#4ea1ff] bg-[#123049] text-[#9fd0ff]'
+                    : 'border-[#2a2a34] text-[#a9a9b6] hover:border-[#3a4a5e] hover:text-[#e6e6ea]'}`}>
+                  <PoseIcon id={p.id} className="h-8 w-8" />
+                  <span className="w-full truncate text-[10px] leading-tight">{p.id}</span>
+                </button>
               )
             })}
           </div>
