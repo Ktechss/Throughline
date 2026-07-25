@@ -520,6 +520,14 @@ export default function App() {
     const name = window.prompt('Save this as a pose reference named:', ''); if (!name) return
     try { await api.send('/api/pose-refs/from-run', 'POST', { run_id: id, name }); await refresh() } catch (e) { setErr(String(e)) }
   }
+  // Reuse the pose of a past shot: set its pose (text + any ref image) and jump to Shoot.
+  const usePose = (run) => {
+    const m = run.meta || {}
+    setPoseId(m.pose_id || '')
+    setPoseRef(m.pose_ref || '')
+    setDetail(null)
+    setTab('shoot')
+  }
 
   const setBioRef = async (name) => {
     try { await api.send('/api/bio/reference', 'PUT', { reference: name }); await refresh() } catch (e) { setErr(String(e)) }
@@ -643,8 +651,8 @@ export default function App() {
         creating={creating} onClose={() => setDrawerOpen(false)}
         onGenerate={() => { setDrawerOpen(false); createOutfit() }} />
 
-      <OriginModal run={detail} wardrobe={wardrobe} poseRefs={poseRefs} stamp={stamp}
-        onClose={() => setDetail(null)} onMark={mark} onToWardrobe={toWardrobe} onToPoseRef={toPoseRef} />
+      <OriginModal run={detail} wardrobe={wardrobe} poseRefs={poseRefs} poseLibrary={poseLibrary} stamp={stamp}
+        onClose={() => setDetail(null)} onMark={mark} onToWardrobe={toWardrobe} onToPoseRef={toPoseRef} onUsePose={usePose} />
     </div>
   )
 }
