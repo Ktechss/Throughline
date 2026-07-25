@@ -35,20 +35,14 @@ _MEDIA = {
 # The detail fields the turnaround needs but a reference photo often doesn't show
 # (heels cropped out, hands out of frame, no feet, lips not clear). Keys here are
 # the contract with the frontend; order is display order.
-DETAIL_KEYS = ["outfit_color", "lower_garment", "shoes",
-               "fingernails", "toenails", "lipstick"]
+DETAIL_KEYS = ["outfit_color", "lower_garment", "shoes", "jewellery", "bag",
+               "outerwear", "belt", "sunglasses", "watch", "hair_accessory",
+               "hosiery", "fingernails", "toenails", "lipstick"]
 
 _SCHEMA = {
     "type": "object",
-    "properties": {
-        "description": {"type": "string"},
-        "outfit_color": {"type": "string"},
-        "lower_garment": {"type": "string"},
-        "shoes": {"type": "string"},
-        "fingernails": {"type": "string"},
-        "toenails": {"type": "string"},
-        "lipstick": {"type": "string"},
-    },
+    "properties": {"description": {"type": "string"},
+                   **{k: {"type": "string"} for k in DETAIL_KEYS}},
     "required": ["description", *DETAIL_KEYS],
     "additionalProperties": False,
 }
@@ -70,6 +64,14 @@ _PROMPT = (
     "- `lower_garment`: the lower-body garment TYPE (e.g. shorts, mini skirt, "
     "wide-leg trousers, jeans, or 'dress' if one-piece)\n"
     "- `shoes`: footwear / heels (type, colour, heel height)\n"
+    "- `jewellery`: earrings, necklace, bracelets, rings (type, metal, stones)\n"
+    "- `bag`: handbag or clutch (type, colour, hardware)\n"
+    "- `outerwear`: any jacket, coat, blazer, shrug or dupatta layered over\n"
+    "- `belt`: belt (type, colour, buckle)\n"
+    "- `sunglasses`: sunglasses / eyewear (shape, colour)\n"
+    "- `watch`: wristwatch (type, colour)\n"
+    "- `hair_accessory`: worn scarf, headband, hair clip or hat\n"
+    "- `hosiery`: opaque tights, stockings or socks (colour) — opaque only\n"
     "- `fingernails`: fingernail polish colour\n"
     "- `toenails`: toenail polish colour\n"
     "- `lipstick`: lip colour\n"
@@ -85,6 +87,25 @@ def media_type(filename: str, content_type: str | None) -> str:
         return content_type
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     return _MEDIA.get(ext, "image/png")
+
+
+def _fit_image(image_bytes: bytes, media: str) -> tuple[bytes, str]:
+    """Claude caps request images at 10 MB (and resizes to ~1568px anyway), so a
+    full-res outfit photo blows the limit. Downscale large inputs to a 1568px long
+    edge and re-encode as JPEG; small ones pass through untouched. Any failure
+    falls back to the original bytes so describe never breaks on this."""
+    if len(image_bytes) < 4_000_000:
+        return image_bytes, media
+    try:
+        import io
+        from PIL import Image
+        im = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        im.thumbnail((1568, 1568))
+        buf = io.BytesIO()
+        im.save(buf, "JPEG", quality=85)
+        return buf.getvalue(), "image/jpeg"
+    except Exception:  # noqa: BLE001 — describe must not break on downscaling
+        return image_bytes, media
 
 
 def describe_outfit(image_bytes: bytes, media: str = "image/png") -> dict:
@@ -105,6 +126,7 @@ def describe_outfit(image_bytes: bytes, media: str = "image/png") -> dict:
         raise DescribeError(
             "the 'anthropic' package is not installed in this venv") from exc
 
+    image_bytes, media = _fit_image(image_bytes, media)   # keep under Claude's 10 MB cap
     b64 = base64.standard_b64encode(image_bytes).decode("ascii")
     client = anthropic.Anthropic()   # key from ANTHROPIC_API_KEY
     try:
