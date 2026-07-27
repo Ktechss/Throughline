@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, genView, groupPoses, outfitView, nailView, runView, ep, mergeOutfit, STAGE } from "@/api/throughline";
+import { api, genView, groupPoses, outfitView, nailView, placeView, runView, ep, mergeOutfit, STAGE } from "@/api/throughline";
 
 // The studio orchestration hub — ported from the legacy App.jsx. Loads all of the
 // active character's data and exposes every action the tabs call. Polling is
@@ -34,6 +34,8 @@ export function useStudio(charParam) {
   const [selectedPose, setSelectedPose] = useState(null);
   const [selectedNail, setSelectedNail] = useState(null);
   const [nails, setNails] = useState([]);
+  const [selectedPlace, setSelectedPlace] = useState(null);
+  const [places, setPlaces] = useState([]);
   const [generations, setGenerations] = useState([]);
 
   // outfit designer
@@ -59,12 +61,12 @@ export function useStudio(charParam) {
 
   const refresh = useCallback(async () => {
     const mine = epoch.current;
-    const [p, r, g, rf, b, wd, pl, pr, st, cm, vd, bd, nl] = await Promise.all([
+    const [p, r, g, rf, b, wd, pl, pr, st, cm, vd, bd, nl, pc] = await Promise.all([
       api.get("/api/parts"), api.get("/api/runs"), api.get("/api/gallery"),
       api.get("/api/refs"), api.get("/api/bio"), api.get("/api/wardrobe"),
       api.get("/api/pose-library"), api.get("/api/pose-refs"), api.get("/api/stats"),
       api.get("/api/camera-moves"), api.get("/api/videos"), api.get("/api/bodies"),
-      api.get("/api/nails"),
+      api.get("/api/nails"), api.get("/api/places"),
     ]);
     if (mine !== epoch.current) return;
     setParts(p.parts); setRuns(r.runs); setGallery(g); setRefs(rf.refs);
@@ -72,6 +74,7 @@ export function useStudio(charParam) {
     setPoseGroups(groupPoses(pl.poses, pl.categories));
     setStats(st); setCameraMoves(cm); setVideos(vd.videos || []); setBodies(bd);
     setNails((nl.nails || []).map(nailView));
+    setPlaces((pc.places || []).map(placeView));
   }, []);
 
   const load = useCallback(async () => {
@@ -89,7 +92,7 @@ export function useStudio(charParam) {
       setCharName(entry?.name || id || "");
       setHasIdentity(!!entry?.has_identity);
       setGenerations([]);
-      setSelectedNail(null); setSelectedOutfit(null); setSelectedPose(null);
+      setSelectedNail(null); setSelectedOutfit(null); setSelectedPose(null); setSelectedPlace(null);
       setCalibCands([]);   // calibration candidates are session-only; saved faces live in the Face Manager
       await refresh();
     } catch (e) { if (mine === epoch.current) fail(e); }
@@ -125,7 +128,7 @@ export function useStudio(charParam) {
         brief, aspect: "3:4", prompt: aiPrompt.trim() || null,
         wardrobe_id: selectedOutfit?.id || null, pose_ref_id: null,
         pose_id: selectedPose?.id || null, pose_text: null,
-        nail_id: selectedNail?.id || null,
+        nail_id: selectedNail?.id || null, place_id: selectedPlace?.id || null,
         resolution, face_accessories: faceAcc,
       });
       setGenerations((gs) => gs.map((g) => (g.jid === tmp ? { ...g, jid: job } : g)));
@@ -231,6 +234,27 @@ export function useStudio(charParam) {
     const item = nails.find((n) => n.id === id);
     if (!item) return;
     try { await fetch(`/api/nails/${item.file}`, { method: "DELETE" }); if (selectedNail?.id === id) setSelectedNail(null); await refresh(); }
+    catch (e) { fail(e); }
+  };
+
+  // ---- places (location / home) ----
+  const savePlace = async ({ file, name, category }) => {
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("name", name || "");
+      fd.append("category", category || "");
+      const r = await fetch("/api/places/upload", { method: "POST", body: fd });
+      if (!r.ok) throw new Error((await r.text()).slice(0, 300));
+      const saved = await r.json();
+      await refresh();
+      setSelectedPlace(placeView(saved));
+    } catch (e) { fail(e); }
+  };
+  const deletePlace = async (id) => {
+    const item = places.find((p) => p.id === id);
+    if (!item) return;
+    try { await fetch(`/api/places/${item.file}`, { method: "DELETE" }); if (selectedPlace?.id === id) setSelectedPlace(null); await refresh(); }
     catch (e) { fail(e); }
   };
 
@@ -426,6 +450,7 @@ export function useStudio(charParam) {
     brief, setBrief, aiPrompt, setAiPrompt, aiBusy, onAiPrompt, resolution, setResolution,
     faceAcc, setFaceAcc, selectedOutfit, setSelectedOutfit, selectedPose, setSelectedPose,
     selectedNail, setSelectedNail, nails, saveNail, deleteNail,
+    selectedPlace, setSelectedPlace, places, savePlace, deletePlace,
     gens, onGenerate,
     // outfit designer
     drawerOpen, openDesigner, closeDesigner, outfitText, setOutfitText, outfitImageUrl,

@@ -159,6 +159,8 @@ export default function Studio() {
                 onSaveOutfit={s.saveOutfit} onDiscardOutfit={s.discardOutfit} outfitCategories={s.outfitCategories}
                 nails={s.nails} selectedNail={s.selectedNail} setSelectedNail={s.setSelectedNail}
                 onSaveNail={s.saveNail} onDeleteNail={s.deleteNail}
+                places={s.places} selectedPlace={s.selectedPlace} setSelectedPlace={s.setSelectedPlace}
+                onSavePlace={s.savePlace} onDeletePlace={s.deletePlace}
               />
             )}
             {tab === "bio" && (

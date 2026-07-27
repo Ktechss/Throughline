@@ -5,6 +5,7 @@ import VerdictChip from "./VerdictChip";
 import OutfitPicker from "./OutfitPicker";
 import PosePicker from "./PosePicker";
 import NailPicker from "./NailPicker";
+import PlacePicker from "./PlacePicker";
 import { WARDROBE_CATEGORIES } from "@/api/throughline";
 
 const RES = ["1K", "2K", "4K"];
@@ -17,6 +18,7 @@ export default function ShootTab({
   onGenerate, hasIdentity, onOpenDetail, onUploadOutfit, onOpenDesigner,
   creating, outfitPreview, onSaveOutfit, onDiscardOutfit, outfitCategories = [],
   nails, selectedNail, setSelectedNail, onSaveNail, onDeleteNail,
+  places, selectedPlace, setSelectedPlace, onSavePlace, onDeletePlace,
 }) {
   const running = gens.some((g) => g.stage === "running");
   const canGenerate = hasIdentity && (!!brief || !!selectedOutfit || !!selectedPose);
@@ -121,6 +123,7 @@ export default function ShootTab({
         <OutfitPicker outfits={outfits} selected={selectedOutfit} onSelect={setSelectedOutfit} onClear={() => setSelectedOutfit(null)} onUpload={onUploadOutfit} onOpenDesigner={onOpenDesigner} />
         <PosePicker poses={poseGroups} selected={selectedPose} onSelect={setSelectedPose} onClear={() => setSelectedPose(null)} />
         <NailPicker nails={nails} selected={selectedNail} onSelect={setSelectedNail} onClear={() => setSelectedNail(null)} onSave={onSaveNail} onDelete={onDeleteNail} />
+        <PlacePicker places={places} selected={selectedPlace} onSelect={setSelectedPlace} onClear={() => setSelectedPlace(null)} onSave={onSavePlace} onDelete={onDeletePlace} />
       </div>
     </div>
   );

@@ -18,8 +18,8 @@ from pydantic import BaseModel
 from . import config, db, describe, gate, generate, prompt as promptlib, prompter, skeleton
 from . import video as videolib
 from .config import (BODIES, BODIES_META, CHARACTERS, CharPath, GOLD, IMAGES,
-                     NAILS, NAILS_META, PARTS_PATH, POSE_REFS, POSES, REFS, ROOT,
-                     SCENE_EDIT, STATE, VIDEOS, WARDROBE)
+                     NAILS, NAILS_META, PARTS_PATH, PLACES, PLACES_META, POSE_REFS,
+                     POSES, REFS, ROOT, SCENE_EDIT, STATE, VIDEOS, WARDROBE)
 
 app = FastAPI(title="Throughline")
 
@@ -1805,6 +1805,105 @@ def nails_delete(name: str):
     return {"ok": True}
 
 
+# ---------------------------------------------------------------- places (home)
+# A per-character library of location/home reference images. A shot can attach one
+# as an @image reference so her environment (her home, a recurring room) stays
+# consistent across shots. Costs a reference slot — an identity trade, opt-in per shot.
+
+def _places_meta() -> dict:
+    if PLACES_META.exists():
+        try:
+            return json.loads(PLACES_META.read_text())
+        except Exception:  # noqa: BLE001
+            return {}
+    return {}
+
+
+def _save_places_meta(d: dict) -> None:
+    PLACES_META.write_text(json.dumps(d, indent=2) + "\n")
+
+
+def _places() -> list[dict]:
+    meta = _places_meta()
+    out = []
+    for p in sorted(PLACES.iterdir()) if PLACES.exists() else []:
+        if p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
+            m = meta.get(p.stem, {}) or {}
+            out.append({"id": p.stem, "file": p.name,
+                        "name": m.get("name") or p.stem,
+                        "category": m.get("category") or "Uncategorized"})
+    return out
+
+
+@app.get("/api/places")
+def list_places():
+    return {"places": _places()}
+
+
+@app.post("/api/places/upload")
+async def places_upload(file: UploadFile = File(...), name: str = Form(""),
+                        category: str = Form("")):
+    """Save a location/home reference image with a name and category. Image-only."""
+    data = await file.read()
+    Path(PLACES).mkdir(parents=True, exist_ok=True)
+    ext = Path(file.filename or "").suffix.lower()
+    if ext not in (".png", ".jpg", ".jpeg", ".webp"):
+        ext = ".png"
+    i = 1
+    while _find_by_id(PLACES, f"place{i}"):
+        i += 1
+    dest = PLACES / f"place{i}{ext}"
+    dest.write_bytes(data)
+    meta = _places_meta()
+    meta[dest.stem] = {"name": name.strip() or dest.stem,
+                       "category": category.strip() or "Uncategorized"}
+    _save_places_meta(meta)
+    return {"id": dest.stem, "file": dest.name, **meta[dest.stem]}
+
+
+class PlaceReq(BaseModel):
+    name: str | None = None
+    category: str | None = None
+
+
+@app.put("/api/places/{name}")
+def places_update(name: str, req: PlaceReq):
+    stem = Path(name).stem
+    meta = _places_meta()
+    cur = meta.get(stem, {}) or {}
+    if req.name is not None:
+        cur["name"] = req.name.strip() or stem
+    if req.category is not None:
+        cur["category"] = req.category.strip() or "Uncategorized"
+    meta[stem] = cur
+    _save_places_meta(meta)
+    return {"id": stem, **cur}
+
+
+@app.get("/api/places/{name}/file")
+def places_file(name: str):
+    p = PLACES / Path(name).name
+    if not p.exists():
+        raise HTTPException(404, name)
+    return FileResponse(p)
+
+
+@app.get("/api/places/{name}/thumb")
+def places_thumb(name: str):
+    return _serve_thumb(PLACES, name, (320, 240))
+
+
+@app.delete("/api/places/{name}")
+def places_delete(name: str):
+    stem = Path(name).stem
+    (PLACES / Path(name).name).unlink(missing_ok=True)
+    meta = _places_meta()
+    if stem in meta:
+        del meta[stem]
+        _save_places_meta(meta)
+    return {"ok": True}
+
+
 class ShotReq(BaseModel):
     brief: str = ""              # the ONLY thing the user writes
     prompt: str | None = None    # AI-written (Claude) prompt, edited by the user;
@@ -1820,6 +1919,7 @@ class ShotReq(BaseModel):
                                      # library is regenerated and its id is orphaned
     pose_ref_id: str | None = None   # a pose REFERENCE image, attached as @image3
     nail_id: str | None = None       # a manicure reference image, attached as @imageN
+    place_id: str | None = None      # a location/home reference image, attached as @imageN
     shot_type: str = "candid"
     resolution: str | None = None    # "1K" | "2K" | "4K" (nano). None -> config default
     face_accessories: bool = True    # render face-worn items (sunglasses/hats) from the
@@ -1912,6 +2012,16 @@ def shot(req: ShotReq):
         refs.append(nail)
         nail_desc = (_nails_meta().get(req.nail_id, {}) or {}).get("description", "")
 
+    # @imageN = location/home reference. Anchors her environment for a consistent
+    # setting across shots. Positional tag — compute before appending.
+    place_tag = ""
+    if req.place_id:
+        place = _find_by_id(PLACES, req.place_id)
+        if not place:
+            raise HTTPException(400, f"no such place: {req.place_id}")
+        place_tag = f"@image{len(refs) + 1}"
+        refs.append(place)
+
     # Body-shape tuning from the editable body parts — folded into BOTH paths so
     # bust/waist/hips edits actually change the output. The AI prompter is barred
     # from describing her body, so it's appended after Claude's scene prompt.
@@ -1994,6 +2104,17 @@ def shot(req: ShotReq):
             "outfit is otherwise unchanged.")
         text = f"{text} {nail_line}"
 
+    # Location reference: put her in the same environment shown in the place image.
+    if place_tag:
+        place_line, _ = promptlib.sanitise(
+            f"SETTING: the location and background of this photo is exactly the place "
+            f"shown in {place_tag} — reproduce that same environment (the room, "
+            f"furniture, walls, layout, background and overall setting) faithfully and "
+            f"keep it consistent. Do not invent or substitute a different location. "
+            f"She is naturally within this scene doing what the brief describes; her "
+            f"identity still comes only from @image1.")
+        text = f"{text} {place_line}"
+
     label = req.brief.strip()[:60] or "untitled shot"
     session = generate.new_session(label)
 
@@ -2015,7 +2136,7 @@ def shot(req: ShotReq):
                   "wardrobe": req.wardrobe_id, "pose_id": req.pose_id,
                   "pose_text": pose_text_used,
                   "pose_ref": req.pose_ref_id, "nail_id": req.nail_id,
-                  "sanitised": sanitised,
+                  "place_id": req.place_id, "sanitised": sanitised,
                   "ai_prompt": bool(req.prompt and req.prompt.strip())},
         )
 

@@ -109,6 +109,14 @@ export function nailView(n) {
   }
 }
 
+// Place (location/home) row -> picker item. Immutable filename, no cache-buster.
+export function placeView(p) {
+  return {
+    id: p.id, file: p.file, url: `/api/places/${p.file}/thumb`,
+    name: p.name || p.id, category: p.category || "Uncategorized",
+  }
+}
+
 // Character row -> Landing card shape.
 export function charView(c) {
   return {
