@@ -46,14 +46,14 @@ export default function NailPicker({ nails = [], selected, onSelect, onClear, on
       <div className="grid gap-2 grid-cols-[repeat(auto-fill,minmax(72px,1fr))]">
         <button onClick={() => onClear?.()}
           className={cn("flex aspect-square flex-col items-center justify-center gap-1 rounded-lg ring-1 text-[10px] transition-colors",
-            !selected ? "ring-white bg-white/10 text-white" : "ring-white/8 text-zinc-500 hover:text-zinc-300 hover:ring-white/20")}>
+            !selected ? "ring-2 ring-emerald-400 bg-emerald-500/10 text-white" : "ring-white/8 text-zinc-500 hover:text-zinc-300 hover:ring-white/25")}>
           <span className="text-base leading-none">∅</span>none
         </button>
 
         {shown.map((n) => (
           <div key={n.id} title={n.name}
             className={cn("group relative aspect-square rounded-lg overflow-hidden ring-1 cursor-pointer transition-all",
-              selected?.id === n.id ? "ring-white" : "ring-white/8 hover:ring-white/20")}
+              selected?.id === n.id ? "ring-2 ring-emerald-400" : "ring-white/8 hover:ring-white/25")}
             onClick={() => onSelect?.(n)}>
             <img src={n.url} alt={n.name} loading="lazy" className="h-full w-full object-cover" />
             <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent px-1 pt-2 pb-0.5">

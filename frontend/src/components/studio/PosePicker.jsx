@@ -42,8 +42,8 @@ export default function PosePicker({ poses, selected, onSelect, onClear }) {
               className={cn(
                 "aspect-square rounded-lg ring-1 flex flex-col items-center justify-center gap-1 p-1 transition-all",
                 selected?.id === p.id
-                  ? "ring-white bg-white/10 text-white"
-                  : "ring-white/8 bg-white/[0.02] text-zinc-400 hover:ring-white/20 hover:text-zinc-200"
+                  ? "ring-2 ring-emerald-400 bg-emerald-500/10 text-white"
+                  : "ring-white/8 bg-white/[0.02] text-zinc-400 hover:ring-white/25 hover:text-zinc-200"
               )}
             >
               <PoseIcon id={p.id} category={p.category} className="h-6 w-6" />

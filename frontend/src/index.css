@@ -100,3 +100,7 @@
    the bar is just not painted. */
 * { scrollbar-width: none; -ms-overflow-style: none; }
 *::-webkit-scrollbar { width: 0; height: 0; display: none; }
+
+/* No default (blue) focus outline on clickable cards/buttons — selection is shown
+   by the ring, so the browser's focus outline just reads as confusing here. */
+button:focus, button:focus-visible, [role="button"]:focus, [role="button"]:focus-visible { outline: none; }

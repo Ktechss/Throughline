@@ -30,7 +30,7 @@ export default function OutfitPicker({ outfits, selected, onSelect, onClear, onU
               onClick={() => onSelect(o)}
               className={cn(
                 "relative rounded-lg overflow-hidden aspect-[3/4] ring-1 transition-all",
-                selected?.id === o.id ? "ring-white" : "ring-white/8 hover:ring-white/20"
+                selected?.id === o.id ? "ring-2 ring-emerald-400" : "ring-white/8 hover:ring-white/25"
               )}
             >
               <img src={o.url} alt={o.name} loading="lazy" className="h-full w-full object-cover" />
