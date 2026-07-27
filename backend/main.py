@@ -1983,9 +1983,10 @@ def shot(req: ShotReq):
             f"Her fingernails exactly match the manicure shown in {nail_tag} — the "
             "same nail shape, length, base colour, finish and any nail art, on every "
             "finger" + (f": {nail_desc.strip()}" if nail_desc.strip() else "")
-            + ". Show her hands and nails clearly and in focus where visible. This "
-            "changes only her nails; her facial identity comes only from @image1 and "
-            "her outfit is unchanged.")
+            + ". If her feet are visible, her TOENAILS carry the SAME colour and "
+            "finish as a matching pedicure. Show her hands and nails (and feet where "
+            "visible) clearly and in focus. This changes only her nails; her facial "
+            "identity comes only from @image1 and her outfit is unchanged.")
         text = f"{text} {nail_line}"
 
     label = req.brief.strip()[:60] or "untitled shot"
