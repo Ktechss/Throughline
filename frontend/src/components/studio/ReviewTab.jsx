@@ -64,7 +64,7 @@ export default function ReviewTab({ stats, shots, onOpenDetail, onMark, onDelete
           <h3 className="text-[13px] font-semibold text-zinc-200">Gallery</h3>
           <span className="text-[11px] text-zinc-600 tabular-nums">{shots.length} shots</span>
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 xl:grid-cols-6 gap-3">
           {shots.map((s) => (
             <ShotCard
               key={s.id}
