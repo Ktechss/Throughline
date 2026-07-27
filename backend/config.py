@@ -87,6 +87,7 @@ IMAGES = CharPath("images")           # generated images
 REFS = CharPath("refs")               # identity references — the face we're holding
 WARDROBE = CharPath("wardrobe")       # outfit reference images (@image2 per shot)
 POSE_REFS = CharPath("pose-refs")     # pose reference images of HER (keyword-selected)
+NAILS = CharPath("nails")             # manicure/nail-style reference images (attached @imageN)
 POSES = CharPath("poses")             # saved skeletons
 BODIES = CharPath("bodies")           # saved BODY types (figure references, selectable)
 GOLD = CharPath("gold")               # human-APPROVED shots — the curated LoRA dataset.
@@ -102,6 +103,7 @@ GALLERY_META = CharPath("state", "gallery.json")   # per-entry yaw/face_px — n
 THRESHOLD_PATH = CharPath("state", "threshold.json")
 PARTS_PATH = CharPath("state", "parts.json")
 BODIES_META = CharPath("state", "bodies.json")     # body-type metadata: build text + active
+NAILS_META = CharPath("state", "nails.json")       # nail-style metadata: {stem: {description}}
 BIO_PATH = CharPath("state", "bio.json")           # reference / body_reference / calib_seed
 
 
@@ -109,7 +111,7 @@ def ensure_char_dirs(cid: str | None = None) -> None:
     """Create the full folder skeleton for one character (idempotent)."""
     base = char_base(cid)
     for name in ("images", "refs", "wardrobe", "pose-refs", "poses",
-                 "bodies", "gold", "videos", "state"):
+                 "bodies", "gold", "videos", "nails", "state"):
         (base / name).mkdir(parents=True, exist_ok=True)
 
 

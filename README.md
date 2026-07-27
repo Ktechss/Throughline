@@ -78,13 +78,15 @@ Runs / videos / wardrobe metadata live in a single global SQLite db
 ## Setup
 
 **Prerequisites:** Python **3.11** (not 3.14 — `onnxruntime` has no wheels for it),
-Node 18+, and a [fal](https://fal.ai) API key.
+Node 18+, a [fal](https://fal.ai) API key, and an [Anthropic](https://console.anthropic.com) API key.
 
 **1. Environment**
 
 ```bash
-cp .env.example .env      # then put your real key in .env
-# .env:  FAL_KEY=your-fal-key-here
+cp .env.example .env      # then put your real keys in .env
+# .env:
+#   FAL_KEY=…            # image/video generation (fal.ai)
+#   ANTHROPIC_API_KEY=…  # Claude — bio writing, AI prompt, describe/enrich
 ```
 
 **2. Backend** (Windows, native — the venv is `.venv-win`)

@@ -18,8 +18,8 @@ from pydantic import BaseModel
 from . import config, db, describe, gate, generate, prompt as promptlib, prompter, skeleton
 from . import video as videolib
 from .config import (BODIES, BODIES_META, CHARACTERS, CharPath, GOLD, IMAGES,
-                     PARTS_PATH, POSE_REFS, POSES, REFS, ROOT, SCENE_EDIT, STATE,
-                     VIDEOS, WARDROBE)
+                     NAILS, NAILS_META, PARTS_PATH, POSE_REFS, POSES, REFS, ROOT,
+                     SCENE_EDIT, STATE, VIDEOS, WARDROBE)
 
 app = FastAPI(title="Throughline")
 
@@ -357,7 +357,15 @@ def delete_character(cid: str):
 
 def _load_parts() -> list[promptlib.Part]:
     if PARTS_PATH.exists():
-        return [promptlib.Part(**d) for d in json.loads(PARTS_PATH.read_text())]
+        stored = [promptlib.Part(**d) for d in json.loads(PARTS_PATH.read_text())]
+        # Backfill: append any NEW default parts (e.g. grooming/accessories added
+        # after this character was saved) without touching the user's edits.
+        have = {p.id for p in stored}
+        added = [p for p in promptlib.default_parts() if p.id not in have]
+        if added:
+            stored += added
+            _save_parts(stored)
+        return stored
     parts = promptlib.default_parts()
     _save_parts(parts)
     return parts
@@ -1680,6 +1688,101 @@ def pose_ref_delete(name: str):
     return {"ok": True}
 
 
+# ---------------------------------------------------------------- nail styles
+# A per-character library of manicure reference images. A shot can attach one as
+# an extra @image reference (exact nail match) — it costs a reference slot, which
+# measurably lowers identity, a trade the user opts into per shot.
+
+def _nails_meta() -> dict:
+    if NAILS_META.exists():
+        try:
+            return json.loads(NAILS_META.read_text())
+        except Exception:  # noqa: BLE001
+            return {}
+    return {}
+
+
+def _save_nails_meta(d: dict) -> None:
+    NAILS_META.write_text(json.dumps(d, indent=2) + "\n")
+
+
+def _nails() -> list[dict]:
+    meta = _nails_meta()
+    out = []
+    for p in sorted(NAILS.iterdir()) if NAILS.exists() else []:
+        if p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
+            out.append({"id": p.stem, "file": p.name,
+                        "description": (meta.get(p.stem, {}) or {}).get("description", "")})
+    return out
+
+
+@app.get("/api/nails")
+def list_nails():
+    return {"nails": _nails()}
+
+
+@app.post("/api/nails/upload")
+async def nails_upload(file: UploadFile = File(...)):
+    """Upload a manicure reference image; Claude auto-describes the nails (editable)."""
+    data = await file.read()
+    Path(NAILS).mkdir(parents=True, exist_ok=True)
+    ext = Path(file.filename or "").suffix.lower()
+    if ext not in (".png", ".jpg", ".jpeg", ".webp"):
+        ext = ".png"
+    i = 1
+    while _find_by_id(NAILS, f"nail{i}"):
+        i += 1
+    dest = NAILS / f"nail{i}{ext}"
+    dest.write_bytes(data)
+    desc = ""
+    try:
+        media = describe.media_type(file.filename or "", file.content_type)
+        desc = describe.describe_nails(data, media)
+    except describe.DescribeError:
+        desc = ""   # describe is best-effort; the user can type/edit the text
+    meta = _nails_meta()
+    meta[dest.stem] = {"description": desc}
+    _save_nails_meta(meta)
+    return {"id": dest.stem, "file": dest.name, "description": desc}
+
+
+class NailDescReq(BaseModel):
+    description: str = ""
+
+
+@app.put("/api/nails/{name}")
+def nails_update(name: str, req: NailDescReq):
+    stem = Path(name).stem
+    meta = _nails_meta()
+    meta[stem] = {"description": req.description}
+    _save_nails_meta(meta)
+    return {"id": stem, "description": req.description}
+
+
+@app.get("/api/nails/{name}/file")
+def nails_file(name: str):
+    p = NAILS / Path(name).name
+    if not p.exists():
+        raise HTTPException(404, name)
+    return FileResponse(p)
+
+
+@app.get("/api/nails/{name}/thumb")
+def nails_thumb(name: str):
+    return _serve_thumb(NAILS, name, (256, 256))
+
+
+@app.delete("/api/nails/{name}")
+def nails_delete(name: str):
+    stem = Path(name).stem
+    (NAILS / Path(name).name).unlink(missing_ok=True)
+    meta = _nails_meta()
+    if stem in meta:
+        del meta[stem]
+        _save_nails_meta(meta)
+    return {"ok": True}
+
+
 class ShotReq(BaseModel):
     brief: str = ""              # the ONLY thing the user writes
     prompt: str | None = None    # AI-written (Claude) prompt, edited by the user;
@@ -1694,6 +1797,7 @@ class ShotReq(BaseModel):
                                      # lets a past shot's pose be reused even after the
                                      # library is regenerated and its id is orphaned
     pose_ref_id: str | None = None   # a pose REFERENCE image, attached as @image3
+    nail_id: str | None = None       # a manicure reference image, attached as @imageN
     shot_type: str = "candid"
     resolution: str | None = None    # "1K" | "2K" | "4K" (nano). None -> config default
     face_accessories: bool = True    # render face-worn items (sunglasses/hats) from the
@@ -1773,6 +1877,19 @@ def shot(req: ShotReq):
         refs.append(pr)
         pose_ref_tag = "@image3"
 
+    # @imageN = manicure reference (her nail design). Costs a reference slot — an
+    # identity trade the user opts into per shot for an exact nail match. The tag
+    # is positional, so compute it from the current ref count before appending.
+    nail_tag = ""
+    nail_desc = ""
+    if req.nail_id:
+        nail = _find_by_id(NAILS, req.nail_id)
+        if not nail:
+            raise HTTPException(400, f"no such nail style: {req.nail_id}")
+        nail_tag = f"@image{len(refs) + 1}"
+        refs.append(nail)
+        nail_desc = (_nails_meta().get(req.nail_id, {}) or {}).get("description", "")
+
     # Body-shape tuning from the editable body parts — folded into BOTH paths so
     # bust/waist/hips edits actually change the output. The AI prompter is barred
     # from describing her body, so it's appended after Claude's scene prompt.
@@ -1836,6 +1953,19 @@ def shot(req: ShotReq):
                     "mentions such items. Her facial identity comes only from "
                     f"@image1: {desc.strip()}")
             text = f"{text} {styling}"
+
+    # Manicure reference: match her nails to the chosen nail image. Nails only —
+    # face/identity stay with @image1, outfit unchanged.
+    if nail_tag:
+        nail_line, _ = promptlib.sanitise(
+            f"Her fingernails exactly match the manicure shown in {nail_tag} — the "
+            "same nail shape, length, base colour, finish and any nail art, on every "
+            "finger" + (f": {nail_desc.strip()}" if nail_desc.strip() else "")
+            + ". Show her hands and nails clearly and in focus where visible. This "
+            "changes only her nails; her facial identity comes only from @image1 and "
+            "her outfit is unchanged.")
+        text = f"{text} {nail_line}"
+
     label = req.brief.strip()[:60] or "untitled shot"
     session = generate.new_session(label)
 
@@ -1856,7 +1986,8 @@ def shot(req: ShotReq):
             meta={"brief": req.brief, "bio_references": [p.name for p in refs],
                   "wardrobe": req.wardrobe_id, "pose_id": req.pose_id,
                   "pose_text": pose_text_used,
-                  "pose_ref": req.pose_ref_id, "sanitised": sanitised,
+                  "pose_ref": req.pose_ref_id, "nail_id": req.nail_id,
+                  "sanitised": sanitised,
                   "ai_prompt": bool(req.prompt and req.prompt.strip())},
         )
 

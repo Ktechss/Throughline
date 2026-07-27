@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, genView, groupPoses, outfitView, runView, ep, mergeOutfit, STAGE } from "@/api/throughline";
+import { api, genView, groupPoses, outfitView, nailView, runView, ep, mergeOutfit, STAGE } from "@/api/throughline";
 
 // The studio orchestration hub — ported from the legacy App.jsx. Loads all of the
 // active character's data and exposes every action the tabs call. Polling is
@@ -32,6 +32,8 @@ export function useStudio(charParam) {
   const [faceAcc, setFaceAcc] = useState(true);
   const [selectedOutfit, setSelectedOutfit] = useState(null);
   const [selectedPose, setSelectedPose] = useState(null);
+  const [selectedNail, setSelectedNail] = useState(null);
+  const [nails, setNails] = useState([]);
   const [generations, setGenerations] = useState([]);
 
   // outfit designer
@@ -57,17 +59,19 @@ export function useStudio(charParam) {
 
   const refresh = useCallback(async () => {
     const mine = epoch.current;
-    const [p, r, g, rf, b, wd, pl, pr, st, cm, vd, bd] = await Promise.all([
+    const [p, r, g, rf, b, wd, pl, pr, st, cm, vd, bd, nl] = await Promise.all([
       api.get("/api/parts"), api.get("/api/runs"), api.get("/api/gallery"),
       api.get("/api/refs"), api.get("/api/bio"), api.get("/api/wardrobe"),
       api.get("/api/pose-library"), api.get("/api/pose-refs"), api.get("/api/stats"),
       api.get("/api/camera-moves"), api.get("/api/videos"), api.get("/api/bodies"),
+      api.get("/api/nails"),
     ]);
     if (mine !== epoch.current) return;
     setParts(p.parts); setRuns(r.runs); setGallery(g); setRefs(rf.refs);
     setBio(b); setWardrobe((wd.wardrobe || []).map(outfitView));
     setPoseGroups(groupPoses(pl.poses, pl.categories));
     setStats(st); setCameraMoves(cm); setVideos(vd.videos || []); setBodies(bd);
+    setNails((nl.nails || []).map(nailView));
   }, []);
 
   const load = useCallback(async () => {
@@ -85,6 +89,7 @@ export function useStudio(charParam) {
       setCharName(entry?.name || id || "");
       setHasIdentity(!!entry?.has_identity);
       setGenerations([]);
+      setSelectedNail(null); setSelectedOutfit(null); setSelectedPose(null);
       setCalibCands([]);   // calibration candidates are session-only; saved faces live in the Face Manager
       await refresh();
     } catch (e) { if (mine === epoch.current) fail(e); }
@@ -120,6 +125,7 @@ export function useStudio(charParam) {
         brief, aspect: "3:4", prompt: aiPrompt.trim() || null,
         wardrobe_id: selectedOutfit?.id || null, pose_ref_id: null,
         pose_id: selectedPose?.id || null, pose_text: null,
+        nail_id: selectedNail?.id || null,
         resolution, face_accessories: faceAcc,
       });
       setGenerations((gs) => gs.map((g) => (g.jid === tmp ? { ...g, jid: job } : g)));
@@ -206,6 +212,18 @@ export function useStudio(charParam) {
   const discardOutfit = () => setOutfitPreview(null);
 
   const uploadOutfit = async (file) => { try { await api.upload("/api/wardrobe/upload", file); await refresh(); } catch (e) { fail(e); } };
+
+  // ---- nail styles ----
+  const uploadNail = async (file) => {
+    try { const r = await api.upload("/api/nails/upload", file); await refresh(); setSelectedNail(nailView(r)); }
+    catch (e) { fail(e); }
+  };
+  const deleteNail = async (id) => {
+    const item = nails.find((n) => n.id === id);
+    if (!item) return;
+    try { await fetch(`/api/nails/${item.file}`, { method: "DELETE" }); if (selectedNail?.id === id) setSelectedNail(null); await refresh(); }
+    catch (e) { fail(e); }
+  };
 
   // ------------------------------------------------------------------ review
   const mark = async (id, decision) => {
@@ -398,6 +416,7 @@ export function useStudio(charParam) {
     // shoot
     brief, setBrief, aiPrompt, setAiPrompt, aiBusy, onAiPrompt, resolution, setResolution,
     faceAcc, setFaceAcc, selectedOutfit, setSelectedOutfit, selectedPose, setSelectedPose,
+    selectedNail, setSelectedNail, nails, uploadNail, deleteNail,
     gens, onGenerate,
     // outfit designer
     drawerOpen, openDesigner, closeDesigner, outfitText, setOutfitText, outfitImageUrl,

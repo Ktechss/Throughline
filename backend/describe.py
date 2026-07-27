@@ -162,3 +162,49 @@ def describe_outfit(image_bytes: bytes, media: str = "image/png") -> dict:
         raise DescribeError("Claude returned no description for this image")
     details = {k: (data.get(k) or "").strip() for k in DETAIL_KEYS}
     return {"description": description, "details": details}
+
+
+_NAIL_PROMPT = (
+    "This is a photo of a manicure. In ONE or TWO sentences, describe the NAILS "
+    "only — nail shape (almond/square/coffin/oval/stiletto/round), length "
+    "(short/medium/long), base colour and finish (glossy/matte/chrome), and any "
+    "nail art (French tip, ombré, glitter, stones, floral, etc.). Be concrete and "
+    "specific so the manicure can be reproduced. Do NOT describe the hand, skin, "
+    "rings, background, or anything but the nails. Reply with the description only, "
+    "no preamble."
+)
+
+
+def describe_nails(image_bytes: bytes, media: str = "image/png") -> str:
+    """Return a short manicure description for the nails in the image (Claude vision)."""
+    if not os.getenv("ANTHROPIC_API_KEY"):
+        raise DescribeError(
+            "ANTHROPIC_API_KEY is not set in .env — add it to use AI describe.")
+    try:
+        import anthropic
+    except ImportError as exc:  # pragma: no cover - install-time only
+        raise DescribeError(
+            "the 'anthropic' package is not installed in this venv") from exc
+
+    image_bytes, media = _fit_image(image_bytes, media)
+    b64 = base64.standard_b64encode(image_bytes).decode("ascii")
+    client = anthropic.Anthropic()
+    try:
+        msg = client.messages.create(
+            model="claude-opus-4-8",
+            max_tokens=300,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "image", "source": {
+                        "type": "base64", "media_type": media, "data": b64}},
+                    {"type": "text", "text": _NAIL_PROMPT},
+                ],
+            }],
+        )
+    except anthropic.APIStatusError as exc:
+        raise DescribeError(f"Claude API error: {exc.message}"[:300]) from exc
+    except anthropic.APIConnectionError as exc:
+        raise DescribeError("could not reach the Claude API — check your connection") from exc
+
+    return "".join(b.text for b in msg.content if b.type == "text").strip()

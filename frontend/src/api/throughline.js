@@ -100,6 +100,11 @@ export function outfitView(w) {
   return { id: w.id, name: w.id, category: w.category || "Uncategorized", file: w.file, url: `/api/wardrobe/${w.file}/thumb` }
 }
 
+// Nail-style row -> picker item. Immutable filename, so no cache-buster.
+export function nailView(n) {
+  return { id: n.id, file: n.file, url: `/api/nails/${n.file}/thumb`, description: n.description || "" }
+}
+
 // Character row -> Landing card shape.
 export function charView(c) {
   return {

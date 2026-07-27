@@ -157,6 +157,8 @@ export default function Studio() {
                 onUploadOutfit={s.uploadOutfit} onOpenDesigner={s.openDesigner}
                 creating={s.creating} outfitPreview={s.outfitPreview}
                 onSaveOutfit={s.saveOutfit} onDiscardOutfit={s.discardOutfit} outfitCategories={s.outfitCategories}
+                nails={s.nails} selectedNail={s.selectedNail} setSelectedNail={s.setSelectedNail}
+                onUploadNail={s.uploadNail} onDeleteNail={s.deleteNail}
               />
             )}
             {tab === "bio" && (

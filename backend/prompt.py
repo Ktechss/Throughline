@@ -99,8 +99,8 @@ def sanitise(text: str) -> tuple[str, list[dict]]:
 
 
 # Order here is render order within a section.
-SECTIONS = ["subject", "face", "body", "hair", "skin", "wardrobe",
-            "pose", "scene", "lighting", "camera", "constraints"]
+SECTIONS = ["subject", "face", "body", "hair", "skin", "grooming", "accessories",
+            "wardrobe", "pose", "scene", "lighting", "camera", "constraints"]
 
 # Which sections are prose blocks vs joined fragments.
 BLOCK_SECTIONS = {"skin", "constraints"}
@@ -139,7 +139,8 @@ class Part:
 # facts, the camera line is the highest-leverage realism control there is. Left
 # in a free-text prompt box they would get paraphrased away one shot at a time,
 # and the drift would be invisible because each individual edit looks harmless.
-BIO_SECTIONS = ("subject", "face", "body", "hair", "skin", "camera", "constraints")
+BIO_SECTIONS = ("subject", "face", "body", "hair", "skin", "grooming", "accessories",
+                "camera", "constraints")
 SHOT_SECTIONS = ("scene", "pose", "wardrobe", "lighting")
 
 
@@ -228,6 +229,31 @@ def default_parts() -> list[Part]:
           note="Photographic FACTS, never adjectives. A model can render a fact; "
                "it cannot render a wish. 'Visible pores with micro-shadow "
                "direction' beats 'realistic skin' every time."),
+
+        # -- grooming / accessories (PERMANENT) -----------------------------
+        # Persistent styling that should be the SAME on every shot — her signature
+        # manicure and everyday makeup. bio=True (stamped from BIO_SECTIONS) so they
+        # ride along with a brief instead of being owned by it, like body/skin.
+        # NOT identity=True: they survive a reference image (the point is that they
+        # persist). A per-outfit detail (nails/lipstick in the outfit designer) can
+        # still override the look for that specific outfit.
+        P("grooming.nails", "grooming", "Manicure",
+          "short-to-medium almond nails, soft neutral polish, clean and even",
+          note="Her standing manicure — appears on every shot unless an outfit "
+               "specifies its own nails. Edit per character; disable for bare nails."),
+        P("grooming.makeup", "grooming", "Makeup",
+          "minimal everyday makeup — light natural base, softly groomed brows, a "
+          "little mascara, a neutral rosy lip; never heavy contour or full glam",
+          note="Her signature everyday face. Keep it 'real person, not a model' — "
+               "full-glam every shot reads as styled. Edit per character."),
+
+        # Off by default (opt-in): don't put jewelry on a character who wasn't asked
+        # for it — same rule as face.marks. Enable + describe to make it always-worn.
+        P("accessories.signature", "accessories", "Signature accessories",
+          "a thin gold chain and small gold hoop earrings", enabled=False,
+          note="Her always-worn jewelry, on every shot when enabled (e.g. a ring "
+               "she never removes). OFF by default — turn it on and describe hers. "
+               "This is standing jewelry, not the per-shot sunglasses/hats toggle."),
 
         # -- wardrobe / pose / scene ----------------------------------------
         # placeholder=True: these are what you get with an EMPTY brief. The
@@ -322,6 +348,8 @@ IDENTITY_LOCK = (
 TITLES = {
     "subject": "Subject", "face": "Face", "body": "Build", "hair": "Hair",
     "skin": "Skin (concrete photographic facts, not adjectives)",
+    "grooming": "Grooming (persistent — nails, makeup)",
+    "accessories": "Signature accessories (always worn)",
     "wardrobe": "Wardrobe & details", "pose": "Pose", "scene": "Scene",
     "lighting": "Lighting", "camera": "Camera & capture",
     "constraints": "Constraints",
@@ -577,6 +605,11 @@ def compose_shot_ex(parts: list[Part], brief: str, *, has_reference: bool = True
     build = txt("body")
     if build:
         blocks.append(f"Keep her build consistent with the reference: {build}.")
+
+    # Persistent grooming + signature accessories — the same on every shot.
+    groom = "; ".join(s for s in (txt("grooming"), txt("accessories")) if s).strip()
+    if groom:
+        blocks.append(f"Consistent grooming and accessories, the same on every shot: {groom}.")
 
     skin = txt("skin", sep="\n")
     if skin:
