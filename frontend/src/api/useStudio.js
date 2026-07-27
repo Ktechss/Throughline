@@ -214,21 +214,12 @@ export function useStudio(charParam) {
   const uploadOutfit = async (file) => { try { await api.upload("/api/wardrobe/upload", file); await refresh(); } catch (e) { fail(e); } };
 
   // ---- nail styles ----
-  // Read the nails from an image without saving (fills the upload modal's description).
-  const describeNail = async (file) => {
-    const fd = new FormData(); fd.append("file", file);
-    const r = await fetch("/api/nails/describe", { method: "POST", body: fd });
-    if (!r.ok) throw new Error((await r.text()).slice(0, 300));
-    return (await r.json()).description;
-  };
-  // Save the nail with a name, category and (edited) description.
-  const saveNail = async ({ file, name, category, description }) => {
+  // Image-only: pick a colour, name is auto <colour><n>. No Claude describe.
+  const saveNail = async ({ file, color }) => {
     try {
       const fd = new FormData();
       fd.append("file", file);
-      fd.append("name", name || "");
-      fd.append("category", category || "");
-      fd.append("description", description || "");
+      fd.append("color", color || "other");
       const r = await fetch("/api/nails/upload", { method: "POST", body: fd });
       if (!r.ok) throw new Error((await r.text()).slice(0, 300));
       const saved = await r.json();
@@ -434,7 +425,7 @@ export function useStudio(charParam) {
     // shoot
     brief, setBrief, aiPrompt, setAiPrompt, aiBusy, onAiPrompt, resolution, setResolution,
     faceAcc, setFaceAcc, selectedOutfit, setSelectedOutfit, selectedPose, setSelectedPose,
-    selectedNail, setSelectedNail, nails, describeNail, saveNail, deleteNail,
+    selectedNail, setSelectedNail, nails, saveNail, deleteNail,
     gens, onGenerate,
     // outfit designer
     drawerOpen, openDesigner, closeDesigner, outfitText, setOutfitText, outfitImageUrl,

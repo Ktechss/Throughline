@@ -16,7 +16,7 @@ export default function ShootTab({
   selectedOutfit, setSelectedOutfit, selectedPose, setSelectedPose,
   onGenerate, hasIdentity, onOpenDetail, onUploadOutfit, onOpenDesigner,
   creating, outfitPreview, onSaveOutfit, onDiscardOutfit, outfitCategories = [],
-  nails, selectedNail, setSelectedNail, onDescribeNail, onSaveNail, onDeleteNail,
+  nails, selectedNail, setSelectedNail, onSaveNail, onDeleteNail,
 }) {
   const running = gens.some((g) => g.stage === "running");
   const canGenerate = hasIdentity && (!!brief || !!selectedOutfit || !!selectedPose);
@@ -120,7 +120,7 @@ export default function ShootTab({
       <div className="space-y-6 xl:sticky xl:top-6 xl:self-start">
         <OutfitPicker outfits={outfits} selected={selectedOutfit} onSelect={setSelectedOutfit} onClear={() => setSelectedOutfit(null)} onUpload={onUploadOutfit} onOpenDesigner={onOpenDesigner} />
         <PosePicker poses={poseGroups} selected={selectedPose} onSelect={setSelectedPose} onClear={() => setSelectedPose(null)} />
-        <NailPicker nails={nails} selected={selectedNail} onSelect={setSelectedNail} onClear={() => setSelectedNail(null)} onDescribe={onDescribeNail} onSave={onSaveNail} onDelete={onDeleteNail} />
+        <NailPicker nails={nails} selected={selectedNail} onSelect={setSelectedNail} onClear={() => setSelectedNail(null)} onSave={onSaveNail} onDelete={onDeleteNail} />
       </div>
     </div>
   );

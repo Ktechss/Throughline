@@ -1724,22 +1724,23 @@ def list_nails():
     return {"nails": _nails()}
 
 
-@app.post("/api/nails/describe")
-async def nails_describe(file: UploadFile = File(...)):
-    """Read a manicure image and return a nail description — does NOT save it.
-    Step one of the upload modal; the user reviews it, adds a name/category, saves."""
-    data = await file.read()
-    media = describe.media_type(file.filename or "", file.content_type)
-    try:
-        return {"description": describe.describe_nails(data, media)}
-    except describe.DescribeError as exc:
-        raise HTTPException(400, str(exc)) from exc
+def _next_nail_name(color: str) -> str:
+    """<color><n> — n is one past the highest existing index for that colour."""
+    color = (color or "other").strip().lower() or "other"
+    nums = []
+    for m in _nails_meta().values():
+        if (m.get("category") or "").strip().lower() == color:
+            nm = (m.get("name") or "").strip().lower()
+            if nm.startswith(color) and nm[len(color):].isdigit():
+                nums.append(int(nm[len(color):]))
+    return f"{color}{max(nums) + 1 if nums else 1}"
 
 
 @app.post("/api/nails/upload")
-async def nails_upload(file: UploadFile = File(...), name: str = Form(""),
-                       category: str = Form(""), description: str = Form("")):
-    """Save a manicure reference image with a name, category and description."""
+async def nails_upload(file: UploadFile = File(...), color: str = Form("")):
+    """Save a manicure reference image. Colour is the category; the name is
+    auto-assigned as <colour><n>. Image-only — no description/Claude call (the
+    image is used directly as the reference)."""
     data = await file.read()
     Path(NAILS).mkdir(parents=True, exist_ok=True)
     ext = Path(file.filename or "").suffix.lower()
@@ -1750,19 +1751,12 @@ async def nails_upload(file: UploadFile = File(...), name: str = Form(""),
         i += 1
     dest = NAILS / f"nail{i}{ext}"
     dest.write_bytes(data)
-    desc = description.strip()
-    if not desc:   # fall back to a fresh auto-describe if none supplied
-        try:
-            desc = describe.describe_nails(data, describe.media_type(file.filename or "", file.content_type))
-        except describe.DescribeError:
-            desc = ""
+    color = (color.strip().lower() or "other")
+    name = _next_nail_name(color)
     meta = _nails_meta()
-    meta[dest.stem] = {"name": name.strip() or dest.stem,
-                       "category": category.strip() or "Uncategorized",
-                       "description": desc}
+    meta[dest.stem] = {"name": name, "category": color, "description": ""}
     _save_nails_meta(meta)
-    return {"id": dest.stem, "file": dest.name, "name": meta[dest.stem]["name"],
-            "category": meta[dest.stem]["category"], "description": desc}
+    return {"id": dest.stem, "file": dest.name, "name": name, "category": color, "description": ""}
 
 
 class NailDescReq(BaseModel):

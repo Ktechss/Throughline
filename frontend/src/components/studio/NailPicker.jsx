@@ -5,13 +5,13 @@ import NailUploadModal from "./NailUploadModal";
 
 // Manicure gallery — upload nail images (named + categorised via a modal), pick one
 // to attach to the shot as an @image reference + its description.
-export default function NailPicker({ nails = [], selected, onSelect, onClear, onDescribe, onSave, onDelete }) {
-  const [pending, setPending] = useState(null);   // File awaiting the name/category modal
+export default function NailPicker({ nails = [], selected, onSelect, onClear, onSave, onDelete }) {
+  const [pending, setPending] = useState(null);   // File awaiting the colour modal
   const [cat, setCat] = useState("All");
 
   const categories = ["All", ...Array.from(new Set(nails.map((n) => n.category || "Uncategorized")))];
   const shown = cat === "All" ? nails : nails.filter((n) => (n.category || "Uncategorized") === cat);
-  const nameCats = Array.from(new Set(nails.map((n) => n.category).filter((c) => c && c !== "Uncategorized")));
+  const existingColors = Array.from(new Set(nails.map((n) => n.category).filter(Boolean)));
 
   const pickFile = (e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) setPending(f); };
 
@@ -75,8 +75,7 @@ export default function NailPicker({ nails = [], selected, onSelect, onClear, on
 
       {pending && (
         <NailUploadModal
-          file={pending} categories={nameCats}
-          onDescribe={onDescribe}
+          file={pending} existingColors={existingColors}
           onSave={async (payload) => { await onSave(payload); setPending(null); }}
           onClose={() => setPending(null)}
         />
