@@ -1980,16 +1980,18 @@ def shot(req: ShotReq):
     # face/identity stay with @image1, outfit unchanged.
     if nail_tag:
         nail_line, _ = promptlib.sanitise(
-            f"NAILS — highest priority: both her fingernails AND toenails exactly "
-            f"match the manicure shown in {nail_tag} — the same nail shape, length, "
-            "base colour, finish and any nail art"
+            f"NAILS — highest priority: her nails ALWAYS match the manicure shown in "
+            f"{nail_tag} — the same nail shape, length, base colour, finish and any "
+            "nail art on BOTH her fingernails and her toenails (a matching manicure "
+            "and pedicure, by default)"
             + (f": {nail_desc.strip()}" if nail_desc.strip() else "")
-            + f". Apply it to every fingernail, and to her toenails as a matching "
-            f"pedicure wherever her feet or toes are visible. IGNORE and OVERRIDE any "
-            f"other fingernail or toenail colour stated anywhere else in this prompt — "
-            f"her nails follow {nail_tag} only. Show her hands (and feet where visible) "
-            "and nails clearly and in focus. This changes only her nails; her facial "
-            "identity comes only from @image1 and her outfit is otherwise unchanged.")
+            + f". Apply it to every fingernail and every toenail. Do not force her "
+            "feet into the frame, but any hand or foot that appears has nails "
+            f"following {nail_tag} exactly. IGNORE and OVERRIDE any other fingernail "
+            f"or toenail colour stated anywhere else in this prompt — her nails follow "
+            f"{nail_tag} only. Keep her hands and nails clearly in focus. This changes "
+            "only her nails; her facial identity comes only from @image1 and her "
+            "outfit is otherwise unchanged.")
         text = f"{text} {nail_line}"
 
     label = req.brief.strip()[:60] or "untitled shot"
