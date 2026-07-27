@@ -155,6 +155,8 @@ export default function Studio() {
                 onGenerate={s.onGenerate} hasIdentity={!!s.bio?.reference}
                 onOpenDetail={setDetail}
                 onUploadOutfit={s.uploadOutfit} onOpenDesigner={s.openDesigner}
+                creating={s.creating} outfitPreview={s.outfitPreview}
+                onSaveOutfit={s.saveOutfit} onDiscardOutfit={s.discardOutfit} outfitCategories={s.outfitCategories}
               />
             )}
             {tab === "bio" && (

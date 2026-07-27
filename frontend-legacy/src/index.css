@@ -1,0 +1,20 @@
+@import "tailwindcss";
+
+/* Throughline dark shell — ported from the eve-pixel-pulse design */
+body { margin: 0; background: #0c0c0f; color: #e6e6ea;
+  font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+* { box-sizing: border-box; }
+
+@layer components {
+  .eve-label { @apply text-[10px] font-semibold uppercase tracking-[.18em] text-[#8a8a99]; }
+  .eve-panel { @apply rounded-lg border border-[#24242e] bg-[#14141a] p-4; }
+  .eve-card { @apply rounded-lg border border-[#24242e] bg-[#14141a]; }
+  .eve-input { @apply w-full rounded-md border border-[#30303a] bg-[#0e0e12] px-3 py-2.5 text-sm text-[#e6e6ea] outline-none transition placeholder:text-[#565663] focus:border-[#4ea1ff]; }
+  .eve-button { @apply inline-flex h-10 items-center justify-center gap-2 rounded-md px-4 text-xs font-semibold transition disabled:opacity-50 cursor-pointer; }
+  .eve-button svg { @apply h-3.5 w-3.5; }
+  .eve-chip { @apply rounded bg-[#24242e] px-1.5 py-1 font-mono text-[9px] uppercase tracking-wide text-[#aaaab5]; }
+  .ref-card { @apply flex h-24 w-24 shrink-0 flex-col items-center justify-center gap-2 rounded-md border border-[#2b2b35] bg-[#101015] text-[#777785] transition cursor-pointer; }
+  .ref-card img { @apply h-16 w-full rounded-t-md object-cover; }
+  .ref-card small { @apply max-w-[88px] truncate px-1 pb-1 text-[9px]; }
+  .ref-active { @apply border-[#4ea1ff] shadow-[0_0_0_1px_rgba(78,161,255,.2)]; }
+}

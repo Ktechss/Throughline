@@ -1,17 +1,18 @@
-import { defineConfig } from 'vite'
-import { fileURLToPath, URL } from 'node:url'
-import react from '@vitejs/plugin-react'
-import tailwindcss from '@tailwindcss/vite'
+import { fileURLToPath, URL } from "node:url"
+import react from "@vitejs/plugin-react"
+import { defineConfig } from "vite"
 
-// /api proxies to uvicorn so the app is same-origin in dev — no CORS juggling
-// and no absolute URLs in the client.
+// Throughline frontend. Plain React + Vite.
+// Dev server proxies /api to the FastAPI backend on :8000, same as the legacy UI.
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react()],
   resolve: {
-    alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
+    alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) },
   },
   server: {
     port: 5173,
-    proxy: { '/api': { target: 'http://127.0.0.1:8000', changeOrigin: true } },
+    proxy: {
+      "/api": { target: "http://localhost:8000", changeOrigin: true },
+    },
   },
 })

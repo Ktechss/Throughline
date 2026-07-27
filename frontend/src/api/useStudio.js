@@ -176,6 +176,7 @@ export function useStudio(charParam) {
 
   const createOutfit = async () => {
     const mine = epoch.current;
+    setDrawerOpen(false);   // generation state lives in the Shoot panel, not the closable drawer
     setCreating("starting…"); setErr(null); setOutfitPreview(null);
     try {
       const { job } = await api.send("/api/wardrobe/create", "POST", { outfit: mergeOutfit(outfitText, details) });

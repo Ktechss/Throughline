@@ -1,9 +1,10 @@
-import React from "react";
-import { Sparkles, Loader2, Wand2 } from "lucide-react";
+import React, { useState } from "react";
+import { Sparkles, Loader2, Wand2, Shirt, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import VerdictChip from "./VerdictChip";
 import OutfitPicker from "./OutfitPicker";
 import PosePicker from "./PosePicker";
+import { WARDROBE_CATEGORIES } from "@/api/throughline";
 
 const RES = ["1K", "2K", "4K"];
 
@@ -13,6 +14,7 @@ export default function ShootTab({
   resolution, setResolution, faceAcc, setFaceAcc,
   selectedOutfit, setSelectedOutfit, selectedPose, setSelectedPose,
   onGenerate, hasIdentity, onOpenDetail, onUploadOutfit, onOpenDesigner,
+  creating, outfitPreview, onSaveOutfit, onDiscardOutfit, outfitCategories = [],
 }) {
   const running = gens.some((g) => g.stage === "running");
   const canGenerate = hasIdentity && (!!brief || !!selectedOutfit || !!selectedPose);
@@ -89,6 +91,11 @@ export default function ShootTab({
             : !canGenerate && <p className="mt-2 text-[11px] text-zinc-600 text-center">Requires a brief, outfit, or pose.</p>}
         </section>
 
+        {/* Outfit generation — persists here (not in the closable drawer) */}
+        {(creating || outfitPreview) && (
+          <OutfitGenPanel creating={creating} preview={outfitPreview} categories={outfitCategories} onSave={onSaveOutfit} onDiscard={onDiscardOutfit} />
+        )}
+
         {/* Generations queue */}
         <section>
           <div className="flex items-center justify-between mb-3">
@@ -113,6 +120,44 @@ export default function ShootTab({
         <PosePicker poses={poseGroups} selected={selectedPose} onSelect={setSelectedPose} onClear={() => setSelectedPose(null)} />
       </div>
     </div>
+  );
+}
+
+function OutfitGenPanel({ creating, preview, categories, onSave, onDiscard }) {
+  const [saveCategory, setSaveCategory] = useState("");
+  const allCats = [...new Set([...WARDROBE_CATEGORIES, ...categories])];
+  const addCategory = () => { const c = window.prompt("New category name:"); if (c && c.trim()) setSaveCategory(c.trim()); };
+
+  return (
+    <section className="rounded-xl ring-1 ring-sky-500/20 bg-sky-500/[0.04] p-4">
+      <h2 className="text-[13px] font-semibold text-zinc-300 mb-3 flex items-center gap-2"><Shirt className="h-3.5 w-3.5 text-sky-300" /> Outfit generation</h2>
+      {preview ? (
+        <div className="flex flex-col sm:flex-row gap-4">
+          <img src={`/api/images/${preview.file}`} alt="outfit preview" className="w-40 shrink-0 rounded-lg ring-1 ring-white/10 object-cover" />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-[12px] text-emerald-300">Generated — save into a category, or discard.</span>
+              <button onClick={addCategory} className="text-[11px] text-zinc-500 hover:text-zinc-300">＋ new</button>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {allCats.map((c) => (
+                <button key={c} onClick={() => setSaveCategory(c)}
+                  className={cn("rounded-full px-3 py-1 text-[11px] ring-1 transition-colors", saveCategory === c ? "bg-white text-black ring-white" : "ring-white/10 text-zinc-400 hover:text-white")}>{c}</button>
+              ))}
+            </div>
+            <div className="mt-4 flex gap-2">
+              <button onClick={() => onSave(saveCategory)} disabled={!saveCategory}
+                className="rounded-lg bg-white text-black px-4 py-2 text-[12px] font-medium hover:bg-zinc-200 disabled:opacity-40 flex items-center gap-1.5"><Check className="h-3.5 w-3.5" /> Save to wardrobe</button>
+              <button onClick={onDiscard} className="rounded-lg ring-1 ring-white/10 px-4 py-2 text-[12px] text-zinc-300 hover:bg-white/5">Discard</button>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="flex items-center gap-3 text-[13px] text-sky-300">
+          <Loader2 className="h-5 w-5 animate-spin" /> {creating} · ~1 min · you can keep working — it lands here when done.
+        </div>
+      )}
+    </section>
   );
 }
 

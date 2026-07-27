@@ -64,8 +64,8 @@ re-ID can't key on it); for that there's a manual approve/reject verdict.
 | `backend/` | FastAPI app, the ArcFace gate, prompt/part tree, fal generation |
 | `backend/gate.py` | ArcFace embedding, gallery, threshold, calibration |
 | `backend/prompt.py` | The part tree + `compose()` — every prompt fragment is editable data |
-| `frontend-new/` | Current UI — React + Vite + Tailwind (shadcn/ui), talks to `/api` |
-| `frontend/` | Legacy UI (being retired) |
+| `frontend/` | The UI — React + Vite + Tailwind (shadcn/ui), talks to `/api` |
+| `frontend-legacy/` | Previous UI, archived for reference |
 | `FINDINGS.md` | **Read first.** Measured results the pipeline is built on |
 | `CLAUDE.md` | Project context and hard rules |
 | `data/` | Generated images, gallery, per-character state, SQLite db — **gitignored** |
@@ -98,12 +98,12 @@ py -3.11 -m venv .venv-win
 **3. Frontend**
 
 ```bash
-cd frontend-new
+cd frontend
 npm install
-npm run dev            # http://localhost:5174  (proxies /api to :8000)
+npm run dev            # http://localhost:5173  (proxies /api to :8000)
 ```
 
-Open **http://localhost:5174**.
+Open **http://localhost:5173**.
 
 ---
 

@@ -52,7 +52,8 @@ frontal images score high — so a broken pose control looks like success.
 | `backend/gate.py` | ArcFace. Gallery, abstain floor, calibration |
 | `backend/generate.py` | fal calls + run bookkeeping. Every run records its exact prompt |
 | `backend/main.py` | FastAPI |
-| `frontend/src/App.jsx` | Parts / pose / prompt / review tabs |
+| `frontend/src/pages/Studio.jsx` | Shoot / bio / calibrate / video / review tabs (UI) |
+| `frontend/src/api/useStudio.js` | Frontend orchestration hub (data + all actions) |
 | `data/` | Generated images, poses, part tree, gallery. Gitignored |
 
 ## Running it
