@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, genView, groupPoses, outfitView, nailView, placeView, runView, ep, mergeOutfit, STAGE } from "@/api/throughline";
+import { api, genView, groupPoses, outfitView, nailView, runView, ep, mergeOutfit, STAGE } from "@/api/throughline";
 
 // The studio orchestration hub — ported from the legacy App.jsx. Loads all of the
 // active character's data and exposes every action the tabs call. Polling is
@@ -34,8 +34,8 @@ export function useStudio(charParam) {
   const [selectedPose, setSelectedPose] = useState(null);
   const [selectedNail, setSelectedNail] = useState(null);
   const [nails, setNails] = useState([]);
-  const [selectedPlace, setSelectedPlace] = useState(null);
-  const [places, setPlaces] = useState([]);
+  const [home, setHome] = useState({ style: "", corners: [] });
+  const [homeBusy, setHomeBusy] = useState({});   // { cornerKey: stageLabel } while generating
   const [generations, setGenerations] = useState([]);
 
   // outfit designer
@@ -66,7 +66,7 @@ export function useStudio(charParam) {
       api.get("/api/refs"), api.get("/api/bio"), api.get("/api/wardrobe"),
       api.get("/api/pose-library"), api.get("/api/pose-refs"), api.get("/api/stats"),
       api.get("/api/camera-moves"), api.get("/api/videos"), api.get("/api/bodies"),
-      api.get("/api/nails"), api.get("/api/places"),
+      api.get("/api/nails"), api.get("/api/home"),
     ]);
     if (mine !== epoch.current) return;
     setParts(p.parts); setRuns(r.runs); setGallery(g); setRefs(rf.refs);
@@ -74,7 +74,7 @@ export function useStudio(charParam) {
     setPoseGroups(groupPoses(pl.poses, pl.categories));
     setStats(st); setCameraMoves(cm); setVideos(vd.videos || []); setBodies(bd);
     setNails((nl.nails || []).map(nailView));
-    setPlaces((pc.places || []).map(placeView));
+    setHome(pc || { style: "", corners: [] });
   }, []);
 
   const load = useCallback(async () => {
@@ -92,7 +92,7 @@ export function useStudio(charParam) {
       setCharName(entry?.name || id || "");
       setHasIdentity(!!entry?.has_identity);
       setGenerations([]);
-      setSelectedNail(null); setSelectedOutfit(null); setSelectedPose(null); setSelectedPlace(null);
+      setSelectedNail(null); setSelectedOutfit(null); setSelectedPose(null);
       setCalibCands([]);   // calibration candidates are session-only; saved faces live in the Face Manager
       await refresh();
     } catch (e) { if (mine === epoch.current) fail(e); }
@@ -128,7 +128,7 @@ export function useStudio(charParam) {
         brief, aspect: "3:4", prompt: aiPrompt.trim() || null,
         wardrobe_id: selectedOutfit?.id || null, pose_ref_id: null,
         pose_id: selectedPose?.id || null, pose_text: null,
-        nail_id: selectedNail?.id || null, place_id: selectedPlace?.id || null,
+        nail_id: selectedNail?.id || null,
         resolution, face_accessories: faceAcc,
       });
       setGenerations((gs) => gs.map((g) => (g.jid === tmp ? { ...g, jid: job } : g)));
@@ -237,24 +237,34 @@ export function useStudio(charParam) {
     catch (e) { fail(e); }
   };
 
-  // ---- places (location / home) ----
-  const savePlace = async ({ file, name, category }) => {
-    try {
-      const fd = new FormData();
-      fd.append("file", file);
-      fd.append("name", name || "");
-      fd.append("category", category || "");
-      const r = await fetch("/api/places/upload", { method: "POST", body: fd });
-      if (!r.ok) throw new Error((await r.text()).slice(0, 300));
-      const saved = await r.json();
-      await refresh();
-      setSelectedPlace(placeView(saved));
-    } catch (e) { fail(e); }
+  // ---- home (BIO): shared style + per-corner image (upload or generate) ----
+  const saveHomeStyle = async (style) => {
+    try { await api.send("/api/home", "PUT", { style }); setHome((h) => ({ ...h, style })); }
+    catch (e) { fail(e); }
   };
-  const deletePlace = async (id) => {
-    const item = places.find((p) => p.id === id);
-    if (!item) return;
-    try { await fetch(`/api/places/${item.file}`, { method: "DELETE" }); if (selectedPlace?.id === id) setSelectedPlace(null); await refresh(); }
+  const uploadCorner = async (key, file) => {
+    try { await api.upload(`/api/home/${key}/upload`, file); await refresh(); }
+    catch (e) { fail(e); }
+  };
+  const generateCorner = async (key) => {
+    const mine = epoch.current;
+    setHomeBusy((b) => ({ ...b, [key]: "starting…" })); setErr(null);
+    try {
+      const { job } = await api.send(`/api/home/${key}/generate`, "POST", {});
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 1800));
+        if (mine !== epoch.current) return;
+        const st = await api.get(`/api/jobs/${job}`);
+        if (mine !== epoch.current) return;
+        setHomeBusy((b) => ({ ...b, [key]: STAGE[st.stage] || st.stage || "generating…" }));
+        if (st.done) { if (st.error) setErr(st.error); break; }
+      }
+      if (mine === epoch.current) await refresh();
+    } catch (e) { if (mine === epoch.current) fail(e); }
+    finally { if (mine === epoch.current) setHomeBusy((b) => { const n = { ...b }; delete n[key]; return n; }); }
+  };
+  const deleteCorner = async (key) => {
+    try { await fetch(`/api/home/${key}`, { method: "DELETE" }); await refresh(); }
     catch (e) { fail(e); }
   };
 
@@ -450,7 +460,7 @@ export function useStudio(charParam) {
     brief, setBrief, aiPrompt, setAiPrompt, aiBusy, onAiPrompt, resolution, setResolution,
     faceAcc, setFaceAcc, selectedOutfit, setSelectedOutfit, selectedPose, setSelectedPose,
     selectedNail, setSelectedNail, nails, saveNail, deleteNail,
-    selectedPlace, setSelectedPlace, places, savePlace, deletePlace,
+    home, homeBusy, saveHomeStyle, uploadCorner, generateCorner, deleteCorner,
     gens, onGenerate,
     // outfit designer
     drawerOpen, openDesigner, closeDesigner, outfitText, setOutfitText, outfitImageUrl,

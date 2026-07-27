@@ -106,6 +106,7 @@ PARTS_PATH = CharPath("state", "parts.json")
 BODIES_META = CharPath("state", "bodies.json")     # body-type metadata: build text + active
 NAILS_META = CharPath("state", "nails.json")       # nail-style metadata: {stem: {description}}
 PLACES_META = CharPath("state", "places.json")     # place metadata: {stem: {name, category}}
+HOME_PATH = CharPath("state", "home.json")         # her home: {style}; corner images live in places/<key>.*
 BIO_PATH = CharPath("state", "bio.json")           # reference / body_reference / calib_seed
 
 

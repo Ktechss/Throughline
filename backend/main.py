@@ -17,9 +17,10 @@ from pydantic import BaseModel
 
 from . import config, db, describe, gate, generate, prompt as promptlib, prompter, skeleton
 from . import video as videolib
-from .config import (BODIES, BODIES_META, CHARACTERS, CharPath, GOLD, IMAGES,
-                     NAILS, NAILS_META, PARTS_PATH, PLACES, PLACES_META, POSE_REFS,
-                     POSES, REFS, ROOT, SCENE_EDIT, STATE, VIDEOS, WARDROBE)
+from .config import (BODIES, BODIES_META, CHARACTERS, CharPath, GOLD, HOME_PATH,
+                     IMAGES, NAILS, NAILS_META, PARTS_PATH, PLACES, POSE_REFS,
+                     POSES, REFS, ROOT, SCENE_EDIT, SCENE_TEXT2IMG, STATE, VIDEOS,
+                     WARDROBE)
 
 app = FastAPI(title="Throughline")
 
@@ -1805,103 +1806,155 @@ def nails_delete(name: str):
     return {"ok": True}
 
 
-# ---------------------------------------------------------------- places (home)
-# A per-character library of location/home reference images. A shot can attach one
-# as an @image reference so her environment (her home, a recurring room) stays
-# consistent across shots. Costs a reference slot — an identity trade, opt-in per shot.
+# ---------------------------------------------------------------- home (BIO)
+# Her home is part of her BIO: a fixed set of house corners, each with one image
+# (uploaded OR generated from a shared house style). A shot whose brief names a room
+# auto-attaches that corner's image as the environment reference, so her home stays
+# the same house across shots. Corner images live in places/<key>.*; style in home.json.
 
-def _places_meta() -> dict:
-    if PLACES_META.exists():
+HOME_CORNERS = [
+    {"key": "bedroom", "label": "Bedroom", "keywords": ["bedroom", "in bed", "her bed"],
+     "gen": "a cosy bedroom — a made bed with layered linens, a nightstand, a soft rug, warm ambient light"},
+    {"key": "living_room", "label": "Living room", "keywords": ["living room", "couch", "sofa", "lounge"],
+     "gen": "a living room — a comfortable sofa, coffee table, shelving, plants, large windows"},
+    {"key": "kitchen", "label": "Kitchen", "keywords": ["kitchen", "cooking", "at the counter"],
+     "gen": "a kitchen — counters, cabinets, an island with stools, tasteful appliances"},
+    {"key": "dining", "label": "Dining area", "keywords": ["dining", "dining table", "dinner table"],
+     "gen": "a dining area — a dining table with chairs, a pendant light overhead"},
+    {"key": "bathroom", "label": "Bathroom / vanity", "keywords": ["bathroom", "vanity", "at the mirror", "washroom"],
+     "gen": "a clean modern bathroom — a vanity with a large mirror, sink, soft lighting"},
+    {"key": "office", "label": "Home office / desk", "keywords": ["office", "study", "at her desk", "working from home", "desk"],
+     "gen": "a home office — a desk with a laptop, an ergonomic chair, shelves, a pinboard"},
+    {"key": "balcony", "label": "Balcony", "keywords": ["balcony"],
+     "gen": "a balcony — a railing, potted plants, a small chair, an open view beyond"},
+    {"key": "entryway", "label": "Entryway / hallway", "keywords": ["entryway", "hallway", "foyer", "entrance", "doorway"],
+     "gen": "an entryway/hallway — a console table, a mirror, hooks, a runner rug"},
+    {"key": "closet", "label": "Walk-in closet", "keywords": ["closet", "wardrobe", "dressing room", "getting dressed"],
+     "gen": "a walk-in closet — racks of hanging clothes, shelves of shoes, a full-length mirror, soft lighting"},
+    {"key": "terrace", "label": "Rooftop / terrace / garden", "keywords": ["terrace", "rooftop", "garden", "patio", "backyard"],
+     "gen": "a rooftop terrace / garden — plants, comfortable outdoor seating, string lights, an open sky"},
+]
+_CORNER = {c["key"]: c for c in HOME_CORNERS}
+
+
+def _home_style() -> str:
+    if HOME_PATH.exists():
         try:
-            return json.loads(PLACES_META.read_text())
+            return (json.loads(HOME_PATH.read_text()).get("style") or "").strip()
         except Exception:  # noqa: BLE001
-            return {}
-    return {}
+            return ""
+    return ""
 
 
-def _save_places_meta(d: dict) -> None:
-    PLACES_META.write_text(json.dumps(d, indent=2) + "\n")
+def _corner_file(key: str) -> Path | None:
+    """The stored image for a corner, whatever its extension."""
+    return _find_by_id(PLACES, key)
 
 
-def _places() -> list[dict]:
-    meta = _places_meta()
-    out = []
-    for p in sorted(PLACES.iterdir()) if PLACES.exists() else []:
-        if p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
-            m = meta.get(p.stem, {}) or {}
-            out.append({"id": p.stem, "file": p.name,
-                        "name": m.get("name") or p.stem,
-                        "category": m.get("category") or "Uncategorized"})
-    return out
+@app.get("/api/home")
+def get_home():
+    style = _home_style()
+    corners = []
+    for c in HOME_CORNERS:
+        f = _corner_file(c["key"])
+        corners.append({"key": c["key"], "label": c["label"],
+                        "has_image": bool(f), "file": f.name if f else None})
+    return {"style": style, "corners": corners}
 
 
-@app.get("/api/places")
-def list_places():
-    return {"places": _places()}
+class HomeStyleReq(BaseModel):
+    style: str = ""
 
 
-@app.post("/api/places/upload")
-async def places_upload(file: UploadFile = File(...), name: str = Form(""),
-                        category: str = Form("")):
-    """Save a location/home reference image with a name and category. Image-only."""
+@app.put("/api/home")
+def set_home_style(req: HomeStyleReq):
+    HOME_PATH.write_text(json.dumps({"style": req.style.strip()}, indent=2) + "\n")
+    return {"style": req.style.strip()}
+
+
+@app.post("/api/home/{key}/upload")
+async def home_upload(key: str, file: UploadFile = File(...)):
+    if key not in _CORNER:
+        raise HTTPException(400, f"unknown corner: {key}")
     data = await file.read()
     Path(PLACES).mkdir(parents=True, exist_ok=True)
+    old = _corner_file(key)      # replace any existing image for this corner
+    if old:
+        old.unlink(missing_ok=True)
     ext = Path(file.filename or "").suffix.lower()
     if ext not in (".png", ".jpg", ".jpeg", ".webp"):
         ext = ".png"
-    i = 1
-    while _find_by_id(PLACES, f"place{i}"):
-        i += 1
-    dest = PLACES / f"place{i}{ext}"
+    dest = PLACES / f"{key}{ext}"
     dest.write_bytes(data)
-    meta = _places_meta()
-    meta[dest.stem] = {"name": name.strip() or dest.stem,
-                       "category": category.strip() or "Uncategorized"}
-    _save_places_meta(meta)
-    return {"id": dest.stem, "file": dest.name, **meta[dest.stem]}
+    return {"key": key, "file": dest.name}
 
 
-class PlaceReq(BaseModel):
-    name: str | None = None
-    category: str | None = None
+@app.post("/api/home/{key}/generate")
+def home_generate(key: str):
+    """Generate this corner from the shared house style + the corner type, and save
+    it to the corner slot. Async — returns a job to poll. No people in the shot."""
+    if key not in _CORNER:
+        raise HTTPException(400, f"unknown corner: {key}")
+    corner = _CORNER[key]
+    style = _home_style()
+    Path(PLACES).mkdir(parents=True, exist_ok=True)
+    prompt, _ = promptlib.sanitise(
+        f"A photorealistic interior photograph of {corner['gen']}."
+        + (f" Overall home style: {style}." if style else "")
+        + " Cohesive, lived-in, real home — NOT a showroom or a staged catalogue. "
+        "Natural available light, realistic materials and clutter. NO people, no "
+        "text or logos. Shot on a phone, wide 24mm-equivalent lens, natural.")
+
+    def run(job: dict) -> dict:
+        row = generate.generate(
+            prompt=prompt, system="", refs=None, aspect="4:3",
+            endpoint=SCENE_TEXT2IMG, session=generate.new_session(f"home: {corner['label']}"),
+            progress=job, meta={"home_create": key})
+        src = IMAGES / row["file"]
+        if src.exists():
+            old = _corner_file(key)
+            if old and old.suffix.lower() != ".png":
+                old.unlink(missing_ok=True)
+            shutil.copy2(src, PLACES / f"{key}.png")
+        return row
+
+    jid = generate.start_job(f"home: {corner['label']}", run)
+    return {"job": jid}
 
 
-@app.put("/api/places/{name}")
-def places_update(name: str, req: PlaceReq):
-    stem = Path(name).stem
-    meta = _places_meta()
-    cur = meta.get(stem, {}) or {}
-    if req.name is not None:
-        cur["name"] = req.name.strip() or stem
-    if req.category is not None:
-        cur["category"] = req.category.strip() or "Uncategorized"
-    meta[stem] = cur
-    _save_places_meta(meta)
-    return {"id": stem, **cur}
+@app.get("/api/home/{key}/file")
+def home_file(key: str):
+    f = _corner_file(key)
+    if not f:
+        raise HTTPException(404, key)
+    return FileResponse(f)
 
 
-@app.get("/api/places/{name}/file")
-def places_file(name: str):
-    p = PLACES / Path(name).name
-    if not p.exists():
-        raise HTTPException(404, name)
-    return FileResponse(p)
+@app.get("/api/home/{key}/thumb")
+def home_thumb(key: str):
+    f = _corner_file(key)
+    if not f:
+        raise HTTPException(404, key)
+    return _serve_thumb(PLACES, f.name, (320, 240))
 
 
-@app.get("/api/places/{name}/thumb")
-def places_thumb(name: str):
-    return _serve_thumb(PLACES, name, (320, 240))
-
-
-@app.delete("/api/places/{name}")
-def places_delete(name: str):
-    stem = Path(name).stem
-    (PLACES / Path(name).name).unlink(missing_ok=True)
-    meta = _places_meta()
-    if stem in meta:
-        del meta[stem]
-        _save_places_meta(meta)
+@app.delete("/api/home/{key}")
+def home_delete(key: str):
+    f = _corner_file(key)
+    if f:
+        f.unlink(missing_ok=True)
     return {"ok": True}
+
+
+def _infer_home_corner(brief: str) -> Path | None:
+    """If the brief names a room we have an image for, return that corner's image."""
+    b = (brief or "").lower()
+    for c in HOME_CORNERS:
+        if any(k in b for k in c["keywords"]):
+            f = _corner_file(c["key"])
+            if f:
+                return f
+    return None
 
 
 class ShotReq(BaseModel):
@@ -1919,7 +1972,6 @@ class ShotReq(BaseModel):
                                      # library is regenerated and its id is orphaned
     pose_ref_id: str | None = None   # a pose REFERENCE image, attached as @image3
     nail_id: str | None = None       # a manicure reference image, attached as @imageN
-    place_id: str | None = None      # a location/home reference image, attached as @imageN
     shot_type: str = "candid"
     resolution: str | None = None    # "1K" | "2K" | "4K" (nano). None -> config default
     face_accessories: bool = True    # render face-worn items (sunglasses/hats) from the
@@ -2012,15 +2064,13 @@ def shot(req: ShotReq):
         refs.append(nail)
         nail_desc = (_nails_meta().get(req.nail_id, {}) or {}).get("description", "")
 
-    # @imageN = location/home reference. Anchors her environment for a consistent
-    # setting across shots. Positional tag — compute before appending.
+    # @imageN = home corner, inferred from the brief. If the brief names a room she
+    # has an image for, anchor the setting to HER home so it stays the same house.
     place_tag = ""
-    if req.place_id:
-        place = _find_by_id(PLACES, req.place_id)
-        if not place:
-            raise HTTPException(400, f"no such place: {req.place_id}")
+    home_corner = _infer_home_corner(req.brief)
+    if home_corner:
         place_tag = f"@image{len(refs) + 1}"
-        refs.append(place)
+        refs.append(home_corner)
 
     # Body-shape tuning from the editable body parts — folded into BOTH paths so
     # bust/waist/hips edits actually change the output. The AI prompter is barred
@@ -2104,15 +2154,16 @@ def shot(req: ShotReq):
             "outfit is otherwise unchanged.")
         text = f"{text} {nail_line}"
 
-    # Location reference: put her in the same environment shown in the place image.
+    # Home reference: the brief named one of her rooms — put her in HER home, the
+    # exact space shown in the corner image, so the house stays consistent.
     if place_tag:
         place_line, _ = promptlib.sanitise(
-            f"SETTING: the location and background of this photo is exactly the place "
-            f"shown in {place_tag} — reproduce that same environment (the room, "
-            f"furniture, walls, layout, background and overall setting) faithfully and "
-            f"keep it consistent. Do not invent or substitute a different location. "
-            f"She is naturally within this scene doing what the brief describes; her "
-            f"identity still comes only from @image1.")
+            f"SETTING — her own home: the location and background of this photo is "
+            f"exactly the room shown in {place_tag} — reproduce that same space (the "
+            f"furniture, walls, layout, décor and overall setting) faithfully and keep "
+            f"it consistent. Do not invent or substitute a different room. She is "
+            f"naturally within this space doing what the brief describes; her identity "
+            f"still comes only from @image1.")
         text = f"{text} {place_line}"
 
     label = req.brief.strip()[:60] or "untitled shot"
@@ -2136,7 +2187,8 @@ def shot(req: ShotReq):
                   "wardrobe": req.wardrobe_id, "pose_id": req.pose_id,
                   "pose_text": pose_text_used,
                   "pose_ref": req.pose_ref_id, "nail_id": req.nail_id,
-                  "place_id": req.place_id, "sanitised": sanitised,
+                  "home_corner": home_corner.stem if home_corner else None,
+                  "sanitised": sanitised,
                   "ai_prompt": bool(req.prompt and req.prompt.strip())},
         )
 
@@ -2288,7 +2340,7 @@ def _is_intermediate(r: dict) -> bool:
     in the gallery, so the data/images copy is redundant once made (pure waste if
     the preview was discarded)."""
     m = r.get("meta") or {}
-    return bool(m.get("outfit_create") or m.get("body_ref_create") or m.get("calibrate"))
+    return bool(m.get("outfit_create") or m.get("body_ref_create") or m.get("calibrate") or m.get("home_create"))
 
 
 @app.post("/api/images/cleanup")

@@ -1,8 +1,8 @@
 import React, { useState } from "react";
-import { Lock, Star, Upload, Trash2, RefreshCw, ImageOff, ImagePlus, X, LoaderCircle } from "lucide-react";
+import { Lock, Star, Upload, Trash2, RefreshCw, ImageOff, ImagePlus, X, LoaderCircle, Home, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const SUBVIEWS = ["overview", "advanced · body", "advanced · parts"];
+const SUBVIEWS = ["overview", "home", "advanced · body", "advanced · parts"];
 
 export default function BioTab({
   bio,
@@ -26,6 +26,12 @@ export default function BioTab({
   onDiscardBody,
   onSelectBody,
   onDeleteBody,
+  home,
+  homeBusy,
+  onSaveHomeStyle,
+  onUploadCorner,
+  onGenerateCorner,
+  onDeleteCorner,
 }) {
   const [sub, setSub] = useState("overview");
 
@@ -72,7 +78,82 @@ export default function BioTab({
           onDeleteBody={onDeleteBody}
         />
       )}
+      {sub === "home" && (
+        <HomeSection
+          home={home || { style: "", corners: [] }} busy={homeBusy || {}}
+          onSaveStyle={onSaveHomeStyle} onUpload={onUploadCorner}
+          onGenerate={onGenerateCorner} onDelete={onDeleteCorner}
+        />
+      )}
       {sub === "advanced · parts" && <AdvancedParts parts={safeParts} onSavePart={onSavePart} onResetParts={onResetParts} />}
+    </div>
+  );
+}
+
+/* ---------------- Home (her house, part of the BIO) ---------------- */
+
+function HomeSection({ home, busy, onSaveStyle, onUpload, onGenerate, onDelete }) {
+  const [style, setStyle] = useState(home.style || "");
+  const [stamp, setStamp] = useState(0);   // cache-bust corner thumbs after a change
+  React.useEffect(() => { setStyle(home.style || ""); }, [home.style]);
+  React.useEffect(() => { setStamp(Date.now()); }, [home.corners]);
+
+  const pick = (key) => (e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) onUpload?.(key, f); };
+
+  return (
+    <div className="space-y-6">
+      <section className="rounded-2xl ring-1 ring-white/8 bg-white/[0.02] p-5">
+        <h3 className="text-[12px] font-semibold text-zinc-300 mb-1 flex items-center gap-1.5"><Home className="h-3.5 w-3.5" /> Her home</h3>
+        <p className="text-[11px] text-zinc-500 mb-3">A shared house style keeps every corner feeling like one home. A shot whose brief names a room (e.g. "in her kitchen") is automatically set in that room.</p>
+        <label className="text-[11px] text-zinc-400">House style</label>
+        <textarea
+          value={style} onChange={(e) => setStyle(e.target.value)} onBlur={() => onSaveStyle?.(style)} rows={2}
+          placeholder="e.g. modern minimalist, warm wood floors, neutral palette, lots of plants, big windows, soft natural light"
+          className="mt-1 w-full rounded-lg bg-white/[0.02] ring-1 ring-white/10 px-3 py-2 text-[13px] text-zinc-200 focus:ring-white/30 outline-none resize-none"
+        />
+        <p className="mt-1 text-[10px] text-zinc-600">Saved on blur. Used when you generate a corner below.</p>
+      </section>
+
+      <div className="grid gap-3 grid-cols-[repeat(auto-fill,minmax(200px,1fr))]">
+        {(home.corners || []).map((c) => {
+          const stage = busy[c.key];
+          return (
+            <div key={c.key} className="rounded-xl ring-1 ring-white/8 bg-white/[0.02] overflow-hidden">
+              <div className="relative aspect-[4/3] bg-zinc-900 flex items-center justify-center">
+                {stage ? (
+                  <div className="flex flex-col items-center gap-1.5 text-center px-2">
+                    <LoaderCircle className="h-5 w-5 animate-spin text-sky-400" />
+                    <span className="text-[10px] text-sky-300">{stage}</span>
+                  </div>
+                ) : c.has_image ? (
+                  <img src={`/api/home/${c.key}/thumb?t=${stamp}`} alt={c.label} className="h-full w-full object-cover" />
+                ) : (
+                  <span className="text-[10px] text-zinc-600">no image yet</span>
+                )}
+                {c.has_image && !stage && (
+                  <button onClick={() => onDelete?.(c.key)} title="clear this corner"
+                    className="absolute right-1.5 top-1.5 rounded bg-black/60 p-1 text-rose-300 hover:bg-black/85">
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
+              <div className="px-2.5 py-2">
+                <div className="text-[11px] font-medium text-zinc-200 truncate mb-1.5">{c.label}</div>
+                <div className="flex gap-1.5">
+                  <label className="flex-1 cursor-pointer rounded-md ring-1 ring-white/10 py-1 text-[10px] text-zinc-300 hover:bg-white/5 flex items-center justify-center gap-1">
+                    <Upload className="h-3 w-3" /> Upload
+                    <input type="file" accept="image/*" hidden onChange={pick(c.key)} disabled={!!stage} />
+                  </label>
+                  <button onClick={() => onGenerate?.(c.key)} disabled={!!stage}
+                    className="flex-1 rounded-md ring-1 ring-white/10 py-1 text-[10px] text-zinc-300 hover:bg-white/5 disabled:opacity-40 flex items-center justify-center gap-1">
+                    <Sparkles className="h-3 w-3" /> Generate
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
