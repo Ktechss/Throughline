@@ -125,7 +125,10 @@ CONTENT_RETRIES = 2
 # ~2 min, so 5 min of total headroom never trips a legitimate generation.
 START_TIMEOUT = 180      # seconds to leave the queue before giving up
 CLIENT_TIMEOUT = 300     # seconds total for one subscribe() attempt
-DOWNLOAD_TIMEOUT = 120   # seconds for the result image download
+DOWNLOAD_TIMEOUT = 240   # total seconds for the result image download. 4K results
+                         # are ~18-20 MB; on a slow link to fal's CDN, 120s wasn't
+                         # enough and shots failed on download. Total wall-clock
+                         # bound (see the read loop), so a real stall still fails.
 
 
 def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
