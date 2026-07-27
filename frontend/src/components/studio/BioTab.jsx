@@ -28,7 +28,7 @@ export default function BioTab({
   onDeleteBody,
   home,
   homeBusy,
-  onSaveHomeStyle,
+  onSaveHome,
   onUploadCorner,
   onGenerateCorner,
   onDeleteCorner,
@@ -80,8 +80,8 @@ export default function BioTab({
       )}
       {sub === "home" && (
         <HomeSection
-          home={home || { style: "", corners: [] }} busy={homeBusy || {}}
-          onSaveStyle={onSaveHomeStyle} onUpload={onUploadCorner}
+          home={home || { style: "", surroundings: "", corners: [] }} busy={homeBusy || {}}
+          onSaveHome={onSaveHome} onUpload={onUploadCorner}
           onGenerate={onGenerateCorner} onDelete={onDeleteCorner}
         />
       )}
@@ -92,10 +92,12 @@ export default function BioTab({
 
 /* ---------------- Home (her house, part of the BIO) ---------------- */
 
-function HomeSection({ home, busy, onSaveStyle, onUpload, onGenerate, onDelete }) {
+function HomeSection({ home, busy, onSaveHome, onUpload, onGenerate, onDelete }) {
   const [style, setStyle] = useState(home.style || "");
+  const [surroundings, setSurroundings] = useState(home.surroundings || "");
   const [stamp, setStamp] = useState(0);   // cache-bust corner thumbs after a change
   React.useEffect(() => { setStyle(home.style || ""); }, [home.style]);
+  React.useEffect(() => { setSurroundings(home.surroundings || ""); }, [home.surroundings]);
   React.useEffect(() => { setStamp(Date.now()); }, [home.corners]);
 
   const pick = (key) => (e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) onUpload?.(key, f); };
@@ -104,14 +106,22 @@ function HomeSection({ home, busy, onSaveStyle, onUpload, onGenerate, onDelete }
     <div className="space-y-6">
       <section className="rounded-2xl ring-1 ring-white/8 bg-white/[0.02] p-5">
         <h3 className="text-[12px] font-semibold text-zinc-300 mb-1 flex items-center gap-1.5"><Home className="h-3.5 w-3.5" /> Her home</h3>
-        <p className="text-[11px] text-zinc-500 mb-3">A shared house style keeps every corner feeling like one home. A shot whose brief names a room (e.g. "in her kitchen") is automatically set in that room.</p>
-        <label className="text-[11px] text-zinc-400">House style</label>
+        <p className="text-[11px] text-zinc-500 mb-3">Her home is one coherent space. A shot whose brief names a room (e.g. "in her kitchen") is automatically set there.</p>
+
+        <label className="text-[11px] text-zinc-400">House style <span className="text-zinc-600">— materials & aesthetic of the whole home</span></label>
         <textarea
-          value={style} onChange={(e) => setStyle(e.target.value)} onBlur={() => onSaveStyle?.(style)} rows={2}
-          placeholder="e.g. modern minimalist, warm wood floors, neutral palette, lots of plants, big windows, soft natural light"
+          value={style} onChange={(e) => setStyle(e.target.value)} onBlur={() => onSaveHome?.({ style })} rows={2}
+          placeholder="e.g. modern Indian flat, marble & tile floors, warm wood, neutral palette, plants, soft natural light"
           className="mt-1 w-full rounded-lg bg-white/[0.02] ring-1 ring-white/10 px-3 py-2 text-[13px] text-zinc-200 focus:ring-white/30 outline-none resize-none"
         />
-        <p className="mt-1 text-[10px] text-zinc-600">Saved on blur. Used when you generate a corner below.</p>
+
+        <label className="mt-3 block text-[11px] text-zinc-400">Balcony / window view <span className="text-zinc-600">— only applied to rooms that open outward</span></label>
+        <textarea
+          value={surroundings} onChange={(e) => setSurroundings(e.target.value)} onBlur={() => onSaveHome?.({ surroundings })} rows={2}
+          placeholder="e.g. 12th-floor north-facing view of other buildings, HSR street, an overbridge barely visible"
+          className="mt-1 w-full rounded-lg bg-white/[0.02] ring-1 ring-white/10 px-3 py-2 text-[13px] text-zinc-200 focus:ring-white/30 outline-none resize-none"
+        />
+        <p className="mt-1.5 text-[10px] text-zinc-600">Put the outside view HERE, not in House style — otherwise the city leaks into interior rooms (the bathroom shouldn't show a skyline). The view is used only for the balcony, terrace & living room. Saved on blur.</p>
       </section>
 
       <div className="grid gap-3 grid-cols-[repeat(auto-fill,minmax(200px,1fr))]">
@@ -130,6 +140,7 @@ function HomeSection({ home, busy, onSaveStyle, onUpload, onGenerate, onDelete }
                 ) : (
                   <span className="text-[10px] text-zinc-600">no image yet</span>
                 )}
+                {c.view && <span className="absolute left-1.5 top-1.5 rounded bg-black/55 px-1.5 py-0.5 text-[8px] text-sky-300 ring-1 ring-sky-500/30">view</span>}
                 {c.has_image && !stage && (
                   <button onClick={() => onDelete?.(c.key)} title="clear this corner"
                     className="absolute right-1.5 top-1.5 rounded bg-black/60 p-1 text-rose-300 hover:bg-black/85">

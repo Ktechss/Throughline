@@ -169,7 +169,7 @@ export default function Studio() {
                 onImport={s.importRef} onUploadRef={s.uploadRef} onSavePart={s.savePart} onResetParts={s.resetParts}
                 onUploadShape={s.uploadShape} onCreateBody={s.createBody} onSaveBody={s.saveBody}
                 onDiscardBody={s.discardBody} onSelectBody={s.selectBody} onDeleteBody={s.deleteBody}
-                home={s.home} homeBusy={s.homeBusy} onSaveHomeStyle={s.saveHomeStyle}
+                home={s.home} homeBusy={s.homeBusy} onSaveHome={s.saveHome}
                 onUploadCorner={s.uploadCorner} onGenerateCorner={s.generateCorner} onDeleteCorner={s.deleteCorner}
               />
             )}

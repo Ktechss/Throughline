@@ -238,8 +238,9 @@ export function useStudio(charParam) {
   };
 
   // ---- home (BIO): shared style + per-corner image (upload or generate) ----
-  const saveHomeStyle = async (style) => {
-    try { await api.send("/api/home", "PUT", { style }); setHome((h) => ({ ...h, style })); }
+  const saveHome = async (patch) => {
+    const next = { style: home.style || "", surroundings: home.surroundings || "", ...patch };
+    try { await api.send("/api/home", "PUT", next); setHome((h) => ({ ...h, ...patch })); }
     catch (e) { fail(e); }
   };
   const uploadCorner = async (key, file) => {
@@ -460,7 +461,7 @@ export function useStudio(charParam) {
     brief, setBrief, aiPrompt, setAiPrompt, aiBusy, onAiPrompt, resolution, setResolution,
     faceAcc, setFaceAcc, selectedOutfit, setSelectedOutfit, selectedPose, setSelectedPose,
     selectedNail, setSelectedNail, nails, saveNail, deleteNail,
-    home, homeBusy, saveHomeStyle, uploadCorner, generateCorner, deleteCorner,
+    home, homeBusy, saveHome, uploadCorner, generateCorner, deleteCorner,
     gens, onGenerate,
     // outfit designer
     drawerOpen, openDesigner, closeDesigner, outfitText, setOutfitText, outfitImageUrl,

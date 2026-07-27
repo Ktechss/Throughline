@@ -1835,15 +1835,20 @@ HOME_CORNERS = [
      "gen": "a rooftop terrace / garden — plants, comfortable outdoor seating, string lights, an open sky"},
 ]
 _CORNER = {c["key"]: c for c in HOME_CORNERS}
+# Only these rooms open to the outside — the balcony/window VIEW (buildings, street,
+# skyline) belongs here and NOWHERE else. Every other corner is a fully interior room.
+_VIEW_ROOMS = {"balcony", "terrace", "living_room"}
 
 
-def _home_style() -> str:
+def _home() -> dict:
     if HOME_PATH.exists():
         try:
-            return (json.loads(HOME_PATH.read_text()).get("style") or "").strip()
+            d = json.loads(HOME_PATH.read_text())
+            return {"style": (d.get("style") or "").strip(),
+                    "surroundings": (d.get("surroundings") or "").strip()}
         except Exception:  # noqa: BLE001
-            return ""
-    return ""
+            pass
+    return {"style": "", "surroundings": ""}
 
 
 def _corner_file(key: str) -> Path | None:
@@ -1853,23 +1858,25 @@ def _corner_file(key: str) -> Path | None:
 
 @app.get("/api/home")
 def get_home():
-    style = _home_style()
+    h = _home()
     corners = []
     for c in HOME_CORNERS:
         f = _corner_file(c["key"])
-        corners.append({"key": c["key"], "label": c["label"],
+        corners.append({"key": c["key"], "label": c["label"], "view": c["key"] in _VIEW_ROOMS,
                         "has_image": bool(f), "file": f.name if f else None})
-    return {"style": style, "corners": corners}
+    return {"style": h["style"], "surroundings": h["surroundings"], "corners": corners}
 
 
 class HomeStyleReq(BaseModel):
     style: str = ""
+    surroundings: str = ""
 
 
 @app.put("/api/home")
 def set_home_style(req: HomeStyleReq):
-    HOME_PATH.write_text(json.dumps({"style": req.style.strip()}, indent=2) + "\n")
-    return {"style": req.style.strip()}
+    data = {"style": req.style.strip(), "surroundings": req.surroundings.strip()}
+    HOME_PATH.write_text(json.dumps(data, indent=2) + "\n")
+    return data
 
 
 @app.post("/api/home/{key}/upload")
@@ -1896,14 +1903,31 @@ def home_generate(key: str):
     if key not in _CORNER:
         raise HTTPException(400, f"unknown corner: {key}")
     corner = _CORNER[key]
-    style = _home_style()
+    h = _home()
+    style, surroundings = h["style"], h["surroundings"]
     Path(PLACES).mkdir(parents=True, exist_ok=True)
+
+    # The house is ONE coherent space. The outside view belongs only to rooms that
+    # open outward (balcony/terrace/living room); every other corner is a fully
+    # interior room and must NOT show the city/buildings/street — that leak is the
+    # bug this scoping fixes.
+    if key in _VIEW_ROOMS:
+        base = (f"A photorealistic photograph of {corner['gen']}, part of one real home."
+                + (f" Home style and materials: {style}." if style else "")
+                + (f" The outside view visible from here: {surroundings}." if surroundings else ""))
+    else:
+        base = (f"A photorealistic INTERIOR photograph of {corner['gen']} — one enclosed "
+                f"interior room inside one real home."
+                + (f" Overall home style and materials: {style}." if style else "")
+                + " This is an INTERIOR room, fully indoors: do NOT show any city "
+                "skyline, buildings, streets, flyover/overbridge or any outdoor/exterior "
+                "view of the city. If a window appears it shows only soft, blurred "
+                "daylight or plain sky — never identifiable buildings or a cityscape. "
+                "Show ONLY this room, not other rooms.")
     prompt, _ = promptlib.sanitise(
-        f"A photorealistic interior photograph of {corner['gen']}."
-        + (f" Overall home style: {style}." if style else "")
-        + " Cohesive, lived-in, real home — NOT a showroom or a staged catalogue. "
-        "Natural available light, realistic materials and clutter. NO people, no "
-        "text or logos. Shot on a phone, wide 24mm-equivalent lens, natural.")
+        base + " Cohesive, lived-in, real home — NOT a showroom or staged catalogue. "
+        "Natural available light, realistic materials. NO people, no text or logos. "
+        "Shot on a phone, wide 24mm-equivalent lens, natural.")
 
     def run(job: dict) -> dict:
         row = generate.generate(
