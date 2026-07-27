@@ -7,6 +7,7 @@ gate's verdict. A generation you can't reproduce is an anecdote.
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import time
 import urllib.request
@@ -17,7 +18,7 @@ import fal_client
 
 from . import config, db, gate
 from .config import (GPT_IMAGE, GPT_IMAGE_SIZE, IMAGES, LOCAL_ENDPOINT,
-                     LOCAL_PY, LOCAL_WORKER, RESOLUTION, RUNS_PATH, SCENE_EDIT,
+                     LOCAL_PY, LOCAL_WORKER, RESOLUTION, SCENE_EDIT,
                      SCENE_TEXT2IMG)
 
 # The pipeline was rebuilt around nano-banana-pro as the PRIMARY generator: it
@@ -117,6 +118,15 @@ def new_session(label: str = "") -> dict:
 # failing a hard refusal in roughly a third of the time.
 CONTENT_RETRIES = 2
 
+# Hard ceilings so a stalled fal call (a hung queue, an oversized ref the model
+# chokes on) fails the job with a reason instead of spinning forever. START is
+# how long we wait to even leave fal's queue; CLIENT is the total wall-clock for
+# one attempt. A 4-panel wardrobe turnaround is the slowest real request at
+# ~2 min, so 5 min of total headroom never trips a legitimate generation.
+START_TIMEOUT = 180      # seconds to leave the queue before giving up
+CLIENT_TIMEOUT = 300     # seconds total for one subscribe() attempt
+DOWNLOAD_TIMEOUT = 120   # seconds for the result image download
+
 
 def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
              aspect: str = "4:5", seed: int | None = None,
@@ -196,7 +206,9 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
                     progress["stage"] = ("scene-model fallback" if falling_back
                                          else "generating")
                 r = fal_client.subscribe(ep, arguments=build_args(ep),
-                                         with_logs=False)
+                                         with_logs=False,
+                                         start_timeout=START_TIMEOUT,
+                                         client_timeout=CLIENT_TIMEOUT)
                 used_ep = ep
                 break
             except Exception as exc:  # noqa: BLE001
@@ -219,7 +231,12 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
     moderation_fallback = used_ep != primary
     if progress is not None:
         progress["stage"] = "downloading"
-    urllib.request.urlretrieve(r["images"][0]["url"], dest)
+    # A bounded download: urlretrieve honours no timeout, so a stalled connection
+    # would hang the worker forever (same silent-hang failure as an untimed fal
+    # call). Stream through urlopen with an explicit timeout instead.
+    with urllib.request.urlopen(r["images"][0]["url"], timeout=DOWNLOAD_TIMEOUT) as resp, \
+            open(dest, "wb") as fh:
+        shutil.copyfileobj(resp, fh)
 
     # A truncated download gates as no_face, which looks identical to identity
     # drift — a dead connection recorded as a model failure.
@@ -407,4 +424,19 @@ def job_status(jid: str) -> dict | None:
     out = {k: j[k] for k in ("id", "label", "stage", "done", "error", "run")}
     out["retry"] = j.get("retry")
     out["elapsed"] = j.get("elapsed", round(_now() - j["started"], 1))
+    return out
+
+
+def all_jobs() -> list[dict]:
+    """Every job still in memory, newest first — so a stuck generation is
+    inspectable (id, stage, how long it has been running) instead of an
+    invisible spinner. Omits the heavy `run` row; poll /api/jobs/{id} for that."""
+    out = []
+    for j in JOBS.values():
+        out.append({
+            "id": j["id"], "label": j["label"], "stage": j["stage"],
+            "done": j["done"], "error": j.get("error"), "retry": j.get("retry"),
+            "elapsed": j.get("elapsed", round(_now() - j["started"], 1)),
+        })
+    out.sort(key=lambda x: x["elapsed"])   # shortest-running first; oldest last
     return out

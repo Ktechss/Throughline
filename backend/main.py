@@ -21,7 +21,7 @@ from .config import (BODIES, BODIES_META, CHARACTERS, CharPath, GOLD, IMAGES,
                      PARTS_PATH, POSE_REFS, POSES, REFS, ROOT, SCENE_EDIT, STATE,
                      VIDEOS, WARDROBE)
 
-app = FastAPI(title="eve1")
+app = FastAPI(title="Throughline")
 
 # Create tables + import the JSON ledgers once (idempotent — only imports while a
 # table is still empty). Runs, videos and wardrobe meta now live in eve1.db; the
@@ -36,7 +36,7 @@ app.add_middleware(
 
 
 # ------------------------------------------------------------ characters
-# Phase 4: eve1 is a multi-character studio. The landing page lists these; each
+# Phase 4: Throughline is a multi-character studio. The landing page lists these; each
 # has its own folder, gallery (identity), bio, wardrobe and generations. All the
 # path constants above follow whichever character is ACTIVE (see config.CharPath).
 
@@ -1291,9 +1291,6 @@ def _find_by_id(directory: Path, ident: str) -> Path | None:
     return None
 
 
-WARDROBE_META = CharPath("state", "wardrobe.json")   # cold backup; meta now in db
-
-
 def _wardrobe_meta() -> dict:
     return db.wardrobe_meta()
 
@@ -1693,6 +1690,9 @@ class ShotReq(BaseModel):
     seed: int | None = None
     wardrobe_id: str | None = None   # attach this saved outfit as @image2
     pose_id: str | None = None       # a pose from the text library
+    pose_text: str | None = None     # raw pose text, overrides the library lookup —
+                                     # lets a past shot's pose be reused even after the
+                                     # library is regenerated and its id is orphaned
     pose_ref_id: str | None = None   # a pose REFERENCE image, attached as @image3
     shot_type: str = "candid"
     resolution: str | None = None    # "1K" | "2K" | "4K" (nano). None -> config default
@@ -1704,6 +1704,7 @@ class AiPromptReq(BaseModel):
     brief: str = ""
     wardrobe_id: str | None = None
     pose_id: str | None = None
+    pose_text: str | None = None     # raw pose text override (reused orphaned pose)
     pose_ref_id: str | None = None
     shot_type: str = "candid"
 
@@ -1717,7 +1718,7 @@ def ai_prompt(req: AiPromptReq):
     runs through the same moderation sanitiser and is returned for the user to
     edit; it is not sent to fal until they generate.
     """
-    pose_text = promptlib.POSES_LIBRARY.get(req.pose_id or "", "")
+    pose_text = req.pose_text or promptlib.POSES_LIBRARY.get(req.pose_id or "", "")
     pose_ref_tag = "@image3" if req.pose_ref_id else ""
     try:
         raw = prompter.rewrite(
@@ -1783,9 +1784,19 @@ def shot(req: ShotReq):
         base = req.prompt.strip()
         if build_text:
             base = f"{base} {build_text}"
+        # A pose picked alongside an AI prompt must still take effect — otherwise a
+        # multi-pose batch reuses the one pose already frozen into the AI prompt and
+        # every image comes back in the same stance. Append the chosen pose as an
+        # explicit override so the picker wins over whatever pose the prompt describes.
+        pose_text = req.pose_text or promptlib.POSES_LIBRARY.get(req.pose_id or "", "")
+        if pose_text:
+            base = (f"{base} For THIS shot her body pose is: {pose_text} "
+                    "Use exactly this pose, overriding any other stance, gesture or "
+                    "body position described above; keep the same scene, framing, "
+                    "outfit, lighting and identity.")
         text, sanitised = promptlib.sanitise(base)
     else:
-        pose_text = promptlib.POSES_LIBRARY.get(req.pose_id or "", "")
+        pose_text = req.pose_text or promptlib.POSES_LIBRARY.get(req.pose_id or "", "")
         text, sanitised = promptlib.compose_tagged(
             req.brief, pose_text=pose_text, has_wardrobe=has_wardrobe,
             pose_ref_tag=pose_ref_tag, build_text=build_text, shot_type=req.shot_type)
@@ -1828,6 +1839,11 @@ def shot(req: ShotReq):
     label = req.brief.strip()[:60] or "untitled shot"
     session = generate.new_session(label)
 
+    # Store the pose's actual TEXT alongside its id. The pose library can be
+    # regenerated (ids change), which orphans a past shot's pose_id — so the
+    # text is what lets "use this pose" survive a library rebuild.
+    pose_text_used = req.pose_text or promptlib.POSES_LIBRARY.get(req.pose_id or "", "")
+
     def run(job: dict) -> dict:
         return generate.generate(
             prompt=text, system="", refs=refs, aspect=req.aspect,
@@ -1839,12 +1855,19 @@ def shot(req: ShotReq):
             resolution=req.resolution,
             meta={"brief": req.brief, "bio_references": [p.name for p in refs],
                   "wardrobe": req.wardrobe_id, "pose_id": req.pose_id,
+                  "pose_text": pose_text_used,
                   "pose_ref": req.pose_ref_id, "sanitised": sanitised,
                   "ai_prompt": bool(req.prompt and req.prompt.strip())},
         )
 
     jid = generate.start_job(label, run)
     return {"job": jid, "sanitised": sanitised}
+
+
+@app.get("/api/jobs")
+def jobs():
+    """Every in-memory job, newest last — makes a stuck generation visible."""
+    return {"jobs": generate.all_jobs()}
 
 
 @app.get("/api/jobs/{jid}")
@@ -1979,8 +2002,74 @@ def delete_run(run_id: str):
     return {"ok": True, "deleted": len(removed)}
 
 
+def _is_intermediate(r: dict) -> bool:
+    """An outfit / body / calibration generation — never a review-grid shot. Its
+    useful output is copied out on save (into wardrobe/, bodies/, refs/) or embedded
+    in the gallery, so the data/images copy is redundant once made (pure waste if
+    the preview was discarded)."""
+    m = r.get("meta") or {}
+    return bool(m.get("outfit_create") or m.get("body_ref_create") or m.get("calibrate"))
+
+
+@app.post("/api/images/cleanup")
+def images_cleanup():
+    """Reclaim disk from images that are no longer needed for the ACTIVE character:
+
+      1. ORPHANS — files in data/images with no ledger row at all (left by a crash,
+         or a row deleted without its file).
+      2. SPENT INTERMEDIATES — outfit/body/calibration images whose result was
+         already copied out or embedded; drop the image AND its now-dangling row.
+      3. STALE THUMBS — thumbnails whose source image is gone.
+
+    Real shots (everything in the review grid) are never touched. Run this when no
+    generation is mid-flow: an outfit/body PREVIEW still awaiting save counts as a
+    spent intermediate and will be reclaimed.
+    """
+    runs = generate.all_runs()
+    keep = {r["file"] for r in runs if not _is_intermediate(r)}
+    intermediate = {r["id"]: r["file"] for r in runs if _is_intermediate(r)}
+    inter_files = set(intermediate.values())
+    thumbs = IMAGES / ".thumbs"
+    freed = 0
+    counts = {"orphans": 0, "intermediates": 0, "stale_thumbs": 0}
+
+    def _rm(name: str) -> None:
+        nonlocal freed
+        p = IMAGES / name
+        if p.exists():
+            try:
+                freed += p.stat().st_size
+            except OSError:
+                pass
+            p.unlink(missing_ok=True)
+        (thumbs / f"{Path(name).stem}.jpg").unlink(missing_ok=True)
+
+    exts = (".png", ".jpg", ".jpeg", ".webp")
+    on_disk = [p for p in IMAGES.iterdir()
+               if p.is_file() and p.suffix.lower() in exts] if IMAGES.exists() else []
+    for p in on_disk:
+        if p.name in inter_files:
+            _rm(p.name); counts["intermediates"] += 1
+        elif p.name not in keep:
+            _rm(p.name); counts["orphans"] += 1
+
+    # Drop the reclaimed intermediates' ledger rows — their file is gone now.
+    if intermediate:
+        generate.delete_runs(set(intermediate))
+
+    # Stale thumbnails whose source image no longer exists.
+    if thumbs.exists():
+        live = {p.stem for p in IMAGES.iterdir()
+                if p.is_file() and p.suffix.lower() in exts}
+        for t in thumbs.glob("*.jpg"):
+            if t.stem not in live:
+                t.unlink(missing_ok=True); counts["stale_thumbs"] += 1
+
+    return {**counts, "freed_mb": round(freed / 1e6, 1)}
+
+
 # ---------------------------------------------------------------- video studio
-# Animate a gate-approved still into a clip on fal. eve1 makes the consistent
+# Animate a gate-approved still into a clip on fal. Throughline makes the consistent
 # still (the gate proves it's her); fal only adds motion. Camera moves carry the
 # cinematic feel, and each clip's frames are re-gated for drift.
 

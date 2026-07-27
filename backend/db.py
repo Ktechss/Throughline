@@ -70,10 +70,6 @@ def init_db() -> None:
             doc TEXT)""")
     _migrate_schema_add_character()
     _seed_characters()
-    # Legacy JSON import (only fires on a fresh, empty table).
-    _import_list("runs", config.RUNS_PATH)
-    _import_list("videos", config.VIDEOS_META)
-    _import_wardrobe(config.STATE / "wardrobe.json")
 
 
 def _move_children(src: Path, dest: Path) -> None:
@@ -174,40 +170,6 @@ def _seed_characters() -> None:
                 name = cid.replace("-", " ").replace("_", " ").title()
                 con.execute("INSERT OR IGNORE INTO characters (id, name, created, doc) "
                             "VALUES (?, ?, ?, ?)", (cid, name, now, "{}"))
-
-
-def _empty(table: str, character_id: str) -> bool:
-    with _conn() as con:
-        return con.execute(f"SELECT 1 FROM {table} WHERE character_id=? LIMIT 1",
-                           (character_id,)).fetchone() is None
-
-
-def _import_list(table: str, path: Path) -> None:
-    cid = config.get_active()
-    if not Path(path).exists() or not _empty(table, cid):
-        return
-    rows = json.loads(Path(path).read_text())
-    if not isinstance(rows, list) or not rows:
-        return
-    with _conn() as con:
-        con.execute("BEGIN")
-        con.executemany(f"INSERT INTO {table} (id, character_id, doc) VALUES (?, ?, ?)",
-                        [(r["id"], cid, json.dumps(r)) for r in rows if r.get("id")])
-        con.execute("COMMIT")
-
-
-def _import_wardrobe(path: Path) -> None:
-    cid = config.get_active()
-    if not Path(path).exists() or not _empty("wardrobe", cid):
-        return
-    meta = json.loads(Path(path).read_text())
-    if not isinstance(meta, dict) or not meta:
-        return
-    with _conn() as con:
-        con.execute("BEGIN")
-        con.executemany("INSERT INTO wardrobe (character_id, key, doc) VALUES (?, ?, ?)",
-                        [(cid, k, json.dumps(v)) for k, v in meta.items()])
-        con.execute("COMMIT")
 
 
 # =================================================================== runs

@@ -18,7 +18,7 @@ from pathlib import Path
 import fal_client
 
 from . import config, db, gate
-from .config import VIDEOS, VIDEOS_META
+from .config import VIDEOS
 
 # fal image-to-video endpoints. Seedance 1.0 Pro is permissive + realistic (the
 # default); Kling is gentler and the most identity-safe on big motion.

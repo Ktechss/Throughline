@@ -1,0 +1,417 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import { api, genView, groupPoses, outfitView, runView, ep, mergeOutfit, STAGE } from "@/api/throughline";
+
+// The studio orchestration hub — ported from the legacy App.jsx. Loads all of the
+// active character's data and exposes every action the tabs call. Polling is
+// epoch-guarded so a character switch cancels in-flight jobs cleanly.
+export function useStudio(charParam) {
+  const epoch = useRef(0);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState(null);
+
+  // character + data
+  const [charName, setCharName] = useState("");
+  const [hasIdentity, setHasIdentity] = useState(false);
+  const [bio, setBio] = useState(null);
+  const [gallery, setGallery] = useState({ entries: [], threshold: null });
+  const [parts, setParts] = useState([]);
+  const [refs, setRefs] = useState([]);
+  const [bodies, setBodies] = useState({ bodies: [], active: null });
+  const [wardrobe, setWardrobe] = useState([]);
+  const [poseGroups, setPoseGroups] = useState({});
+  const [runs, setRuns] = useState([]);
+  const [stats, setStats] = useState(null);
+  const [videos, setVideos] = useState([]);
+  const [cameraMoves, setCameraMoves] = useState({ moves: [], models: [] });
+
+  // shoot
+  const [brief, setBrief] = useState("");
+  const [aiPrompt, setAiPrompt] = useState("");
+  const [aiBusy, setAiBusy] = useState(false);
+  const [resolution, setResolution] = useState("4K");
+  const [faceAcc, setFaceAcc] = useState(true);
+  const [selectedOutfit, setSelectedOutfit] = useState(null);
+  const [selectedPose, setSelectedPose] = useState(null);
+  const [generations, setGenerations] = useState([]);
+
+  // outfit designer
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [outfitText, setOutfitText] = useState("");
+  const [outfitImageUrl, setOutfitImageUrl] = useState(null);
+  const [details, setDetails] = useState(null);
+  const [idea, setIdea] = useState("");
+  const [pickers, setPickers] = useState({});
+  const [describing, setDescribing] = useState(false);
+  const [enriching, setEnriching] = useState(false);
+  const [creating, setCreating] = useState(null);
+  const [outfitPreview, setOutfitPreview] = useState(null);
+
+  // calibrate + body previews
+  const [calibCands, setCalibCands] = useState([]);
+  const [bodyPreview, setBodyPreview] = useState(null);
+  const [bodyBusy, setBodyBusy] = useState(null);
+  const [videoBusy, setVideoBusy] = useState(null);
+  const [makeBusy, setMakeBusy] = useState(null);
+
+  const fail = (e) => setErr(String(e));
+
+  const refresh = useCallback(async () => {
+    const mine = epoch.current;
+    const [p, r, g, rf, b, wd, pl, pr, st, cm, vd, bd] = await Promise.all([
+      api.get("/api/parts"), api.get("/api/runs"), api.get("/api/gallery"),
+      api.get("/api/refs"), api.get("/api/bio"), api.get("/api/wardrobe"),
+      api.get("/api/pose-library"), api.get("/api/pose-refs"), api.get("/api/stats"),
+      api.get("/api/camera-moves"), api.get("/api/videos"), api.get("/api/bodies"),
+    ]);
+    if (mine !== epoch.current) return;
+    setParts(p.parts); setRuns(r.runs); setGallery(g); setRefs(rf.refs);
+    setBio(b); setWardrobe((wd.wardrobe || []).map(outfitView));
+    setPoseGroups(groupPoses(pl.poses, pl.categories));
+    setStats(st); setCameraMoves(cm); setVideos(vd.videos || []); setBodies(bd);
+  }, []);
+
+  const load = useCallback(async () => {
+    setLoading(true); setErr(null);
+    epoch.current += 1;
+    const mine = epoch.current;
+    try {
+      const chars = await api.get("/api/characters");
+      const id = charParam || chars.active;
+      const entry = (chars.characters || []).find((c) => c.id === id);
+      if (charParam && charParam !== chars.active) {
+        await api.send("/api/characters/active", "PUT", { id: charParam });
+      }
+      if (mine !== epoch.current) return;
+      setCharName(entry?.name || id || "");
+      setHasIdentity(!!entry?.has_identity);
+      setGenerations([]);
+      setCalibCands([]);   // calibration candidates are session-only; saved faces live in the Face Manager
+      await refresh();
+    } catch (e) { if (mine === epoch.current) fail(e); }
+    finally { if (mine === epoch.current) setLoading(false); }
+  }, [charParam, refresh]);
+
+  useEffect(() => { load(); }, [load]);
+
+  // ------------------------------------------------------------------ shoot
+  const pollGen = (jid) => {
+    const mine = epoch.current;
+    const tick = async () => {
+      if (mine !== epoch.current) return;
+      try {
+        const st = await api.get(`/api/jobs/${jid}`);
+        if (mine !== epoch.current) return;
+        setGenerations((gs) => gs.map((g) => (g.jid === jid ? { ...g, status: st, run: st.run || g.run } : g)));
+        if (st.done) { refresh().catch(() => {}); return; }
+      } catch { /* transient */ }
+      setTimeout(tick, 1500);
+    };
+    tick();
+  };
+
+  const onGenerate = async () => {
+    if (!bio?.reference) { setErr("No identity reference yet — calibrate her first."); return; }
+    setErr(null);
+    const label = brief.trim().slice(0, 40) || (selectedOutfit ? `outfit: ${selectedOutfit.name}` : "untitled shot");
+    const tmp = `tmp-${Date.now()}-${Math.round(Math.random() * 1e6)}`;
+    setGenerations((gs) => [{ jid: tmp, label, status: { stage: "starting", elapsed: 0, done: false }, run: null }, ...gs]);
+    try {
+      const { job } = await api.send("/api/shot", "POST", {
+        brief, aspect: "3:4", prompt: aiPrompt.trim() || null,
+        wardrobe_id: selectedOutfit?.id || null, pose_ref_id: null,
+        pose_id: selectedPose?.id || null, pose_text: null,
+        resolution, face_accessories: faceAcc,
+      });
+      setGenerations((gs) => gs.map((g) => (g.jid === tmp ? { ...g, jid: job } : g)));
+      pollGen(job);
+    } catch (e) {
+      fail(e);
+      setGenerations((gs) => gs.map((g) => (g.jid === tmp ? { ...g, status: { done: true, error: String(e) } } : g)));
+    }
+  };
+
+  const onAiPrompt = async () => {
+    const mine = epoch.current;
+    setAiBusy(true); setErr(null);
+    try {
+      const r = await api.send("/api/shot/ai-prompt", "POST", {
+        brief, wardrobe_id: selectedOutfit?.id || null, pose_ref_id: null,
+        pose_id: selectedPose?.id || null, pose_text: null,
+      });
+      if (mine === epoch.current) setAiPrompt(r.prompt);
+    } catch (e) { if (mine === epoch.current) fail(e); }
+    finally { if (mine === epoch.current) setAiBusy(false); }
+  };
+
+  // ------------------------------------------------------------ outfit designer
+  const openDesigner = () => { setDetails(null); setOutfitImageUrl(null); setDrawerOpen(true); };
+  const closeDesigner = () => setDrawerOpen(false);
+  const setDetailField = (k, v) => setDetails((d) => ({ ...(d || {}), [k]: v }));
+  const setPicker = (k, v) => setPickers((p) => ({ ...p, [k]: v }));
+
+  // Upload an outfit photo -> Claude describes it -> fills the designer box.
+  const describeOutfit = async (e) => {
+    const f = e.target.files?.[0]; e.target.value = "";
+    if (!f) return;
+    const mine = epoch.current;
+    setOutfitImageUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(f); });
+    setDrawerOpen(true); setDescribing(true); setErr(null);
+    try {
+      const d = await api.upload("/api/wardrobe/describe", f);
+      if (mine !== epoch.current) return;
+      setOutfitText(d.outfit); setDetails(d.details || {});
+    } catch (e2) { if (mine === epoch.current) fail(e2); }
+    finally { if (mine === epoch.current) setDescribing(false); }
+  };
+
+  const enrichOutfit = async () => {
+    const mine = epoch.current;
+    setEnriching(true); setErr(null);
+    try {
+      const r = await api.send("/api/wardrobe/enrich", "POST", { base: outfitText, idea, ...pickers });
+      if (mine === epoch.current) setOutfitText(r.outfit);
+    } catch (e) { if (mine === epoch.current) fail(e); }
+    finally { if (mine === epoch.current) setEnriching(false); }
+  };
+
+  const createOutfit = async () => {
+    const mine = epoch.current;
+    setCreating("starting…"); setErr(null); setOutfitPreview(null);
+    try {
+      const { job } = await api.send("/api/wardrobe/create", "POST", { outfit: mergeOutfit(outfitText, details) });
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 1500));
+        if (mine !== epoch.current) return;
+        const st = await api.get(`/api/jobs/${job}`);
+        if (mine !== epoch.current) return;
+        setCreating(STAGE[st.stage] || st.stage || "generating…");
+        if (st.done) { if (st.error) setErr(st.error); else setOutfitPreview(st.run); break; }
+      }
+    } catch (e) { if (mine === epoch.current) fail(e); }
+    finally { if (mine === epoch.current) setCreating(null); }
+  };
+
+  const saveOutfit = async (category) => {
+    const cat = (category || "").trim();
+    if (!cat) { setErr("Pick a category before saving."); return; }
+    if (!outfitPreview) return;
+    try {
+      const r = await api.send("/api/wardrobe/from-run", "POST", { run_id: outfitPreview.id, category: cat });
+      setOutfitPreview(null); setOutfitText(""); setDetails(null); setDrawerOpen(false);
+      await refresh();
+      setSelectedOutfit(outfitView({ id: r.id, file: r.file, category: cat }));
+    } catch (e) { fail(e); }
+  };
+  const discardOutfit = () => setOutfitPreview(null);
+
+  const uploadOutfit = async (file) => { try { await api.upload("/api/wardrobe/upload", file); await refresh(); } catch (e) { fail(e); } };
+
+  // ------------------------------------------------------------------ review
+  const mark = async (id, decision) => {
+    try { await api.send(`/api/runs/${id}/mark`, "POST", { decision }); await refresh(); }
+    catch (e) { fail(e); }
+  };
+  const deleteRun = async (id) => {
+    if (!window.confirm("Delete this image permanently?")) return;
+    try { await fetch(`/api/runs/${id}`, { method: "DELETE" }); await refresh(); }
+    catch (e) { fail(e); }
+  };
+  const exportGold = async () => {
+    try { const r = await api.send("/api/gold/export", "POST", {}); await refresh();
+      window.alert(`Gold set exported: ${r.exported} approved shots → data/gold/ (${r.gold_on_disk} on disk).`); }
+    catch (e) { fail(e); }
+  };
+  const purgeRejected = async () => {
+    if (!window.confirm("Delete all rejected images from disk? This cannot be undone.")) return;
+    try { const r = await api.send("/api/runs/purge-rejected", "POST", {}); await refresh();
+      window.alert(`Deleted ${r.deleted} rejected images · freed ${r.freed_mb} MB.`); }
+    catch (e) { fail(e); }
+  };
+  const cleanupImages = async () => {
+    if (!window.confirm("Reclaim disk by deleting orphaned images and spent outfit/body/calibration intermediates? Review shots are kept.")) return;
+    try { const r = await api.send("/api/images/cleanup", "POST", {}); await refresh();
+      window.alert(`Cleaned up · ${r.intermediates} intermediates · ${r.orphans} orphans · ${r.stale_thumbs} stale thumbnails · freed ${r.freed_mb} MB.`); }
+    catch (e) { fail(e); }
+  };
+
+  // ------------------------------------------------------------------ bio
+  const setBioRef = async (name) => { try { await api.send("/api/bio/reference", "PUT", { reference: name }); await refresh(); } catch (e) { fail(e); } };
+  const deleteRef = async (name) => { try { await fetch(`/api/refs/${name}`, { method: "DELETE" }); await refresh(); } catch (e) { fail(e); } };
+  const toGallery = async (name, view) => { try { await api.send("/api/gallery/from-ref", "POST", { name, view }); await refresh(); } catch (e) { fail(e); } };
+  const importRef = async (path) => { try { await api.send("/api/refs/import", "POST", { path }); await refresh(); } catch (e) { fail(e); } };
+  const uploadRef = async (file) => { try { await api.upload("/api/refs/upload", file); await refresh(); } catch (e) { fail(e); } };
+  const savePart = async (id, patch) => {
+    const next = parts.map((p) => (p.id === id ? { ...p, ...patch } : p));
+    setParts(next);
+    try { await api.send("/api/parts", "PUT", { parts: next }); } catch (e) { fail(e); }
+  };
+  const resetParts = async () => {
+    if (!window.confirm("Reset every part to defaults? Your edits are lost.")) return;
+    try { const r = await api.send("/api/parts/reset", "POST", {}); setParts(r.parts); } catch (e) { fail(e); }
+  };
+
+  // bodies
+  const uploadShape = async (file) => { try { return await api.upload("/api/bio/shape-ref/upload", file); } catch (e) { fail(e); } };
+  const createBody = async (shapeRef, shape) => {
+    const mine = epoch.current;
+    setBodyBusy("starting…"); setErr(null); setBodyPreview(null);
+    try {
+      const body = {}; if (shapeRef) body.shape_ref = shapeRef; if (shape) body.shape = shape;
+      const { job } = await api.send("/api/bio/body-ref/create", "POST", body);
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 1500));
+        if (mine !== epoch.current) return;
+        const st = await api.get(`/api/jobs/${job}`);
+        if (mine !== epoch.current) return;
+        setBodyBusy(st.stage || "generating…");
+        if (st.done) { if (st.error) setErr(st.error); else setBodyPreview(st.run); break; }
+      }
+    } catch (e) { if (mine === epoch.current) fail(e); }
+    finally { if (mine === epoch.current) setBodyBusy(null); }
+  };
+  const saveBody = async (name) => {
+    if (!name || !bodyPreview) return;
+    try {
+      const { id } = await api.send("/api/bodies/save", "POST", { run_id: bodyPreview.id, name });
+      await api.send("/api/bodies/select", "POST", { id });
+      setBodyPreview(null); await refresh();
+    } catch (e) { fail(e); }
+  };
+  const discardBody = () => setBodyPreview(null);
+  const selectBody = async (id) => { try { await api.send("/api/bodies/select", "POST", { id }); await refresh(); } catch (e) { fail(e); } };
+  const deleteBody = async (id) => { try { await fetch(`/api/bodies/${id}`, { method: "DELETE" }); await refresh(); } catch (e) { fail(e); } };
+
+  // ------------------------------------------------------------------ calibrate
+  const pollCalib = (jid) => {
+    const mine = epoch.current;
+    const tick = async () => {
+      if (mine !== epoch.current) return;
+      try {
+        const st = await api.get(`/api/jobs/${jid}`);
+        if (mine !== epoch.current) return;
+        if (st.done) {
+          setCalibCands((cs) => cs.map((c) => (c.jid === jid
+            ? (st.error ? { ...c, running: false, error: String(st.error).slice(0, 100) }
+              : { ...c, running: false, id: st.run.id, url: `/api/images/${st.run.file}`, yaw: st.run.verdict?.yaw, facePx: st.run.verdict?.face_px })
+            : c)));
+          return;
+        }
+        setCalibCands((cs) => cs.map((c) => (c.jid === jid ? { ...c, stage: st.stage } : c)));
+      } catch { /* transient */ }
+      setTimeout(tick, 2000);
+    };
+    tick();
+  };
+  const generateFaces = async (count) => {
+    setErr(null);
+    try {
+      const { jobs } = await api.send("/api/calibrate/faces", "POST", { count });
+      setCalibCands((cs) => [...jobs.map((j) => ({ jid: j.job, angle: j.angle, running: true, sel: false })), ...cs]);
+      jobs.forEach((j) => pollCalib(j.job));
+    } catch (e) { fail(e); }
+  };
+  const toggleCalib = (jid) => setCalibCands((cs) => cs.map((c) => (c.jid === jid ? { ...c, sel: !c.sel } : c)));
+  const addCalibToGallery = async () => {
+    const sel = calibCands.filter((c) => c.sel && c.id);
+    if (!sel.length) { setErr("Select at least one on-model face first."); return; }
+    try { for (const c of sel) await api.send("/api/calibrate/gallery/add", "POST", { run_id: c.id, view: c.angle }); await refresh(); }
+    catch (e) { fail(e); }
+  };
+  const setCalibIdentity = async (runId) => {
+    try { await api.send("/api/bio/reference/from-run", "POST", { run_id: runId, name: "identity" }); await refresh(); setHasIdentity(true); }
+    catch (e) { fail(e); }
+  };
+  const recalibrate = async () => { try { return await api.send("/api/calibrate/recalibrate", "POST", {}); } catch (e) { fail(e); } };
+  const resetGallery = async () => {
+    if (!window.confirm("Wipe the fingerprint to start a fresh calibration?")) return;
+    try { await api.send("/api/calibrate/reset", "POST", {}); await refresh(); } catch (e) { fail(e); }
+  };
+  const uploadSeed = async (file) => {
+    try {
+      const info = await api.upload("/api/refs/upload", file);
+      if (!info.usable) { setErr("No face detected in that image — pick a clear face photo."); return; }
+      await api.send("/api/calibrate/seed", "POST", { reference: info.name });
+      await refresh();
+    } catch (e) { fail(e); }
+  };
+
+  // ------------------------------------------------------------------ video
+  const generateStill = async ({ brief: b, wardrobe: w }) => {
+    const mine = epoch.current;
+    setErr(null);
+    const { job } = await api.send("/api/shot", "POST", { brief: b, wardrobe_id: w || null, aspect: "9:16", resolution: "2K" });
+    for (;;) {
+      await new Promise((r) => setTimeout(r, 1800));
+      if (mine !== epoch.current) throw new Error("cancelled");
+      const st = await api.get(`/api/jobs/${job}`);
+      if (st.done) { if (st.error) throw new Error(String(st.error)); await refresh(); return st.run; }
+    }
+  };
+  const videoDirect = async (scenario) => { try { return await api.send("/api/video-direct", "POST", { scenario }); } catch (e) { fail(e); throw e; } };
+  const animate = async (payload) => {
+    const mine = epoch.current;
+    setVideoBusy("starting…"); setErr(null);
+    try {
+      const { job } = await api.send("/api/animate", "POST", payload);
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 2000));
+        if (mine !== epoch.current) return;
+        const st = await api.get(`/api/jobs/${job}`);
+        if (mine !== epoch.current) return;
+        setVideoBusy(st.stage || "generating…");
+        if (st.done) { if (st.error) setErr(String(st.error)); break; }
+      }
+      if (mine === epoch.current) await refresh();
+    } catch (e) { if (mine === epoch.current) fail(e); }
+    finally { if (mine === epoch.current) setVideoBusy(null); }
+  };
+  const makeVideo = async (payload) => {
+    const mine = epoch.current;
+    setMakeBusy("starting…"); setErr(null);
+    try {
+      const { job } = await api.send("/api/make-video", "POST", payload);
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 3000));
+        if (mine !== epoch.current) return;
+        const st = await api.get(`/api/jobs/${job}`);
+        if (mine !== epoch.current) return;
+        setMakeBusy(st.stage || "working…");
+        if (st.done) { if (st.error) setErr(String(st.error)); break; }
+      }
+      if (mine === epoch.current) await refresh();
+    } catch (e) { if (mine === epoch.current) fail(e); }
+    finally { if (mine === epoch.current) setMakeBusy(null); }
+  };
+
+  // ---- derived views ----
+  const gens = generations.map(genView);
+  // /api/runs is already newest-first — keep that order (latest generation first).
+  const shots = (runs || []).filter((r) => { const m = r.meta || {}; return !m.outfit_create && !m.body_ref_create && !m.calibrate; })
+    .map((r) => ({ ...runView(r), approved: r.mark === "approve", rejected: r.mark === "reject" }));
+  const approvedStills = shots.filter((s) => s.status === "kept" || s.approved).slice(0, 30);
+  const outfitCategories = [...new Set((wardrobe || []).map((w) => w.category).filter((c) => c && c !== "Uncategorized"))];
+
+  return {
+    loading, err, setErr, charName, hasIdentity, bio, gallery, parts, refs, bodies, wardrobe,
+    poseGroups, stats, videos, cameraMoves, refresh,
+    // shoot
+    brief, setBrief, aiPrompt, setAiPrompt, aiBusy, onAiPrompt, resolution, setResolution,
+    faceAcc, setFaceAcc, selectedOutfit, setSelectedOutfit, selectedPose, setSelectedPose,
+    gens, onGenerate,
+    // outfit designer
+    drawerOpen, openDesigner, closeDesigner, outfitText, setOutfitText, outfitImageUrl,
+    details, setDetailField, idea, setIdea, pickers, setPicker, describing, enriching, creating,
+    outfitPreview, describeOutfit, enrichOutfit, createOutfit, saveOutfit, discardOutfit, uploadOutfit,
+    outfitCategories,
+    // review
+    shots, mark, deleteRun, exportGold, purgeRejected, cleanupImages,
+    // bio
+    setBioRef, deleteRef, toGallery, importRef, uploadRef, savePart, resetParts,
+    uploadShape, createBody, saveBody, discardBody, selectBody, deleteBody, bodyPreview, bodyBusy,
+    // calibrate
+    calibCands, generateFaces, toggleCalib, addCalibToGallery, setCalibIdentity, recalibrate, resetGallery, uploadSeed,
+    // video
+    approvedStills, generateStill, videoDirect, animate, makeVideo, videoBusy, makeBusy,
+    ep,
+  };
+}

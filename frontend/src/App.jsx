@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { LoaderCircle } from 'lucide-react'
-import Header from '@/components/eve/Header'
-import Landing from '@/components/eve/Landing'
-import Shoot from '@/components/eve/Shoot'
-import Bio from '@/components/eve/Bio'
-import Review from '@/components/eve/Review'
-import Calibrate from '@/components/eve/Calibrate'
-import VideoStudio from '@/components/eve/VideoStudio'
-import OriginModal from '@/components/eve/OriginModal'
-import OutfitDrawer from '@/components/eve/OutfitDrawer'
-import { api, genView, mergeOutfit, STAGE } from '@/lib/eve'
+import Header from '@/components/throughline/Header'
+import Landing from '@/components/throughline/Landing'
+import Shoot from '@/components/throughline/Shoot'
+import Bio from '@/components/throughline/Bio'
+import Review from '@/components/throughline/Review'
+import Calibrate from '@/components/throughline/Calibrate'
+import VideoStudio from '@/components/throughline/VideoStudio'
+import OriginModal from '@/components/throughline/OriginModal'
+import OutfitDrawer from '@/components/throughline/OutfitDrawer'
+import { api, genView, mergeOutfit, STAGE } from '@/lib/throughline'
 
 export default function App() {
   const [view, setView] = useState('landing')          // 'landing' (profile picker) | 'studio'
@@ -48,6 +48,8 @@ export default function App() {
   const [stamp, setStamp] = useState(0)                      // cache-buster for overwritten refs (body-canonical.png)
   const [poseRef, setPoseRef] = useState('')
   const [poseId, setPoseId] = useState('')                   // selected text-pose preset
+  const [poseText, setPoseText] = useState('')               // raw pose text reused from an
+                                                             // older shot whose pose_id is orphaned
   const [resolution, setResolution] = useState('4K')         // 1K | 2K | 4K
   const [faceAcc, setFaceAcc] = useState(true)               // render outfit's face-worn items (sunglasses/hats)
   const [poseLibrary, setPoseLibrary] = useState([])         // { id, text } presets
@@ -93,7 +95,7 @@ export default function App() {
     setGenerations([]); setCalibCands([]); setDetail(null)
     setRuns([]); setBio(null); setWardrobe([]); setGallery({ entries: [] })
     setVideos([]); setStats(null); setPoseRefs([]); setBodies([]); setParts([])
-    setOutfit(''); setPoseRef(''); setPoseId(''); setBrief(''); setAiPrompt('')
+    setOutfit(''); setPoseRef(''); setPoseId(''); setPoseText(''); setBrief(''); setAiPrompt('')
     setOutfitPreview(null); setBodyPreview(null); setOutfitImageUrl(null)
     setDrawerOpen(false); setDetails(null); setIdea(''); setPickers({})
     // reset every busy/spinner flag so none lingers on the next profile
@@ -208,6 +210,8 @@ export default function App() {
     tick()
   }, [refresh])
 
+  // Fire ONE generation for the same scene in a given pose. Each becomes its own
+  // queue card. Returns nothing; errors land on the card.
   const shoot = async () => {
     if (!bio?.reference) { setErr('No BIO reference — set one under bio › advanced · face.'); return }
     setErr(null)
@@ -219,7 +223,8 @@ export default function App() {
       const { job: jid } = await api.send('/api/shot', 'POST', {
         brief, aspect: '3:4', prompt: aiPrompt.trim() || null,
         wardrobe_id: outfit || null, pose_ref_id: poseRef || null,
-        pose_id: poseId || null, resolution, face_accessories: faceAcc,
+        pose_id: poseId || null, pose_text: poseId ? null : (poseText || null),
+        resolution, face_accessories: faceAcc,
       })
       setGenerations((gs) => gs.map((g) => (g.jid === tmp ? { ...g, jid } : g)))   // swap tmp → real job id
       pollGen(jid)
@@ -234,7 +239,7 @@ export default function App() {
     setAiBusy(true); setErr(null)
     try {
       const r = await api.send('/api/shot/ai-prompt', 'POST',
-        { brief, wardrobe_id: outfit || null, pose_ref_id: poseRef || null, pose_id: poseId || null })
+        { brief, wardrobe_id: outfit || null, pose_ref_id: poseRef || null, pose_id: poseId || null, pose_text: poseText || null })
       if (epoch !== switchEpoch.current) return
       setAiPrompt(r.prompt)
     } catch (e) { if (epoch === switchEpoch.current) setErr(String(e)) }
@@ -512,6 +517,17 @@ export default function App() {
       window.alert(`Deleted ${r.deleted} rejected images · freed ${r.freed_mb} MB.`)
     } catch (e) { setErr(String(e)) }
   }
+  // Reclaim disk: orphaned image files (no ledger row) + spent outfit/body/calibration
+  // intermediates. Never touches review-grid shots. Run when nothing is mid-generation.
+  const cleanupImages = async () => {
+    if (generationInProgress()) { setErr('A generation is still in progress — finish or save it before cleaning up.'); return }
+    if (!window.confirm('Reclaim disk by deleting orphaned images and spent outfit/body/calibration intermediates? Review shots are kept. This cannot be undone.')) return
+    try {
+      const r = await api.send('/api/images/cleanup', 'POST', {})
+      await refresh()
+      window.alert(`Cleaned up · ${r.intermediates} intermediates · ${r.orphans} orphans · ${r.stale_thumbs} stale thumbnails · freed ${r.freed_mb} MB.`)
+    } catch (e) { setErr(String(e)) }
+  }
   const toWardrobe = async (id) => {
     const name = window.prompt('Save this outfit to the wardrobe as:', ''); if (!name) return
     try { await api.send('/api/wardrobe/from-run', 'POST', { run_id: id, name }); await refresh() } catch (e) { setErr(String(e)) }
@@ -521,13 +537,21 @@ export default function App() {
     try { await api.send('/api/pose-refs/from-run', 'POST', { run_id: id, name }); await refresh() } catch (e) { setErr(String(e)) }
   }
   // Reuse the pose of a past shot: set its pose (text + any ref image) and jump to Shoot.
+  // If the shot's pose_id still exists in the current library, select it normally. If it
+  // was orphaned by a library rebuild, fall back to the stored pose_text so the pose is
+  // still reproduced verbatim.
   const usePose = (run) => {
     const m = run.meta || {}
-    setPoseId(m.pose_id || '')
+    const inLib = (poseLibrary || []).some((p) => p.id === m.pose_id)
+    if (inLib) { setPoseId(m.pose_id); setPoseText('') }
+    else { setPoseId(''); setPoseText(m.pose_text || '') }
     setPoseRef(m.pose_ref || '')
     setDetail(null)
     setTab('shoot')
   }
+
+  // Selecting a pose from the picker clears any reused-text pose (mutually exclusive).
+  const pickPose = (id) => { setPoseId(id); setPoseText('') }
 
   const setBioRef = async (name) => {
     try { await api.send('/api/bio/reference', 'PUT', { reference: name }); await refresh() } catch (e) { setErr(String(e)) }
@@ -593,7 +617,7 @@ export default function App() {
           brief={brief} setBrief={setBrief} aiPrompt={aiPrompt} setAiPrompt={setAiPrompt}
           aiBusy={aiBusy} onAiPrompt={aiWrite} onGenerate={shoot}
           outfit={outfit} setOutfit={setOutfit} poseRef={poseRef} setPoseRef={setPoseRef}
-          poseId={poseId} setPoseId={setPoseId} poseLibrary={poseLibrary}
+          poseId={poseId} setPoseId={pickPose} poseText={poseText} setPoseText={setPoseText} poseLibrary={poseLibrary}
           resolution={resolution} setResolution={setResolution}
           faceAcc={faceAcc} setFaceAcc={setFaceAcc}
           wardrobe={wardrobe} poseRefs={poseRefs}
@@ -642,7 +666,7 @@ export default function App() {
 
       {tab === 'video' && <VideoStudio runs={runs} cameraMoves={cameraMoves.moves} models={cameraMoves.models} videos={videos} wardrobe={wardrobe} onAnimate={animate} onDirect={videoDirect} onGenerateStill={generateSceneStill} onMakeVideo={makeVideo} busy={videoBusy} makeBusy={makeBusy} stamp={stamp} />}
 
-      {tab === 'review' && <Review runs={runs} onOpen={setDetail} onMark={mark} onDelete={deleteRun} stats={stats} onExportGold={exportGold} onPurgeRejected={purgeRejected} />}
+      {tab === 'review' && <Review runs={runs} onOpen={setDetail} onMark={mark} onDelete={deleteRun} stats={stats} onExportGold={exportGold} onPurgeRejected={purgeRejected} onCleanupImages={cleanupImages} />}
 
       <OutfitDrawer open={drawerOpen} imageUrl={outfitImageUrl} describing={describing}
         outfitText={outfitText} setOutfitText={setOutfitText} details={details} onDetail={setDetailField}

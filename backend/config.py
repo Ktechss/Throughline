@@ -101,9 +101,7 @@ GALLERY_META = CharPath("state", "gallery.json")   # per-entry yaw/face_px — n
                                                    # know whether a comparison is fair
 THRESHOLD_PATH = CharPath("state", "threshold.json")
 PARTS_PATH = CharPath("state", "parts.json")
-RUNS_PATH = CharPath("state", "runs.json")         # cold backup; runs live in eve1.db
 BODIES_META = CharPath("state", "bodies.json")     # body-type metadata: build text + active
-VIDEOS_META = CharPath("state", "videos.json")     # cold backup; videos live in eve1.db
 BIO_PATH = CharPath("state", "bio.json")           # reference / body_reference / calib_seed
 
 

@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-/* eve1 dark shell — ported from the eve-pixel-pulse design */
+/* Throughline dark shell — ported from the eve-pixel-pulse design */
 body { margin: 0; background: #0c0c0f; color: #e6e6ea;
   font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
 * { box-sizing: border-box; }

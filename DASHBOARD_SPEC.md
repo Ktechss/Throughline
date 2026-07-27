@@ -1,13 +1,13 @@
-# eve1 dashboard — build spec / AI-UI prompt
+# Throughline dashboard — build spec / AI-UI prompt
 
-A copy-paste build prompt for recreating the eve1 frontend in another UI tool
+A copy-paste build prompt for recreating the Throughline frontend in another UI tool
 (v0, Lovable, Bolt, Figma Make, or hand-built). It captures the layout, every
 feature, the interaction model, the design system, and the backend API contract
 so the rebuilt UI can wire straight to the existing FastAPI backend.
 
 ---
 
-**Build a single-page dashboard called "eve1" — a control panel for a
+**Build a single-page dashboard called "Throughline" — a control panel for a
 photorealistic AI character-image pipeline. It's a client-side SPA that talks to
 an existing REST backend (all endpoints under `/api`, proxied to
 `http://localhost:8000`). Dark theme, dense but clean, desktop-first.**
@@ -19,7 +19,7 @@ an existing REST backend (all endpoints under `/api`, proxied to
 - Max content width ~1180px, centered. Small "tag" chips (10px) for statuses.
 
 ## Global shell
-- **Header:** title "eve1" · nav tabs `shoot | bio | review` (review shows a count) · right-aligned "gallery: …" status text.
+- **Header:** title "Throughline" · nav tabs `shoot | bio | review` (review shows a count) · right-aligned "gallery: …" status text.
 - **Error banner:** dismissible red bar under the header (click to clear).
 
 ## Screen 1 — SHOOT (default)

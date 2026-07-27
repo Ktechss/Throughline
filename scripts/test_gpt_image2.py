@@ -19,7 +19,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-sys.path.insert(0, r"C:\Users\knaik\Personal-Projects\eve1")
+sys.path.insert(0, r"C:\Users\knaik\Personal-Projects\Throughline")
 
 from backend import gate, generate                          # noqa: E402
 from backend.config import REFS                             # noqa: E402

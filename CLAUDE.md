@@ -25,8 +25,8 @@ If you want one, you want a number instead.
 
 The one exception, and it is real: **her body**. Person re-ID keys on clothing,
 which varies by design, so there is no automated body-consistency check. The
-`mark` field in `data/state/runs.json` is a human verdict, and it exists
-precisely for the axis the gate is blind to.
+`mark` field on each run (stored in the `runs` table of `data/eve1.db`) is a
+human verdict, and it exists precisely for the axis the gate is blind to.
 
 ## Two rules the code enforces so nobody has to remember them
 
