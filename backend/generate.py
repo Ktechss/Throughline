@@ -231,12 +231,24 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
     moderation_fallback = used_ep != primary
     if progress is not None:
         progress["stage"] = "downloading"
-    # A bounded download: urlretrieve honours no timeout, so a stalled connection
-    # would hang the worker forever (same silent-hang failure as an untimed fal
-    # call). Stream through urlopen with an explicit timeout instead.
+    # A bounded download. urlopen's timeout is PER socket read, not total — a
+    # connection that trickles a few bytes inside each window never trips it and
+    # hangs the worker for minutes (observed: stuck 'downloading' at 250s+ with a
+    # 120s timeout). Enforce a TOTAL wall-clock budget on the read loop so a slow
+    # or stalled transfer fails cleanly and the shot can be retried.
+    deadline = time.monotonic() + DOWNLOAD_TIMEOUT
     with urllib.request.urlopen(r["images"][0]["url"], timeout=DOWNLOAD_TIMEOUT) as resp, \
             open(dest, "wb") as fh:
-        shutil.copyfileobj(resp, fh)
+        while True:
+            if time.monotonic() > deadline:
+                fh.close()
+                dest.unlink(missing_ok=True)
+                raise RuntimeError(f"download timed out after {DOWNLOAD_TIMEOUT}s "
+                                   f"(stalled/slow connection to fal) ({rid})")
+            chunk = resp.read(262144)   # 256 KB
+            if not chunk:
+                break
+            fh.write(chunk)
 
     # A truncated download gates as no_face, which looks identical to identity
     # drift — a dead connection recorded as a model failure.
