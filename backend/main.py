@@ -1711,8 +1711,11 @@ def _nails() -> list[dict]:
     out = []
     for p in sorted(NAILS.iterdir()) if NAILS.exists() else []:
         if p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
+            m = meta.get(p.stem, {}) or {}
             out.append({"id": p.stem, "file": p.name,
-                        "description": (meta.get(p.stem, {}) or {}).get("description", "")})
+                        "name": m.get("name") or p.stem,
+                        "category": m.get("category") or "Uncategorized",
+                        "description": m.get("description", "")})
     return out
 
 
@@ -1721,9 +1724,22 @@ def list_nails():
     return {"nails": _nails()}
 
 
+@app.post("/api/nails/describe")
+async def nails_describe(file: UploadFile = File(...)):
+    """Read a manicure image and return a nail description — does NOT save it.
+    Step one of the upload modal; the user reviews it, adds a name/category, saves."""
+    data = await file.read()
+    media = describe.media_type(file.filename or "", file.content_type)
+    try:
+        return {"description": describe.describe_nails(data, media)}
+    except describe.DescribeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
 @app.post("/api/nails/upload")
-async def nails_upload(file: UploadFile = File(...)):
-    """Upload a manicure reference image; Claude auto-describes the nails (editable)."""
+async def nails_upload(file: UploadFile = File(...), name: str = Form(""),
+                       category: str = Form(""), description: str = Form("")):
+    """Save a manicure reference image with a name, category and description."""
     data = await file.read()
     Path(NAILS).mkdir(parents=True, exist_ok=True)
     ext = Path(file.filename or "").suffix.lower()
@@ -1734,29 +1750,41 @@ async def nails_upload(file: UploadFile = File(...)):
         i += 1
     dest = NAILS / f"nail{i}{ext}"
     dest.write_bytes(data)
-    desc = ""
-    try:
-        media = describe.media_type(file.filename or "", file.content_type)
-        desc = describe.describe_nails(data, media)
-    except describe.DescribeError:
-        desc = ""   # describe is best-effort; the user can type/edit the text
+    desc = description.strip()
+    if not desc:   # fall back to a fresh auto-describe if none supplied
+        try:
+            desc = describe.describe_nails(data, describe.media_type(file.filename or "", file.content_type))
+        except describe.DescribeError:
+            desc = ""
     meta = _nails_meta()
-    meta[dest.stem] = {"description": desc}
+    meta[dest.stem] = {"name": name.strip() or dest.stem,
+                       "category": category.strip() or "Uncategorized",
+                       "description": desc}
     _save_nails_meta(meta)
-    return {"id": dest.stem, "file": dest.name, "description": desc}
+    return {"id": dest.stem, "file": dest.name, "name": meta[dest.stem]["name"],
+            "category": meta[dest.stem]["category"], "description": desc}
 
 
 class NailDescReq(BaseModel):
-    description: str = ""
+    name: str | None = None
+    category: str | None = None
+    description: str | None = None
 
 
 @app.put("/api/nails/{name}")
 def nails_update(name: str, req: NailDescReq):
     stem = Path(name).stem
     meta = _nails_meta()
-    meta[stem] = {"description": req.description}
+    cur = meta.get(stem, {}) or {}
+    if req.name is not None:
+        cur["name"] = req.name.strip() or stem
+    if req.category is not None:
+        cur["category"] = req.category.strip() or "Uncategorized"
+    if req.description is not None:
+        cur["description"] = req.description
+    meta[stem] = cur
     _save_nails_meta(meta)
-    return {"id": stem, "description": req.description}
+    return {"id": stem, **cur}
 
 
 @app.get("/api/nails/{name}/file")
