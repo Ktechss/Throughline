@@ -24,7 +24,7 @@ from pathlib import Path
 
 import fal_client
 
-sys.path.insert(0, r"C:\Users\knaik\Personal-Projects\Throughline")
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from backend import gate                                   # noqa: E402
 from backend.config import IMAGES, REFS                    # noqa: E402

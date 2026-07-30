@@ -1,5 +1,8 @@
 """FastAPI app behind the React UI.
 
+    # Linux / WSL
+    .venv/bin/python -m uvicorn backend.main:app --reload --port 8000
+    # Windows
     .venv-win\\Scripts\\python.exe -m uvicorn backend.main:app --reload --port 8000
 """
 

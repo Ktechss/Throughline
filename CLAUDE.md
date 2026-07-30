@@ -58,11 +58,26 @@ frontal images score high — so a broken pose control looks like success.
 
 ## Running it
 
+The code is **cross-platform** (Linux server / WSL + native Windows). Paths are
+all `pathlib`-relative; nothing branches on the OS except the `.venv-gen`
+interpreter location in `config.py`.
+
+**Linux / WSL** (the deploy target):
+
+    ./setup.sh          # one-time: venv + deps + frontend + .env
+    ./run.sh            # backend :8000 + frontend :5173  (open :5173)
+
+**Windows** (native dev, still supported):
+
     .venv-win\Scripts\python.exe -m uvicorn backend.main:app --reload --port 8000
     cd frontend && npm run dev        # http://localhost:5173
 
-Python **3.11** (`.venv-win`) — not 3.14, which has no onnxruntime wheels. The
-old WSL `.venv` is gone; this is native Windows.
+Python **3.11** either way — not 3.14, which has no onnxruntime wheels. On Linux
+the venv is `.venv` (`bin/python`); on Windows it's `.venv-win`
+(`Scripts\python.exe`). Two portability notes baked into `setup.sh`:
+`python-multipart` is required for the upload endpoints, and the headless
+`opencv-python` build must win over the full one insightface drags in (the full
+one links `libGL`, absent on a GUI-less server).
 
 ## Open questions
 

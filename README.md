@@ -80,32 +80,37 @@ Runs / videos / wardrobe metadata live in a single global SQLite db
 **Prerequisites:** Python **3.11** (not 3.14 — `onnxruntime` has no wheels for it),
 Node 18+, a [fal](https://fal.ai) API key, and an [Anthropic](https://console.anthropic.com) API key.
 
-**1. Environment**
+The code is **cross-platform**. Linux is the deploy target; native Windows still works.
+
+### Linux / WSL (recommended)
 
 ```bash
 cp .env.example .env      # then put your real keys in .env
-# .env:
-#   FAL_KEY=…            # image/video generation (fal.ai)
-#   ANTHROPIC_API_KEY=…  # Claude — bio writing, AI prompt, describe/enrich
+./setup.sh                # venv (.venv) + backend deps + frontend + .env
+./run.sh                  # backend :8000 + frontend :5173
 ```
 
-**2. Backend** (Windows, native — the venv is `.venv-win`)
+Open **http://localhost:5173**. `./run.sh backend` or `./run.sh frontend` run one side.
+
+If `python3.11` is missing on Ubuntu/WSL: `sudo apt install python3.11 python3.11-venv`.
+
+### Windows (native)
 
 ```bash
+cp .env.example .env
 py -3.11 -m venv .venv-win
 .venv-win\Scripts\python.exe -m pip install -r requirements.txt
 .venv-win\Scripts\python.exe -m uvicorn backend.main:app --reload --port 8000
+# in a second terminal:
+cd frontend && npm install && npm run dev      # http://localhost:5173
 ```
 
-**3. Frontend**
+`.env` keys either way:
 
-```bash
-cd frontend
-npm install
-npm run dev            # http://localhost:5173  (proxies /api to :8000)
 ```
-
-Open **http://localhost:5173**.
+FAL_KEY=…            # image/video generation (fal.ai)
+ANTHROPIC_API_KEY=…  # Claude — bio writing, AI prompt, describe/enrich
+```
 
 ---
 

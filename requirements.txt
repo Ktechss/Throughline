@@ -1,12 +1,18 @@
-﻿# Python 3.11 (.venv-win) — NOT 3.14, which has no onnxruntime wheels.
+# Python 3.11 — NOT 3.14, which has no onnxruntime wheels.
+# Cross-platform (Linux + Windows). See setup.sh / README for install.
 insightface==1.0.1
 onnx==1.22.0
 onnxruntime==1.27.0
+# insightface pulls full opencv-python (needs libGL); we pin the headless build
+# so it works on a GUI-less Linux server. setup.sh force-reinstalls headless LAST
+# so its cv2 wins over the one insightface drags in.
 opencv-python-headless>=4.10
 numpy>=2.0
 pillow>=10
 fastapi>=0.115
 uvicorn[standard]>=0.30
+# FastAPI form/file uploads (the app's upload endpoints) require this.
+python-multipart>=0.0.9
 pydantic>=2.7
 python-dotenv>=1.0
 fal-client>=0.5

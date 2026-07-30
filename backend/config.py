@@ -12,6 +12,7 @@ config are NOT per-character and stay plain constants.
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -176,5 +177,9 @@ RESOLUTION = "4K"
 # subprocess — the web backend never imports torch. LOCAL_ENDPOINT is the
 # sentinel generate() keys off to shell out instead of calling fal.
 LOCAL_ENDPOINT = "local/sdxl-ip-adapter"
-LOCAL_PY = ROOT / ".venv-gen" / "Scripts" / "python.exe"
+# The .venv-gen layout differs by OS: Windows puts the interpreter in
+# Scripts/python.exe, POSIX in bin/python. Resolve it so the same code shells out
+# correctly on Linux servers and Windows dev boxes.
+_GEN_BIN, _GEN_PY = ("Scripts", "python.exe") if sys.platform == "win32" else ("bin", "python")
+LOCAL_PY = ROOT / ".venv-gen" / _GEN_BIN / _GEN_PY
 LOCAL_WORKER = ROOT / "local" / "generate_local.py"
