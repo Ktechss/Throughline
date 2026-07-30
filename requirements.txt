@@ -16,3 +16,7 @@ python-multipart>=0.0.9
 pydantic>=2.7
 python-dotenv>=1.0
 fal-client>=0.5
+# Video pipeline (backend/video.py): strip-audio, per-frame re-gate, stitch.
+# moviepy needs an ffmpeg binary — imageio-ffmpeg bundles one (no system ffmpeg).
+moviepy>=2.0
+imageio-ffmpeg>=0.5
