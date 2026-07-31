@@ -31,7 +31,7 @@ export default function ImageDetail({ image, wardrobe = [], onClose, onMark, onT
         className="relative my-auto w-full max-w-6xl rounded-2xl border border-white/10 bg-[#0d0d0f] flex max-h-[92vh] flex-col overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-white/5 px-5 py-3">
-          <VerdictChip status={image.status} similarity={image.similarity} yaw={image.yaw} facePx={image.facePx} poseMismatch={image.poseMismatch} />
+          <VerdictChip status={image.status} pov={image.pov} similarity={image.similarity} yaw={image.yaw} facePx={image.facePx} poseMismatch={image.poseMismatch} />
           <button onClick={onClose} className="text-zinc-400 hover:text-white"><X className="h-5 w-5" /></button>
         </div>
 

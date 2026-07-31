@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { useSearchParams, Link } from "react-router-dom";
-import { ShieldCheck, ShieldAlert, Lock, ChevronLeft, Camera, IdCard, Sliders, Film, GalleryHorizontal } from "lucide-react";
+import { ShieldCheck, ShieldAlert, Lock, ChevronLeft, Camera, IdCard, Sliders, Film, GalleryHorizontal, Wand2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api } from "@/api/throughline";
 import { useStudio } from "@/api/useStudio";
@@ -8,6 +8,7 @@ import ShootTab from "@/components/studio/ShootTab";
 import BioTab from "@/components/studio/BioTab";
 import CalibrateTab from "@/components/studio/CalibrateTab";
 import VideoTab from "@/components/studio/VideoTab";
+import MotionTab from "@/components/studio/MotionTab";
 import ReviewTab from "@/components/studio/ReviewTab";
 import ImageDetail from "@/components/studio/ImageDetail";
 import OutfitDrawer from "@/components/studio/OutfitDrawer";
@@ -17,6 +18,7 @@ const TABS = [
   { id: "bio", label: "Bio", icon: IdCard },
   { id: "calibrate", label: "Calibrate", icon: Sliders },
   { id: "video", label: "Film", icon: Film },
+  { id: "motion", label: "Motion", icon: Wand2 },
   { id: "review", label: "Review", icon: GalleryHorizontal },
 ];
 
@@ -150,6 +152,7 @@ export default function Studio() {
                 aiBusy={s.aiBusy} onAiPrompt={s.onAiPrompt}
                 resolution={s.resolution} setResolution={s.setResolution}
                 faceAcc={s.faceAcc} setFaceAcc={s.setFaceAcc}
+                pov={s.pov} setPov={s.setPov}
                 selectedOutfit={s.selectedOutfit} setSelectedOutfit={s.setSelectedOutfit}
                 selectedPose={s.selectedPose} setSelectedPose={s.setSelectedPose}
                 onGenerate={s.onGenerate} hasIdentity={!!s.bio?.reference}
@@ -185,6 +188,14 @@ export default function Studio() {
                 stills={s.approvedStills} videos={s.videos} cameraMoves={s.cameraMoves} wardrobe={s.wardrobe}
                 onAnimate={s.animate} onMakeVideo={s.makeVideo} onDirect={s.videoDirect} onGenerateStill={s.generateStill}
                 videoBusy={s.videoBusy} makeBusy={s.makeBusy}
+              />
+            )}
+            {tab === "motion" && (
+              <MotionTab
+                videos={s.videos} wardrobe={s.wardrobe}
+                onUploadDriver={s.uploadDriver} onUploadDriverUrl={s.uploadDriverUrl}
+                onGenerateStill={s.generateStill} onRunMotion={s.runMotion}
+                motionBusy={s.motionBusy}
               />
             )}
             {tab === "review" && (

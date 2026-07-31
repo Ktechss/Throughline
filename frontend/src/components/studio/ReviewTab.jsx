@@ -109,9 +109,9 @@ function ShotCard({ shot, onOpen, onApprove, onReject, onDelete }) {
       <button onClick={onOpen} className="relative block w-full aspect-[4/5] overflow-hidden bg-zinc-900">
         <img src={shot.thumb} alt={shot.brief} className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]" />
         <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-2.5">
-          <VerdictChip status={shot.status} similarity={shot.similarity} yaw={shot.yaw} facePx={shot.facePx} />
+          <VerdictChip status={shot.status} pov={shot.pov} similarity={shot.similarity} yaw={shot.yaw} facePx={shot.facePx} />
         </div>
-        <div className={cn("absolute top-2 right-2 h-2.5 w-2.5 rounded-full ring-2 ring-black/40", shot.status === "kept" ? "bg-emerald-400" : "bg-rose-400")} />
+        <div className={cn("absolute top-2 right-2 h-2.5 w-2.5 rounded-full ring-2 ring-black/40", shot.pov ? "bg-indigo-400" : shot.status === "kept" ? "bg-emerald-400" : "bg-rose-400")} />
       </button>
       <div className="px-2.5 py-2">
         <div className="text-[11px] text-zinc-300 line-clamp-1">{shot.brief}</div>

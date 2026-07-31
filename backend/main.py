@@ -2003,6 +2003,9 @@ class ShotReq(BaseModel):
     resolution: str | None = None    # "1K" | "2K" | "4K" (nano). None -> config default
     face_accessories: bool = True    # render face-worn items (sunglasses/hats) from the
                                      # outfit; off = keep her face clear (better identity)
+    pov: bool = False                # faceless first-person POV product/lifestyle shot —
+                                     # the face ref anchors skin tone but stays out of frame;
+                                     # nails/setting/outfit are the anchors, gate is N/A
 
 
 class AiPromptReq(BaseModel):
@@ -2103,7 +2106,10 @@ def shot(req: ShotReq):
     # bust/waist/hips edits actually change the output. The AI prompter is barred
     # from describing her body, so it's appended after Claude's scene prompt.
     build_text = promptlib.build_clause(_load_parts())
-    if req.prompt and req.prompt.strip():
+    # POV is a specific faceless first-person framing that a generic AI prompt (which
+    # references @image1 and describes her posing) would fight — so POV always uses
+    # the template's POV branch and ignores any AI prompt.
+    if req.prompt and req.prompt.strip() and not req.pov:
         # AI-written (and user-edited) prompt: use it verbatim, only running the
         # moderation sanitiser so a trigger can't slip through. The reference
         # tags (@image1/2/3) are the user's/Claude's responsibility here.
@@ -2125,7 +2131,8 @@ def shot(req: ShotReq):
         pose_text = req.pose_text or promptlib.POSES_LIBRARY.get(req.pose_id or "", "")
         text, sanitised = promptlib.compose_tagged(
             req.brief, pose_text=pose_text, has_wardrobe=has_wardrobe,
-            pose_ref_tag=pose_ref_tag, build_text=build_text, shot_type=req.shot_type)
+            pose_ref_tag=pose_ref_tag, build_text=build_text, shot_type=req.shot_type,
+            pov=req.pov)
 
     # Carry the outfit's FULL styling into the shot. The turnaround (@image2) has
     # her head cropped and may not show every accessory, so the saved outfit
@@ -2201,9 +2208,13 @@ def shot(req: ShotReq):
     # text is what lets "use this pose" survive a library rebuild.
     pose_text_used = req.pose_text or promptlib.POSES_LIBRARY.get(req.pose_id or "", "")
 
+    # POV framing is phone-portrait; use 4:5 unless the caller set a non-default aspect.
+    # No face to gate, so the 4K-for-face-pixels rationale (config) doesn't apply — 2K is fine.
+    aspect = ("4:5" if req.pov and req.aspect in (None, "", "3:4") else req.aspect)
+
     def run(job: dict) -> dict:
         return generate.generate(
-            prompt=text, system="", refs=refs, aspect=req.aspect,
+            prompt=text, system="", refs=refs, aspect=aspect,
             seed=req.seed, session=session, progress=job,
             # If gpt-image-2 refuses a revealing outfit on content_policy, render
             # it on the scene model instead (weaker identity, recorded) rather
@@ -2215,7 +2226,7 @@ def shot(req: ShotReq):
                   "pose_text": pose_text_used,
                   "pose_ref": req.pose_ref_id, "nail_id": req.nail_id,
                   "home_corner": home_corner.stem if home_corner else None,
-                  "sanitised": sanitised,
+                  "sanitised": sanitised, "pov": req.pov,
                   "ai_prompt": bool(req.prompt and req.prompt.strip())},
         )
 
@@ -2505,6 +2516,126 @@ def video_file(name: str):
     if not p.exists():
         raise HTTPException(404, name)
     return FileResponse(p)
+
+
+# ---------------------------------------------------------------- motion transfer
+# Pose-driven video-to-video: a driving video + HER reference still -> her doing
+# that motion (wan-motion). Identity comes from the still; the driver gives only
+# pose. See videolib.motion / WAN_MOTION for why this is identity-safe.
+
+class MotionReq(BaseModel):
+    still: str | None = None       # a still filename under data/images
+    run_id: str | None = None      # or a run to pull the still from
+    driver: str = ""               # driver video filename (from /api/motion/driver)
+    prompt: str = ""
+    max_seconds: float | None = None   # optional: trim the driver to cap cost (720p @ $0.06/s)
+    seed: int | None = None
+
+
+def _driver_probe(path: Path) -> dict:
+    """First-frame preview (base64 PNG data URL) + duration/dims for a driver."""
+    import base64
+    import cv2
+    cap = cv2.VideoCapture(str(path))
+    fps = cap.get(cv2.CAP_PROP_FPS) or 0
+    n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 0
+    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    ok, frame = cap.read()
+    cap.release()
+    preview = None
+    if ok:
+        scale = 360 / max(frame.shape[:2])
+        small = cv2.resize(frame, (int(frame.shape[1] * scale), int(frame.shape[0] * scale)))
+        okp, buf = cv2.imencode(".png", small)
+        if okp:
+            preview = "data:image/png;base64," + base64.b64encode(buf.tobytes()).decode()
+    return {"driver": path.name, "duration": round(n / fps, 1) if fps else 0,
+            "w": w, "h": h, "first_frame": preview}
+
+
+@app.post("/api/motion/driver")
+async def motion_driver_upload(file: UploadFile = File(...)):
+    """Save an uploaded driving video; return a first-frame preview + metadata."""
+    import uuid
+    data = await file.read()
+    ext = Path(file.filename or "").suffix.lower()
+    if ext not in (".mp4", ".mov", ".webm", ".m4v", ".gif"):
+        ext = ".mp4"
+    Path(VIDEOS).mkdir(parents=True, exist_ok=True)
+    dest = VIDEOS / f"driver_{uuid.uuid4().hex[:10]}{ext}"
+    dest.write_bytes(data)
+    if dest.stat().st_size < 10_000:
+        dest.unlink(missing_ok=True)
+        raise HTTPException(400, "that file doesn't look like a video")
+    return _driver_probe(dest)
+
+
+class DriverUrlReq(BaseModel):
+    url: str
+
+
+@app.post("/api/motion/driver-url")
+def motion_driver_url(req: DriverUrlReq):
+    """Fetch a driving video from a URL. Best-effort — many sites (e.g. Pinterest)
+    are JS-gated and won't serve the raw .mp4; upload the file instead if this fails."""
+    import urllib.request
+    import uuid
+    dest = VIDEOS / f"driver_{uuid.uuid4().hex[:10]}.mp4"
+    try:
+        r = urllib.request.Request(req.url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(r, timeout=30) as resp, open(dest, "wb") as f:
+            shutil.copyfileobj(resp, f)
+    except Exception as exc:  # noqa: BLE001 — surface a helpful message to the UI
+        dest.unlink(missing_ok=True)
+        raise HTTPException(400, f"couldn't fetch that URL — download it and upload instead ({str(exc)[:120]})") from exc
+    if dest.stat().st_size < 10_000:
+        dest.unlink(missing_ok=True)
+        raise HTTPException(400, "that URL did not return a video file — upload the file instead")
+    return _driver_probe(dest)
+
+
+@app.post("/api/motion")
+def motion(req: MotionReq):
+    """Pose-driven motion transfer (wan-motion): put HER (still) into a driver
+    video's motion. Starts a background job; poll via /api/jobs/{id}."""
+    still = None
+    if req.still:
+        p = IMAGES / Path(req.still).name
+        if p.exists():
+            still = p
+    if still is None and req.run_id:
+        row = next((r for r in generate.all_runs() if r["id"] == req.run_id), None)
+        if row:
+            still = IMAGES / row["file"]
+    if still is None or not still.exists():
+        raise HTTPException(400, "no such still — pass a valid still or run_id")
+    driver = VIDEOS / Path(req.driver).name
+    if not req.driver or not driver.exists():
+        raise HTTPException(400, "no such driver — upload one via /api/motion/driver first")
+
+    def run(job: dict) -> dict:
+        src = driver
+        if req.max_seconds and req.max_seconds > 0:
+            job["stage"] = "trimming driver"
+            import os
+            import uuid
+            os.environ.setdefault("IMAGEIO_FFMPEG_EXE",
+                                  __import__("imageio_ffmpeg").get_ffmpeg_exe())
+            from moviepy import VideoFileClip
+            clip = VideoFileClip(str(driver))
+            try:
+                if clip.duration > req.max_seconds:
+                    trimmed = VIDEOS / f"driver_{uuid.uuid4().hex[:8]}_trim.mp4"
+                    clip.subclipped(0, req.max_seconds).write_videofile(
+                        str(trimmed), fps=24, codec="libx264", audio=False,
+                        preset="veryfast", logger=None)
+                    src = trimmed
+            finally:
+                clip.close()
+        return videolib.motion(still, src, prompt=req.prompt, seed=req.seed, progress=job)
+
+    return {"job": generate.start_job("motion transfer", run)}
 
 
 def _run_shot_sync(brief: str, wardrobe_id: str | None = None, *,

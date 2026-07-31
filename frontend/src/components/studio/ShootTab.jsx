@@ -12,7 +12,7 @@ const RES = ["1K", "2K", "4K"];
 export default function ShootTab({
   gens, outfits, poseGroups,
   brief, setBrief, aiPrompt, setAiPrompt, aiBusy, onAiPrompt,
-  resolution, setResolution, faceAcc, setFaceAcc,
+  resolution, setResolution, faceAcc, setFaceAcc, pov, setPov,
   selectedOutfit, setSelectedOutfit, selectedPose, setSelectedPose,
   onGenerate, hasIdentity, onOpenDetail, onUploadOutfit, onOpenDesigner,
   creating, outfitPreview, onSaveOutfit, onDiscardOutfit, outfitCategories = [],
@@ -77,7 +77,15 @@ export default function ShootTab({
               </span>
               Face accessories
             </button>
+            <button type="button" onClick={() => setPov(!pov)} title="Faceless first-person product/lifestyle shot — anchored on her hand, manicure, outfit and setting"
+              className="flex items-center gap-2 text-[12px] text-zinc-400 hover:text-zinc-200">
+              <span className={cn("relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors", pov ? "bg-emerald-500/80" : "bg-white/10")}>
+                <span className={cn("absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform", pov ? "translate-x-4" : "translate-x-0")} />
+              </span>
+              POV (faceless)
+            </button>
           </div>
+          {pov && <p className="mt-2 text-[11px] text-emerald-300/80">POV mode: no face — describe the product / what's in her hand in the brief. Pick a manicure for best hand consistency. The AI prompt is ignored in POV; identity gate is N/A.</p>}
 
           {/* Generate button */}
           <button
@@ -198,7 +206,7 @@ function GenerationCard({ gen, onOpen }) {
       <div className="relative aspect-square overflow-hidden bg-zinc-900">
         <img src={gen.thumb} alt={gen.brief} className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.02]" />
         <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent p-1.5">
-          <VerdictChip status={gen.status} similarity={gen.similarity} yaw={gen.yaw} facePx={gen.facePx} poseMismatch={gen.poseMismatch} />
+          <VerdictChip status={gen.status} pov={gen.pov} similarity={gen.similarity} yaw={gen.yaw} facePx={gen.facePx} poseMismatch={gen.poseMismatch} />
         </div>
       </div>
       <div className="px-2 py-1.5">

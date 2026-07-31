@@ -49,6 +49,7 @@ export function runView(r) {
     url: `/api/images/${r.file}`,
     thumb: `/api/images/${r.file}/thumb`,
     status: v.status || "ungated",
+    pov: !!r.meta?.pov,
     similarity: v.similarity ?? null,
     yaw: v.yaw ?? null,
     facePx: v.face_px ?? null,

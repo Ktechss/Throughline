@@ -7,7 +7,19 @@ const STATUS_STYLES = {
   ungated: { dot: "bg-zinc-500", text: "text-zinc-400", label: "Ungated", ring: "ring-zinc-500/30" },
 };
 
-export default function VerdictChip({ status, similarity, yaw, facePx, poseMismatch, className }) {
+export default function VerdictChip({ status, similarity, yaw, facePx, poseMismatch, pov, className }) {
+  // POV / faceless-by-design: the face gate does not apply — show intent, not a failure.
+  if (pov) {
+    return (
+      <div className={cn("flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-medium", className)}>
+        <span className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 ring-1 text-indigo-300 ring-indigo-500/30 bg-white/5">
+          <span className="h-1.5 w-1.5 rounded-full bg-indigo-400" />
+          POV · no face
+        </span>
+        <span className="text-zinc-500">gate N/A</span>
+      </div>
+    );
+  }
   const s = STATUS_STYLES[status] || STATUS_STYLES.ungated;
   return (
     <div className={cn("flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-medium", className)}>

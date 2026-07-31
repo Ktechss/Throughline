@@ -31,6 +31,15 @@ KLING = "fal-ai/kling-video/v2.1/standard/image-to-video"
 HAPPY_HORSE = "alibaba/happy-horse/v1.1/image-to-video"
 MODELS = {"seedance": SEEDANCE, "kling": KLING, "happy-horse": HAPPY_HORSE}
 
+# Pose-driven motion transfer (video-to-video): a driving VIDEO + her reference
+# image -> her performing that motion. Unlike i2v (image + text) this takes a real
+# driving clip; unlike appearance-swap models (e.g. Kling motion-control, which
+# reproduced the SOURCE person, gate 0.05-0.38) wan-motion retargets only the
+# POSE skeleton, so the source's face never enters and identity stays HERS.
+# Measured 2026-07-31 vs Kling motion-control on the same driver/still: 0.52 mean
+# (6/8 >=0.50) vs 0.48. $0.06/s @720p, 24fps. See scripts/wan_test history.
+WAN_MOTION = "fal-ai/wan-motion"
+
 # camera move -> (prompt fragment, camera_fixed). Big moves (orbit, crash-zoom)
 # turn her head off-axis and cost identity — that's the yaw law, and the frame
 # gate reports it. Gentle moves (dolly, static) keep her frontal and on-model.
@@ -205,6 +214,55 @@ def animate(still: Path, *, camera_move: str = "dolly-in", model: str = "seedanc
            "prompt": prompt, "dialogue": dialogue.strip() or None,
            "resolution": resolution, "duration": int(duration),
            "audio": not muted, "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
+           "frames": frames}
+    db.videos_insert(row, character_id=owner)
+    return row
+
+
+def motion(still: Path, driver: Path, *, prompt: str = "", seed: int | None = None,
+           progress: dict | None = None) -> dict:
+    """Pose-driven motion transfer via wan-motion: put HER (the `still`) into the
+    motion of `driver` (a driving video), gate the output frames, and record it.
+
+    The driver contributes only its POSE — the source person's pixels never reach
+    the model — so identity comes from the still, not the video. That is the whole
+    reason this is safe where appearance-swap motion-control is not (it reproduced
+    the source person; see WAN_MOTION note). Same honesty rule as animate(): every
+    clip's frames are re-gated so drift is a number, not a guess."""
+    owner = config.get_active()   # pin the character now — a mid-render switch must not misfile this clip
+    if progress is not None:
+        progress["stage"] = "uploading"
+    image_url = _upload_seed(still)
+    video_url = fal_client.upload_file(str(driver))
+
+    if progress is not None:
+        progress["stage"] = "generating video"
+    args = {"image_url": image_url, "video_url": video_url}
+    if prompt.strip():
+        args["prompt"] = prompt.strip()
+    if seed is not None:
+        args["seed"] = int(seed)
+    r = fal_client.subscribe(WAN_MOTION, arguments=args, with_logs=False)
+    vid_url = (r.get("video") or {}).get("url") or (r.get("videos") or [{}])[0].get("url")
+    if not vid_url:
+        raise RuntimeError("fal returned no video url")
+
+    rid = uuid.uuid4().hex[:10]
+    dest = VIDEOS / f"{rid}.mp4"
+    if progress is not None:
+        progress["stage"] = "downloading"
+    urllib.request.urlretrieve(vid_url, dest)
+    if dest.stat().st_size < 10_000:
+        dest.unlink(missing_ok=True)
+        raise RuntimeError("truncated video download")
+
+    if progress is not None:
+        progress["stage"] = "gating frames"
+    frames = _score_frames(dest)
+
+    row = {"id": rid, "file": dest.name, "still": still.name, "driver": driver.name,
+           "model": "wan-motion", "endpoint": WAN_MOTION, "prompt": prompt.strip() or None,
+           "resolution": "720p", "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
            "frames": frames}
     db.videos_insert(row, character_id=owner)
     return row

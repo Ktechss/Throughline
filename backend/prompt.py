@@ -430,6 +430,7 @@ SHOT_TYPES = {
     "editorial": "Editorial photo",
     "luxury": "Luxury lifestyle photo",
     "street": "Street style photo",
+    "pov": "First-person POV phone photo",   # faceless — see the pov branch in compose_tagged()
 }
 
 # Pose library, ported from ai-influencer's POSE_MAP — text pose descriptions
@@ -465,7 +466,7 @@ def build_clause(parts: list["Part"]) -> str:
 def compose_tagged(brief: str, *, pose_text: str = "", has_wardrobe: bool = False,
                    pose_ref_tag: str = "", build_text: str = "", n_skin: int = 0,
                    shot_type: str = "candid",
-                   realism: bool = True) -> tuple[str, list[dict]]:
+                   realism: bool = True, pov: bool = False) -> tuple[str, list[dict]]:
     """The ai-influencer technique, ported and validated on fal gpt-image-2.
 
     SHORT and DIRECTIVE. The references carry WHO she is; the prompt only says
@@ -483,6 +484,32 @@ def compose_tagged(brief: str, *, pose_text: str = "", has_wardrobe: bool = Fals
     Validated: @image1 held identity at 0.825 while @image2 transferred a leather
     jacket into a new scene. The @image convention works on fal.
     """
+    if pov:
+        # Faceless first-person POV product/lifestyle shot. The face reference
+        # (@image1, still attached) anchors her SKIN TONE and complexion so the
+        # hands are actually HERS; her face is deliberately out of frame. The
+        # caller appends the nails/home/wardrobe directives as usual — the nail
+        # directive ("hands and nails clearly in focus") is the primary anchor.
+        parts_out = [
+            "First-person POV phone photo — she is holding the phone in her own "
+            "hand and taking the picture herself. Her FACE IS NOT in the frame "
+            "(cropped out, above the top edge; do NOT show her face). In frame: "
+            f"her own manicured hand, wrist and forearm. {brief.strip()}",
+            "Her hand and skin match her own complexion from @image1; natural "
+            "hand anatomy with five fingers and realistic natural nails.",
+        ]
+        if has_wardrobe:
+            parts_out.append("Any sleeve or cuff on her forearm matches the outfit in @image2.")
+        if build_text:
+            parts_out.append(build_text)
+        if realism:
+            parts_out.append(
+                "Photorealistic phone snapshot: sharp focus on the subject and her "
+                "hand, real skin texture and fine detail on the hand and wrist, "
+                "accurate colours, natural lighting and reflections. Shot on a "
+                "phone, not a professional camera. Do NOT show her face.")
+        return sanitise(" ".join(parts_out))
+
     opener = SHOT_TYPES.get(shot_type, SHOT_TYPES["candid"])
     parts_out = [f"{opener} of @image1. {brief.strip()}"]
 

@@ -30,6 +30,7 @@ export function useStudio(charParam) {
   const [aiBusy, setAiBusy] = useState(false);
   const [resolution, setResolution] = useState("4K");
   const [faceAcc, setFaceAcc] = useState(true);
+  const [pov, setPov] = useState(false);   // faceless first-person POV product/lifestyle shot
   const [selectedOutfit, setSelectedOutfit] = useState(null);
   const [selectedPose, setSelectedPose] = useState(null);
   const [selectedNail, setSelectedNail] = useState(null);
@@ -56,6 +57,7 @@ export function useStudio(charParam) {
   const [bodyBusy, setBodyBusy] = useState(null);
   const [videoBusy, setVideoBusy] = useState(null);
   const [makeBusy, setMakeBusy] = useState(null);
+  const [motionBusy, setMotionBusy] = useState(null);
 
   const fail = (e) => setErr(String(e));
 
@@ -93,8 +95,21 @@ export function useStudio(charParam) {
       setHasIdentity(!!entry?.has_identity);
       setGenerations([]);
       setSelectedNail(null); setSelectedOutfit(null); setSelectedPose(null);
-      setCalibCands([]);   // calibration candidates are session-only; saved faces live in the Face Manager
+      setCalibCands([]);
       await refresh();
+      // Restore existing calibration candidates for this character so they survive
+      // a page reload / character switch (they live on the backend; the UI used to
+      // show only the ones generated live in the current session).
+      try {
+        const cc = await api.get("/api/calibrate/candidates");
+        if (mine !== epoch.current) return;
+        const items = (cc.candidates || []).map((c) => ({
+          jid: c.id, id: c.id, angle: c.angle, url: `/api/images/${c.file}`,
+          running: false, sel: false,
+          yaw: c.verdict?.yaw, facePx: c.verdict?.face_px,
+        }));
+        if (items.length) setCalibCands(items);
+      } catch { /* no candidates yet — fine */ }
     } catch (e) { if (mine === epoch.current) fail(e); }
     finally { if (mine === epoch.current) setLoading(false); }
   }, [charParam, refresh]);
@@ -125,11 +140,12 @@ export function useStudio(charParam) {
     setGenerations((gs) => [{ jid: tmp, label, status: { stage: "starting", elapsed: 0, done: false }, run: null }, ...gs]);
     try {
       const { job } = await api.send("/api/shot", "POST", {
-        brief, aspect: "3:4", prompt: aiPrompt.trim() || null,
+        brief, aspect: "3:4", prompt: pov ? null : (aiPrompt.trim() || null),
         wardrobe_id: selectedOutfit?.id || null, pose_ref_id: null,
         pose_id: selectedPose?.id || null, pose_text: null,
         nail_id: selectedNail?.id || null,
         resolution, face_accessories: faceAcc,
+        pov, shot_type: pov ? "pov" : "candid",   // faceless first-person product/lifestyle
       });
       setGenerations((gs) => gs.map((g) => (g.jid === tmp ? { ...g, jid: job } : g)));
       pollGen(job);
@@ -446,6 +462,27 @@ export function useStudio(charParam) {
     finally { if (mine === epoch.current) setMakeBusy(null); }
   };
 
+  // ---- motion transfer (pose-driven video-to-video, wan-motion) ----
+  const uploadDriver = async (file) => { try { return await api.upload("/api/motion/driver", file); } catch (e) { fail(e); throw e; } };
+  const uploadDriverUrl = async (url) => { try { return await api.send("/api/motion/driver-url", "POST", { url }); } catch (e) { fail(e); throw e; } };
+  const runMotion = async (payload) => {
+    const mine = epoch.current;
+    setMotionBusy("starting…"); setErr(null);
+    try {
+      const { job } = await api.send("/api/motion", "POST", payload);
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 2500));
+        if (mine !== epoch.current) return;
+        const st = await api.get(`/api/jobs/${job}`);
+        if (mine !== epoch.current) return;
+        setMotionBusy(st.stage || "generating…");
+        if (st.done) { if (st.error) setErr(String(st.error)); break; }
+      }
+      if (mine === epoch.current) await refresh();
+    } catch (e) { if (mine === epoch.current) fail(e); }
+    finally { if (mine === epoch.current) setMotionBusy(null); }
+  };
+
   // ---- derived views ----
   const gens = generations.map(genView);
   // /api/runs is already newest-first — keep that order (latest generation first).
@@ -459,7 +496,7 @@ export function useStudio(charParam) {
     poseGroups, stats, videos, cameraMoves, refresh,
     // shoot
     brief, setBrief, aiPrompt, setAiPrompt, aiBusy, onAiPrompt, resolution, setResolution,
-    faceAcc, setFaceAcc, selectedOutfit, setSelectedOutfit, selectedPose, setSelectedPose,
+    faceAcc, setFaceAcc, pov, setPov, selectedOutfit, setSelectedOutfit, selectedPose, setSelectedPose,
     selectedNail, setSelectedNail, nails, saveNail, deleteNail,
     home, homeBusy, saveHome, uploadCorner, generateCorner, deleteCorner,
     gens, onGenerate,
@@ -477,6 +514,8 @@ export function useStudio(charParam) {
     calibCands, generateFaces, toggleCalib, addCalibToGallery, setCalibIdentity, recalibrate, resetGallery, uploadSeed,
     // video
     approvedStills, generateStill, videoDirect, animate, makeVideo, videoBusy, makeBusy,
+    // motion transfer
+    uploadDriver, uploadDriverUrl, runMotion, motionBusy,
     ep,
   };
 }
