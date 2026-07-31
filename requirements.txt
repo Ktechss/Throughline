@@ -16,6 +16,9 @@ python-multipart>=0.0.9
 pydantic>=2.7
 python-dotenv>=1.0
 fal-client>=0.5
+# Claude — bio writing, AI prompt, describe/enrich (backend/describe.py, prompter.py).
+# Needs ANTHROPIC_API_KEY in .env.
+anthropic>=0.40
 # Video pipeline (backend/video.py): strip-audio, per-frame re-gate, stitch.
 # moviepy needs an ffmpeg binary — imageio-ffmpeg bundles one (no system ffmpeg).
 moviepy>=2.0
