@@ -24,3 +24,6 @@ Thumbs.db
 
 # Generated video/audio exports (regenerable, large)
 exports/
+
+# Claude Code local machine settings (permissions etc, not shared)
+.claude/settings.local.json
