@@ -96,7 +96,6 @@ GOLD = CharPath("gold")               # human-APPROVED shots — the curated LoR
                                       # Approvals accumulate HERE, never in the gallery
                                       # (that stays frozen — feeding it generated output
                                       # drifts the yardstick; see gate.py).
-VIDEOS = CharPath("videos")           # generated video clips (fal image-to-video)
 STATE = CharPath("state")             # part tree, gallery, threshold, bio (per character)
 
 GALLERY_PATH = CharPath("state", "gallery.npz")
@@ -115,7 +114,7 @@ def ensure_char_dirs(cid: str | None = None) -> None:
     """Create the full folder skeleton for one character (idempotent)."""
     base = char_base(cid)
     for name in ("images", "refs", "wardrobe", "pose-refs", "poses",
-                 "bodies", "gold", "videos", "nails", "places", "state"):
+                 "bodies", "gold", "nails", "places", "state"):
         (base / name).mkdir(parents=True, exist_ok=True)
 
 

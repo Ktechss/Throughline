@@ -1,4 +1,4 @@
-"""SQLite persistence for the list-shaped ledgers: runs, videos, wardrobe meta,
+"""SQLite persistence for the list-shaped ledgers: runs, wardrobe meta,
 and (phase 4) the character registry.
 
 WHY IT EXISTS — not speed. The real fix is a concurrency bug: record_run ran
@@ -6,7 +6,7 @@ read-whole-file -> append -> write-whole-file from a daemon thread, and the queu
 runs jobs in parallel, so two simultaneous finishes could clobber each other and
 silently lose a run. An atomic single-row INSERT makes that impossible.
 
-PHASE 4 — multi-character. runs / videos / wardrobe now carry a character_id, and
+PHASE 4 — multi-character. runs / wardrobe now carry a character_id, and
 every read/write is scoped to the ACTIVE character (config.get_active()). The DB
 itself is GLOBAL (data/eve1.db) so listing characters and their ledgers is one
 query; each character's FILES live under data/characters/<id>/ (see config.py).
@@ -53,11 +53,6 @@ def init_db() -> None:
             id  TEXT UNIQUE NOT NULL,
             character_id TEXT,
             doc TEXT NOT NULL)""")
-        con.execute("""CREATE TABLE IF NOT EXISTS videos (
-            seq INTEGER PRIMARY KEY AUTOINCREMENT,
-            id  TEXT UNIQUE NOT NULL,
-            character_id TEXT,
-            doc TEXT NOT NULL)""")
         con.execute("""CREATE TABLE IF NOT EXISTS wardrobe (
             character_id TEXT NOT NULL,
             key TEXT NOT NULL,
@@ -100,7 +95,7 @@ def _migrate_files_to_multichar() -> None:
 
     # 2) the per-character asset folders
     for name in ("images", "refs", "wardrobe", "pose-refs", "poses",
-                 "bodies", "gold", "videos"):
+                 "bodies", "gold"):
         old = DATA / name
         if old.exists() and old.is_dir():
             _move_children(old, kiara / name)
@@ -134,13 +129,13 @@ def _migrate_schema_add_character() -> None:
     """Backfill character_id on ledgers created before phase 4, stamping the
     pre-existing rows as the default character. Idempotent."""
     with _conn() as con:
-        for t in ("runs", "videos"):
+        for t in ("runs",):
             if _table_exists(con, t) and not _has_column(con, t, "character_id"):
                 con.execute(f"ALTER TABLE {t} ADD COLUMN character_id TEXT")
                 con.execute(f"UPDATE {t} SET character_id=? WHERE character_id IS NULL",
                             (DEFAULT_CHARACTER,))
-        # older runs/videos rows may still be NULL even if the column exists
-        for t in ("runs", "videos"):
+        # older runs rows may still be NULL even if the column exists
+        for t in ("runs",):
             if _table_exists(con, t) and _has_column(con, t, "character_id"):
                 con.execute(f"UPDATE {t} SET character_id=? WHERE character_id IS NULL",
                             (DEFAULT_CHARACTER,))
@@ -219,26 +214,6 @@ def runs_delete(ids: set[str]) -> list[dict]:
     return removed
 
 
-# ================================================================== videos
-def videos_all(newest_first: bool = False) -> list[dict]:
-    order = "DESC" if newest_first else "ASC"
-    cid = config.get_active()
-    with _conn() as con:
-        rows = con.execute(f"SELECT doc FROM videos WHERE character_id=? ORDER BY seq {order}",
-                           (cid,)).fetchall()
-    return [json.loads(d) for (d,) in rows]
-
-
-def videos_insert(row: dict, character_id: str | None = None) -> dict:
-    """character_id is pinned by the caller (the character the video STARTED
-    under) so a mid-render character switch can't misfile it."""
-    cid = character_id or config.get_active()
-    with _conn() as con:
-        con.execute("INSERT INTO videos (id, character_id, doc) VALUES (?, ?, ?)",
-                    (row["id"], cid, json.dumps(row)))
-    return row
-
-
 # ================================================================ wardrobe
 def wardrobe_meta() -> dict:
     """{stem: {description, created}} for the active character."""
@@ -286,7 +261,6 @@ def chars_delete(cid: str) -> None:
     with _conn() as con:
         con.execute("BEGIN")
         con.execute("DELETE FROM runs WHERE character_id=?", (cid,))
-        con.execute("DELETE FROM videos WHERE character_id=?", (cid,))
         con.execute("DELETE FROM wardrobe WHERE character_id=?", (cid,))
         con.execute("DELETE FROM characters WHERE id=?", (cid,))
         con.execute("COMMIT")

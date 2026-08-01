@@ -21,8 +21,6 @@ export function useStudio(charParam) {
   const [poseGroups, setPoseGroups] = useState({});
   const [runs, setRuns] = useState([]);
   const [stats, setStats] = useState(null);
-  const [videos, setVideos] = useState([]);
-  const [cameraMoves, setCameraMoves] = useState({ moves: [], models: [] });
 
   // shoot
   const [brief, setBrief] = useState("");
@@ -55,26 +53,22 @@ export function useStudio(charParam) {
   const [calibCands, setCalibCands] = useState([]);
   const [bodyPreview, setBodyPreview] = useState(null);
   const [bodyBusy, setBodyBusy] = useState(null);
-  const [videoBusy, setVideoBusy] = useState(null);
-  const [makeBusy, setMakeBusy] = useState(null);
-  const [motionBusy, setMotionBusy] = useState(null);
 
   const fail = (e) => setErr(String(e));
 
   const refresh = useCallback(async () => {
     const mine = epoch.current;
-    const [p, r, g, rf, b, wd, pl, pr, st, cm, vd, bd, nl, pc] = await Promise.all([
+    const [p, r, g, rf, b, wd, pl, pr, st, bd, nl, pc] = await Promise.all([
       api.get("/api/parts"), api.get("/api/runs"), api.get("/api/gallery"),
       api.get("/api/refs"), api.get("/api/bio"), api.get("/api/wardrobe"),
       api.get("/api/pose-library"), api.get("/api/pose-refs"), api.get("/api/stats"),
-      api.get("/api/camera-moves"), api.get("/api/videos"), api.get("/api/bodies"),
-      api.get("/api/nails"), api.get("/api/home"),
+      api.get("/api/bodies"), api.get("/api/nails"), api.get("/api/home"),
     ]);
     if (mine !== epoch.current) return;
     setParts(p.parts); setRuns(r.runs); setGallery(g); setRefs(rf.refs);
     setBio(b); setWardrobe((wd.wardrobe || []).map(outfitView));
     setPoseGroups(groupPoses(pl.poses, pl.categories));
-    setStats(st); setCameraMoves(cm); setVideos(vd.videos || []); setBodies(bd);
+    setStats(st); setBodies(bd);
     setNails((nl.nails || []).map(nailView));
     setHome(pc || { style: "", corners: [] });
   }, []);
@@ -414,86 +408,17 @@ export function useStudio(charParam) {
     } catch (e) { fail(e); }
   };
 
-  // ------------------------------------------------------------------ video
-  const generateStill = async ({ brief: b, wardrobe: w }) => {
-    const mine = epoch.current;
-    setErr(null);
-    const { job } = await api.send("/api/shot", "POST", { brief: b, wardrobe_id: w || null, aspect: "9:16", resolution: "2K" });
-    for (;;) {
-      await new Promise((r) => setTimeout(r, 1800));
-      if (mine !== epoch.current) throw new Error("cancelled");
-      const st = await api.get(`/api/jobs/${job}`);
-      if (st.done) { if (st.error) throw new Error(String(st.error)); await refresh(); return st.run; }
-    }
-  };
-  const videoDirect = async (scenario) => { try { return await api.send("/api/video-direct", "POST", { scenario }); } catch (e) { fail(e); throw e; } };
-  const animate = async (payload) => {
-    const mine = epoch.current;
-    setVideoBusy("starting…"); setErr(null);
-    try {
-      const { job } = await api.send("/api/animate", "POST", payload);
-      for (;;) {
-        await new Promise((r) => setTimeout(r, 2000));
-        if (mine !== epoch.current) return;
-        const st = await api.get(`/api/jobs/${job}`);
-        if (mine !== epoch.current) return;
-        setVideoBusy(st.stage || "generating…");
-        if (st.done) { if (st.error) setErr(String(st.error)); break; }
-      }
-      if (mine === epoch.current) await refresh();
-    } catch (e) { if (mine === epoch.current) fail(e); }
-    finally { if (mine === epoch.current) setVideoBusy(null); }
-  };
-  const makeVideo = async (payload) => {
-    const mine = epoch.current;
-    setMakeBusy("starting…"); setErr(null);
-    try {
-      const { job } = await api.send("/api/make-video", "POST", payload);
-      for (;;) {
-        await new Promise((r) => setTimeout(r, 3000));
-        if (mine !== epoch.current) return;
-        const st = await api.get(`/api/jobs/${job}`);
-        if (mine !== epoch.current) return;
-        setMakeBusy(st.stage || "working…");
-        if (st.done) { if (st.error) setErr(String(st.error)); break; }
-      }
-      if (mine === epoch.current) await refresh();
-    } catch (e) { if (mine === epoch.current) fail(e); }
-    finally { if (mine === epoch.current) setMakeBusy(null); }
-  };
-
-  // ---- motion transfer (pose-driven video-to-video, wan-motion) ----
-  const uploadDriver = async (file) => { try { return await api.upload("/api/motion/driver", file); } catch (e) { fail(e); throw e; } };
-  const uploadDriverUrl = async (url) => { try { return await api.send("/api/motion/driver-url", "POST", { url }); } catch (e) { fail(e); throw e; } };
-  const runMotion = async (payload) => {
-    const mine = epoch.current;
-    setMotionBusy("starting…"); setErr(null);
-    try {
-      const { job } = await api.send("/api/motion", "POST", payload);
-      for (;;) {
-        await new Promise((r) => setTimeout(r, 2500));
-        if (mine !== epoch.current) return;
-        const st = await api.get(`/api/jobs/${job}`);
-        if (mine !== epoch.current) return;
-        setMotionBusy(st.stage || "generating…");
-        if (st.done) { if (st.error) setErr(String(st.error)); break; }
-      }
-      if (mine === epoch.current) await refresh();
-    } catch (e) { if (mine === epoch.current) fail(e); }
-    finally { if (mine === epoch.current) setMotionBusy(null); }
-  };
 
   // ---- derived views ----
   const gens = generations.map(genView);
   // /api/runs is already newest-first — keep that order (latest generation first).
   const shots = (runs || []).filter((r) => { const m = r.meta || {}; return !m.outfit_create && !m.body_ref_create && !m.calibrate; })
     .map((r) => ({ ...runView(r), approved: r.mark === "approve", rejected: r.mark === "reject" }));
-  const approvedStills = shots.filter((s) => s.status === "kept" || s.approved).slice(0, 30);
   const outfitCategories = [...new Set((wardrobe || []).map((w) => w.category).filter((c) => c && c !== "Uncategorized"))];
 
   return {
     loading, err, setErr, charName, hasIdentity, bio, gallery, parts, refs, bodies, wardrobe,
-    poseGroups, stats, videos, cameraMoves, refresh,
+    poseGroups, stats, refresh,
     // shoot
     brief, setBrief, aiPrompt, setAiPrompt, aiBusy, onAiPrompt, resolution, setResolution,
     faceAcc, setFaceAcc, pov, setPov, selectedOutfit, setSelectedOutfit, selectedPose, setSelectedPose,
@@ -512,10 +437,6 @@ export function useStudio(charParam) {
     uploadShape, createBody, saveBody, discardBody, selectBody, deleteBody, bodyPreview, bodyBusy,
     // calibrate
     calibCands, generateFaces, toggleCalib, addCalibToGallery, setCalibIdentity, recalibrate, resetGallery, uploadSeed,
-    // video
-    approvedStills, generateStill, videoDirect, animate, makeVideo, videoBusy, makeBusy,
-    // motion transfer
-    uploadDriver, uploadDriverUrl, runMotion, motionBusy,
     ep,
   };
 }
