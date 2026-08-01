@@ -153,7 +153,7 @@ export default function Studio() {
                 selectedPose={s.selectedPose} setSelectedPose={s.setSelectedPose}
                 onGenerate={s.onGenerate} hasIdentity={!!s.bio?.reference}
                 onOpenDetail={setDetail}
-                onUploadOutfit={s.uploadOutfit} onOpenDesigner={s.openDesigner}
+                onUploadOutfit={s.uploadOutfit} onOpenDesigner={s.openDesigner} onDeleteOutfit={s.deleteOutfit}
                 creating={s.creating} outfitPreview={s.outfitPreview}
                 onSaveOutfit={s.saveOutfit} onDiscardOutfit={s.discardOutfit} outfitCategories={s.outfitCategories}
                 nails={s.nails} selectedNail={s.selectedNail} setSelectedNail={s.setSelectedNail}
@@ -177,6 +177,7 @@ export default function Studio() {
                 character={{ name: s.charName }} bio={s.bio} seed={seed} gallery={s.gallery} cands={s.calibCands}
                 onGenerateFaces={s.generateFaces} onToggle={s.toggleCalib} onAddSelected={s.addCalibToGallery}
                 onSetIdentity={s.setCalibIdentity} onRecalibrate={s.recalibrate} onReset={s.resetGallery} onUploadSeed={s.uploadSeed}
+                onRemoveGallery={s.removeGalleryEntry}
               />
             )}
             {tab === "review" && (
@@ -184,6 +185,7 @@ export default function Studio() {
                 stats={reviewStats} shots={s.shots} onOpenDetail={setDetail}
                 onMark={s.mark} onDelete={s.deleteRun}
                 onExportGold={s.exportGold} onPurgeRejected={s.purgeRejected} onCleanup={s.cleanupImages}
+                onBulkDelete={s.bulkDeleteRuns} onBulkMark={s.bulkMarkRuns}
               />
             )}
           </>

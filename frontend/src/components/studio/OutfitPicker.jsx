@@ -1,9 +1,9 @@
-import { Shirt, ImageIcon, Wand2, ChevronDown } from "lucide-react";
+import { Shirt, ImageIcon, Wand2, ChevronDown, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAssetBrowser } from "./useAssetBrowser";
 import { SearchBox, CategoryChips, CountLine, EmptyState } from "./assetBrowserParts";
 
-export default function OutfitPicker({ outfits, selected, onSelect, onClear, onUpload, onOpenDesigner }) {
+export default function OutfitPicker({ outfits, selected, onSelect, onClear, onUpload, onOpenDesigner, onDelete }) {
   const categories = ["All", ...Array.from(new Set(outfits.map((o) => o.category)))];
   const browser = useAssetBrowser({ items: outfits, categories, pageSize: 12 });
 
@@ -25,19 +25,30 @@ export default function OutfitPicker({ outfits, selected, onSelect, onClear, onU
       <div className="mt-2 max-h-[360px] overflow-y-auto pr-1">
         <div className="grid gap-2 grid-cols-[repeat(auto-fill,minmax(90px,1fr))]">
           {browser.visible.map((o) => (
-            <button
+            <div
               key={o.id}
+              role="button"
+              tabIndex={0}
               onClick={() => onSelect(o)}
               className={cn(
-                "relative rounded-lg overflow-hidden aspect-[3/4] ring-1 transition-all",
+                "group relative rounded-lg overflow-hidden aspect-[3/4] ring-1 transition-all cursor-pointer",
                 selected?.id === o.id ? "ring-2 ring-emerald-400" : "ring-white/8 hover:ring-white/25"
               )}
             >
               <img src={o.url} alt={o.name} loading="lazy" className="h-full w-full object-cover" />
+              {onDelete && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onDelete(o.id); }}
+                  className="absolute top-1 right-1 z-10 rounded-md bg-black/60 p-1 text-zinc-300 opacity-0 group-hover:opacity-100 hover:text-rose-400 transition"
+                  aria-label="Delete outfit"
+                >
+                  <Trash2 className="h-3 w-3" />
+                </button>
+              )}
               <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-1.5">
                 <span className="text-[9px] text-zinc-300">{o.name}</span>
               </div>
-            </button>
+            </div>
           ))}
         </div>
 

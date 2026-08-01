@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, charView, STAGE } from "@/api/throughline";
-import { ShieldCheck, ShieldAlert, Plus, X, Sparkles, Upload, Ruler, Trash2, Loader2 } from "lucide-react";
+import { ShieldCheck, ShieldAlert, Plus, X, Sparkles, Upload, Ruler, Trash2, Loader2, Pencil } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const FACE_SHAPES = ["oval", "round", "square", "heart", "diamond", "oblong"];
@@ -34,6 +34,13 @@ export default function Landing() {
     e.stopPropagation();
     if (!window.confirm(`Delete "${c.name}" and all of her images, wardrobe and generations? This cannot be undone.`)) return;
     try { await api.send(`/api/characters/${c.id}`, "DELETE"); await load(); }
+    catch (er) { setErr(String(er)); }
+  };
+  const rename = async (e, c) => {
+    e.stopPropagation(); e.preventDefault();
+    const name = window.prompt("Rename character", c.name);
+    if (!name || !name.trim() || name.trim() === c.name) return;
+    try { await api.send(`/api/characters/${c.id}`, "PUT", { name: name.trim() }); await load(); }
     catch (er) { setErr(String(er)); }
   };
 
@@ -142,6 +149,10 @@ export default function Landing() {
                     <><ShieldAlert className="h-3 w-3 text-amber-400" /> needs calibration</>
                   )}
                 </div>
+                <span onClick={(e) => rename(e, c)} title="rename character"
+                  className="absolute top-3 right-10 z-10 rounded-md bg-black/50 p-1.5 text-zinc-300 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/80 hover:text-white">
+                  <Pencil className="h-3.5 w-3.5" />
+                </span>
                 {characters.length > 1 && c.id !== active && (
                   <span onClick={(e) => remove(e, c)} title="delete character"
                     className="absolute top-3 right-3 z-10 rounded-md bg-black/50 p-1.5 text-rose-300 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/80">

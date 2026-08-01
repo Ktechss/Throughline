@@ -14,7 +14,7 @@ export default function ShootTab({
   brief, setBrief, aiPrompt, setAiPrompt, aiBusy, onAiPrompt,
   resolution, setResolution, faceAcc, setFaceAcc, pov, setPov,
   selectedOutfit, setSelectedOutfit, selectedPose, setSelectedPose,
-  onGenerate, hasIdentity, onOpenDetail, onUploadOutfit, onOpenDesigner,
+  onGenerate, hasIdentity, onOpenDetail, onUploadOutfit, onOpenDesigner, onDeleteOutfit,
   creating, outfitPreview, onSaveOutfit, onDiscardOutfit, outfitCategories = [],
   nails, selectedNail, setSelectedNail, onSaveNail, onDeleteNail,
 }) {
@@ -126,7 +126,7 @@ export default function ShootTab({
 
       {/* Right: outfit + pose pickers */}
       <div className="space-y-6 xl:sticky xl:top-6 xl:self-start">
-        <OutfitPicker outfits={outfits} selected={selectedOutfit} onSelect={setSelectedOutfit} onClear={() => setSelectedOutfit(null)} onUpload={onUploadOutfit} onOpenDesigner={onOpenDesigner} />
+        <OutfitPicker outfits={outfits} selected={selectedOutfit} onSelect={setSelectedOutfit} onClear={() => setSelectedOutfit(null)} onUpload={onUploadOutfit} onOpenDesigner={onOpenDesigner} onDelete={onDeleteOutfit} />
         <PosePicker poses={poseGroups} selected={selectedPose} onSelect={setSelectedPose} onClear={() => setSelectedPose(null)} />
         <NailPicker nails={nails} selected={selectedNail} onSelect={setSelectedNail} onClear={() => setSelectedNail(null)} onSave={onSaveNail} onDelete={onDeleteNail} />
       </div>

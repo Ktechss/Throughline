@@ -132,6 +132,18 @@ def create_character(req: CharacterReq):
     return _char_view(row)
 
 
+@app.put("/api/characters/{cid}")
+def rename_character(cid: str, req: CharacterReq):
+    """Rename a character (display name only — the id/folder are stable)."""
+    name = req.name.strip()
+    if not name:
+        raise HTTPException(400, "name required")
+    if not db.chars_update(cid, name):
+        raise HTTPException(404, cid)
+    row = db.chars_get(cid)
+    return _char_view(row)
+
+
 # The standard face shapes the picker offers. "" = let Claude decide from the
 # description (the diverse default).
 FACE_SHAPES = ["oval", "round", "square", "heart", "diamond", "oblong"]
@@ -621,6 +633,26 @@ def get_gallery():
             for a, b in itertools.combinations(sorted(g), 2)
         ]
     return out
+
+
+class GalleryRemoveReq(BaseModel):
+    name: str
+
+
+@app.post("/api/gallery/remove")
+def gallery_remove(req: GalleryRemoveReq):
+    """Remove ONE entry from the identity gallery (e.g. a bad seed) without wiping
+    the whole fingerprint, then re-derive the threshold from what remains."""
+    if not gate.remove_from_gallery(req.name):
+        raise HTTPException(404, req.name)
+    recalibrated = False
+    try:
+        gate.calibrate_from_gallery()
+        recalibrated = True
+    except Exception:  # noqa: BLE001 — too few entries left to calibrate is fine
+        pass
+    return {"ok": True, "removed": req.name, "recalibrated": recalibrated,
+            "remaining": sorted(gate.load_gallery())}
 
 
 # NOTE: /api/gallery/from-ref seeds ONLY from data/refs. The one place a
@@ -1261,6 +1293,32 @@ def body_file(name: str):
     return FileResponse(p)
 
 
+class BodyRenameReq(BaseModel):
+    name: str
+
+
+@app.put("/api/bodies/{name}")
+def body_rename(name: str, req: BodyRenameReq):
+    """Rename a body type (moves its image + updates the id and active pointer)."""
+    old = Path(name).stem
+    new = "".join(c for c in req.name if c.isalnum() or c in "-_ ").strip()
+    if not new:
+        raise HTTPException(400, "name required")
+    data = _bodies()
+    b = next((x for x in data["bodies"] if x["id"] == old), None)
+    if not b:
+        raise HTTPException(404, name)
+    if new != old:
+        if any(x["id"] == new for x in data["bodies"]):
+            raise HTTPException(400, f"a body named '{new}' already exists")
+        (BODIES / f"{old}.png").replace(BODIES / f"{new}.png")
+        b["id"] = new
+        if data.get("active") == old:
+            data["active"] = new
+        _save_bodies(data)
+    return {"id": new}
+
+
 @app.delete("/api/bodies/{name}")
 def body_delete(name: str):
     (BODIES / f"{Path(name).stem}.png").unlink(missing_ok=True)
@@ -1619,6 +1677,27 @@ def wardrobe_file(name: str):
     if not p.exists():
         raise HTTPException(404, name)
     return FileResponse(p)
+
+
+class WardrobeEditReq(BaseModel):
+    category: str | None = None
+    description: str | None = None
+
+
+@app.put("/api/wardrobe/{name}")
+def wardrobe_update(name: str, req: WardrobeEditReq):
+    """Edit an outfit's category and/or description. The id/file are unchanged so
+    every @image2 reference stays stable (no rename)."""
+    stem = Path(name).stem
+    meta = _wardrobe_meta()
+    if stem not in meta:
+        raise HTTPException(404, name)
+    if req.category is not None and req.category.strip():
+        meta[stem]["category"] = req.category.strip()
+    if req.description is not None:
+        meta[stem]["description"] = req.description
+    _save_wardrobe_meta(meta)
+    return {"id": stem, **meta[stem]}
 
 
 @app.delete("/api/wardrobe/{name}")
@@ -2377,6 +2456,43 @@ def delete_run(run_id: str):
         (IMAGES / r["file"]).unlink(missing_ok=True)
         (IMAGES / ".thumbs" / f"{Path(r['file']).stem}.jpg").unlink(missing_ok=True)
     return {"ok": True, "deleted": len(removed)}
+
+
+class BulkIdsReq(BaseModel):
+    ids: list[str] = []
+
+
+class BulkMarkReq(BaseModel):
+    ids: list[str] = []
+    decision: str | None = None   # "approve" | "reject" | null (clear)
+
+
+@app.post("/api/runs/delete")
+def delete_runs_bulk(req: BulkIdsReq):
+    """Delete many shots at once — images, thumbnails and ledger rows. Same body
+    as the single delete, over a set (db.runs_delete is transactional)."""
+    removed = generate.delete_runs(set(req.ids))
+    freed = 0
+    for r in removed:
+        p = IMAGES / r["file"]
+        if p.exists():
+            freed += p.stat().st_size
+        p.unlink(missing_ok=True)
+        (IMAGES / ".thumbs" / f"{Path(r['file']).stem}.jpg").unlink(missing_ok=True)
+    return {"deleted": len(removed), "freed_mb": round(freed / 1e6, 1)}
+
+
+@app.post("/api/runs/mark-bulk")
+def mark_bulk(req: BulkMarkReq):
+    """Apply one verdict (approve / reject / clear) to many shots at once."""
+    n = 0
+    for rid in req.ids:
+        try:
+            generate.mark(rid, req.decision)
+            n += 1
+        except KeyError:
+            pass   # a since-deleted id shouldn't fail the whole batch
+    return {"marked": n, "decision": req.decision}
 
 
 def _is_intermediate(r: dict) -> bool:

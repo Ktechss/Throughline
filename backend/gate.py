@@ -245,6 +245,24 @@ def add_to_gallery(path: str | Path, name: str) -> Face:
     return face
 
 
+def remove_from_gallery(name: str) -> bool:
+    """Drop ONE entry from the gallery (npz + meta) so a bad seed can be pulled
+    without wiping the whole fingerprint. Returns False if the entry is absent.
+    Only ever removes — never re-admits generated output."""
+    g = load_gallery()
+    meta = load_meta()
+    if name not in g and name not in meta:
+        return False
+    g.pop(name, None)
+    if g:
+        np.savez(GALLERY_PATH, **g)
+    else:
+        Path(GALLERY_PATH).unlink(missing_ok=True)
+    meta.pop(name, None)
+    GALLERY_META.write_text(json.dumps(meta, indent=2) + "\n")
+    return True
+
+
 def load_threshold() -> float:
     if THRESHOLD_PATH.exists():
         return json.loads(THRESHOLD_PATH.read_text())["threshold"]

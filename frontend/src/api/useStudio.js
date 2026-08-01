@@ -307,6 +307,47 @@ export function useStudio(charParam) {
     catch (e) { fail(e); }
   };
 
+  // ------------------------------------------------- bulk + CRUD (multi-select)
+  const bulkDeleteRuns = async (ids) => {
+    if (!ids.length || !window.confirm(`Delete ${ids.length} image${ids.length > 1 ? "s" : ""} permanently?`)) return;
+    try { await api.send("/api/runs/delete", "POST", { ids }); await refresh(); } catch (e) { fail(e); }
+  };
+  const bulkMarkRuns = async (ids, decision) => {
+    if (!ids.length) return;
+    try { await api.send("/api/runs/mark-bulk", "POST", { ids, decision }); await refresh(); } catch (e) { fail(e); }
+  };
+  const deleteOutfit = async (id) => {
+    if (!window.confirm("Delete this outfit?")) return;
+    try { await fetch(`/api/wardrobe/${id}`, { method: "DELETE" }); await refresh(); } catch (e) { fail(e); }
+  };
+  const updateOutfit = async (id, patch) => {
+    try { await api.send(`/api/wardrobe/${id}`, "PUT", patch); await refresh(); } catch (e) { fail(e); }
+  };
+  const bulkDeleteOutfits = async (ids) => {
+    if (!ids.length || !window.confirm(`Delete ${ids.length} outfit${ids.length > 1 ? "s" : ""}?`)) return;
+    try { for (const id of ids) await fetch(`/api/wardrobe/${id}`, { method: "DELETE" }); await refresh(); } catch (e) { fail(e); }
+  };
+  const updateNail = async (id, patch) => {
+    try { await api.send(`/api/nails/${id}`, "PUT", patch); await refresh(); } catch (e) { fail(e); }
+  };
+  const bulkDeleteNails = async (ids) => {
+    if (!ids.length || !window.confirm(`Delete ${ids.length} manicure${ids.length > 1 ? "s" : ""}?`)) return;
+    const byId = Object.fromEntries((nails || []).map((n) => [n.id, n.file || n.id]));
+    try { for (const id of ids) await fetch(`/api/nails/${byId[id] || id}`, { method: "DELETE" }); await refresh(); } catch (e) { fail(e); }
+  };
+  const bulkDeleteRefs = async (names) => {
+    if (!names.length || !window.confirm(`Delete ${names.length} reference${names.length > 1 ? "s" : ""}?`)) return;
+    try { for (const n of names) await fetch(`/api/refs/${n}`, { method: "DELETE" }); await refresh(); } catch (e) { fail(e); }
+  };
+  const removeGalleryEntry = async (name) => {
+    if (!window.confirm(`Remove "${name}" from the identity gallery? The threshold re-derives from what's left.`)) return;
+    try { await api.send("/api/gallery/remove", "POST", { name }); await refresh(); } catch (e) { fail(e); }
+  };
+  const renameBody = async (id, name) => {
+    if (!name || !name.trim()) return;
+    try { await api.send(`/api/bodies/${id}`, "PUT", { name: name.trim() }); await refresh(); } catch (e) { fail(e); }
+  };
+
   // ------------------------------------------------------------------ bio
   const setBioRef = async (name) => { try { await api.send("/api/bio/reference", "PUT", { reference: name }); await refresh(); } catch (e) { fail(e); } };
   const deleteRef = async (name) => { try { await fetch(`/api/refs/${name}`, { method: "DELETE" }); await refresh(); } catch (e) { fail(e); } };
@@ -422,21 +463,21 @@ export function useStudio(charParam) {
     // shoot
     brief, setBrief, aiPrompt, setAiPrompt, aiBusy, onAiPrompt, resolution, setResolution,
     faceAcc, setFaceAcc, pov, setPov, selectedOutfit, setSelectedOutfit, selectedPose, setSelectedPose,
-    selectedNail, setSelectedNail, nails, saveNail, deleteNail,
+    selectedNail, setSelectedNail, nails, saveNail, deleteNail, updateNail, bulkDeleteNails,
     home, homeBusy, saveHome, uploadCorner, generateCorner, deleteCorner,
     gens, onGenerate,
     // outfit designer
     drawerOpen, openDesigner, closeDesigner, outfitText, setOutfitText, outfitImageUrl,
     details, setDetailField, idea, setIdea, pickers, setPicker, describing, enriching, creating,
     outfitPreview, describeOutfit, enrichOutfit, createOutfit, saveOutfit, discardOutfit, uploadOutfit,
-    outfitCategories,
+    outfitCategories, deleteOutfit, updateOutfit, bulkDeleteOutfits,
     // review
-    shots, mark, deleteRun, exportGold, purgeRejected, cleanupImages,
+    shots, mark, deleteRun, exportGold, purgeRejected, cleanupImages, bulkDeleteRuns, bulkMarkRuns,
     // bio
-    setBioRef, deleteRef, toGallery, importRef, uploadRef, savePart, resetParts,
-    uploadShape, createBody, saveBody, discardBody, selectBody, deleteBody, bodyPreview, bodyBusy,
+    setBioRef, deleteRef, toGallery, importRef, uploadRef, savePart, resetParts, bulkDeleteRefs,
+    uploadShape, createBody, saveBody, discardBody, selectBody, deleteBody, renameBody, bodyPreview, bodyBusy,
     // calibrate
-    calibCands, generateFaces, toggleCalib, addCalibToGallery, setCalibIdentity, recalibrate, resetGallery, uploadSeed,
+    calibCands, generateFaces, toggleCalib, addCalibToGallery, setCalibIdentity, recalibrate, resetGallery, uploadSeed, removeGalleryEntry,
     ep,
   };
 }

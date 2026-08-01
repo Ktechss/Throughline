@@ -2,9 +2,13 @@ import React, { useState } from "react";
 import { ChevronDown, Download, Trash2, Check, X, Eraser } from "lucide-react";
 import { cn } from "@/lib/utils";
 import VerdictChip from "./VerdictChip";
+import BulkBar, { TileCheckbox } from "./BulkBar";
+import { useSelection } from "@/lib/useSelection";
 
-export default function ReviewTab({ stats, shots, onOpenDetail, onMark, onDelete, onExportGold, onPurgeRejected, onCleanup }) {
+export default function ReviewTab({ stats, shots, onOpenDetail, onMark, onDelete, onExportGold, onPurgeRejected, onCleanup, onBulkDelete, onBulkMark }) {
   const [expanded, setExpanded] = useState(false);
+  const sel = useSelection();
+  const runBulk = async (fn) => { await fn(); sel.clear(); };
 
   const totalShots = stats ? stats.totalShots : 0;
   const keepRate = stats ? stats.keepRate : 0;
@@ -69,6 +73,9 @@ export default function ReviewTab({ stats, shots, onOpenDetail, onMark, onDelete
             <ShotCard
               key={s.id}
               shot={s}
+              selected={sel.has(s.id)}
+              selecting={sel.count > 0}
+              onToggleSelect={() => sel.toggle(s.id)}
               onOpen={() => onOpenDetail(s)}
               onApprove={() => onMark(s.id, "approve")}
               onReject={() => onMark(s.id, "reject")}
@@ -77,6 +84,18 @@ export default function ReviewTab({ stats, shots, onOpenDetail, onMark, onDelete
           ))}
         </div>
       </div>
+
+      <BulkBar
+        count={sel.count}
+        total={shots.length}
+        onSelectAll={() => sel.selectAll(shots.map((s) => s.id))}
+        onCancel={sel.clear}
+        actions={[
+          { label: "Approve", onClick: () => runBulk(() => onBulkMark(sel.ids, "approve")) },
+          { label: "Reject", onClick: () => runBulk(() => onBulkMark(sel.ids, "reject")) },
+          { label: `Delete ${sel.count}`, danger: true, onClick: () => runBulk(() => onBulkDelete(sel.ids)) },
+        ]}
+      />
     </div>
   );
 }
@@ -103,10 +122,11 @@ function BarRow({ label, rate, kept, total }) {
   );
 }
 
-function ShotCard({ shot, onOpen, onApprove, onReject, onDelete }) {
+function ShotCard({ shot, selected, selecting, onToggleSelect, onOpen, onApprove, onReject, onDelete }) {
   return (
-    <div className="group rounded-xl ring-1 ring-white/8 bg-white/[0.02] overflow-hidden hover:ring-white/20 transition-all">
-      <button onClick={onOpen} className="relative block w-full aspect-[4/5] overflow-hidden bg-zinc-900">
+    <div className={cn("group rounded-xl ring-1 bg-white/[0.02] overflow-hidden transition-all", selected ? "ring-white/60" : "ring-white/8 hover:ring-white/20")}>
+      <button onClick={selecting ? onToggleSelect : onOpen} className="relative block w-full aspect-[4/5] overflow-hidden bg-zinc-900">
+        <TileCheckbox checked={selected} active={selecting} onChange={onToggleSelect} />
         <img src={shot.thumb} alt={shot.brief} className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]" />
         <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-2.5">
           <VerdictChip status={shot.status} pov={shot.pov} similarity={shot.similarity} yaw={shot.yaw} facePx={shot.facePx} />

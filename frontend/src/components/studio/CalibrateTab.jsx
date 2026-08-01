@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Upload, Star, Loader2, RefreshCw, Lock, Check } from "lucide-react";
+import { Upload, Star, Loader2, RefreshCw, Lock, Check, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export default function CalibrateTab({
@@ -15,6 +15,7 @@ export default function CalibrateTab({
   onRecalibrate,
   onReset,
   onUploadSeed,
+  onRemoveGallery,
 }) {
   const [step, setStep] = useState(2);
   const [faceCount, setFaceCount] = useState(5);
@@ -89,7 +90,7 @@ export default function CalibrateTab({
           </div>
         </div>
       )}
-      {step === 3 && <LockStep gallery={gallery} onRecalibrate={onRecalibrate} onReset={onReset} />}
+      {step === 3 && <LockStep gallery={gallery} onRecalibrate={onRecalibrate} onReset={onReset} onRemoveGallery={onRemoveGallery} />}
     </div>
   );
 }
@@ -184,7 +185,7 @@ function FaceCandidate({ cand, onToggle, onSetIdentity }) {
   );
 }
 
-function LockStep({ gallery, onRecalibrate, onReset }) {
+function LockStep({ gallery, onRecalibrate, onReset, onRemoveGallery }) {
   const [result, setResult] = useState(null);
   const [busy, setBusy] = useState(false);
   const entries = gallery?.entries || [];
@@ -219,7 +220,13 @@ function LockStep({ gallery, onRecalibrate, onReset }) {
           <div className="text-[11px] text-zinc-500 mb-2">Gallery angle chips</div>
           <div className="flex flex-wrap gap-1.5">
             {entries.length > 0 ? entries.map((a) => (
-              <span key={a} className="inline-flex items-center gap-1.5 rounded-full bg-white/5 ring-1 ring-white/10 px-2.5 py-1 text-[10px]">{a}</span>
+              <span key={a} className="group inline-flex items-center gap-1.5 rounded-full bg-white/5 ring-1 ring-white/10 px-2.5 py-1 text-[10px]">
+                {a}
+                {onRemoveGallery && (
+                  <button onClick={() => onRemoveGallery(a)} title={`Remove ${a} from fingerprint`}
+                    className="text-zinc-500 hover:text-rose-400"><X className="h-3 w-3" /></button>
+                )}
+              </span>
             )) : <span className="text-[10px] text-zinc-600">No faces in fingerprint yet.</span>}
           </div>
         </div>

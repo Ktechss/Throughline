@@ -256,6 +256,14 @@ def chars_create(cid: str, name: str) -> dict:
     return {"id": cid, "name": name, "created": now}
 
 
+def chars_update(cid: str, name: str) -> bool:
+    """Rename a character (display name only; the id/folder stay). Returns False
+    if no such character."""
+    with _conn() as con:
+        cur = con.execute("UPDATE characters SET name=? WHERE id=?", (name, cid))
+    return cur.rowcount > 0
+
+
 def chars_delete(cid: str) -> None:
     """Remove a character and all of its ledger rows (files are handled by caller)."""
     with _conn() as con:
