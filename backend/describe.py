@@ -208,3 +208,56 @@ def describe_nails(image_bytes: bytes, media: str = "image/png") -> str:
         raise DescribeError("could not reach the Claude API — check your connection") from exc
 
     return "".join(b.text for b in msg.content if b.type == "text").strip()
+
+
+# Reference-face INSPIRATION, not likeness. This deliberately extracts only
+# GENERAL, non-identifying attributes so we can create a NEW fictional person with
+# a similar overall look — never a copy of a real individual (the project's hard
+# rule: no real person's likeness, ever). The specific identity is intentionally
+# discarded here; the face is then generated from text, with no image identity ref.
+_FACE_ATTR_PROMPT = (
+    "You are helping design an ORIGINAL, entirely fictional character inspired by "
+    "the GENERAL look of this photo — never a likeness of the person shown. In 2-3 "
+    "sentences describe only GENERAL, non-identifying attributes: approximate age "
+    "range, skin tone, hair colour/length/texture, eye colour, general face shape, "
+    "and overall vibe/energy. Describe a TYPE, not this individual. Do NOT attempt "
+    "to capture their unique identity or likeness, do NOT name or guess who they "
+    "are, and do NOT mention any distinctive identifying marks. Reply with the "
+    "description only, no preamble."
+)
+
+
+def describe_face_attributes(image_bytes: bytes, media: str = "image/png") -> str:
+    """General, non-identifying appearance attributes for a reference face (Claude
+    vision) — inspiration for a NEW fictional person, NOT the specific likeness."""
+    if not os.getenv("ANTHROPIC_API_KEY"):
+        raise DescribeError(
+            "ANTHROPIC_API_KEY is not set in .env — add it to use AI describe.")
+    try:
+        import anthropic
+    except ImportError as exc:  # pragma: no cover - install-time only
+        raise DescribeError(
+            "the 'anthropic' package is not installed in this venv") from exc
+
+    image_bytes, media = _fit_image(image_bytes, media)
+    b64 = base64.standard_b64encode(image_bytes).decode("ascii")
+    client = anthropic.Anthropic()
+    try:
+        msg = client.messages.create(
+            model="claude-opus-4-8",
+            max_tokens=300,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "image", "source": {
+                        "type": "base64", "media_type": media, "data": b64}},
+                    {"type": "text", "text": _FACE_ATTR_PROMPT},
+                ],
+            }],
+        )
+    except anthropic.APIStatusError as exc:
+        raise DescribeError(f"Claude API error: {exc.message}"[:300]) from exc
+    except anthropic.APIConnectionError as exc:
+        raise DescribeError("could not reach the Claude API — check your connection") from exc
+
+    return "".join(b.text for b in msg.content if b.type == "text").strip()
