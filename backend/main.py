@@ -223,27 +223,6 @@ async def create_character_guided(
             desc += f"\nHer body build is {build}."
         if height:
             desc += f"\nHer height is {_height_text(height)}."
-        # An uploaded reference is INSPIRATION, not a likeness: pull only general,
-        # non-identifying attributes into the bio and generate the face from TEXT
-        # (no image identity ref), so she is an ORIGINAL fictional person and never
-        # a clone of a real individual (the hard rule). ref_vec anchors the
-        # divergence guard in step 2.
-        ref_vec = None
-        if seed_upload and seed_upload.exists():
-            job["stage"] = "reading reference"
-            try:
-                attrs = describe.describe_face_attributes(
-                    seed_upload.read_bytes(), describe.media_type(seed_upload.name, None))
-                if attrs.strip():
-                    desc += ("\nGeneral appearance inspiration (create a NEW, distinct "
-                             "fictional person with this general look — do NOT copy or "
-                             f"resemble any specific real individual): {attrs.strip()}")
-            except Exception as exc:  # noqa: BLE001 — inspiration is best-effort
-                job["note"] = f"reference attributes skipped ({exc})"
-            try:
-                ref_vec = gate.analyze(seed_upload).vector
-            except Exception:  # noqa: BLE001 — no measurable face -> no divergence guard
-                ref_vec = None
         try:
             updates = prompter.write_bio(name, desc, fields)
         except prompter.PrompterError as exc:
@@ -263,40 +242,40 @@ async def create_character_guided(
                      for p in parts]
             _save_parts(parts)
 
-        # 2) generate her first face — ALWAYS text-driven (no image identity ref) so
-        #    she is an ORIGINAL person: inspired by any reference's general look
-        #    (folded into the bio above), never a copy of it.
-        portrait = promptlib.compose(
-            parts, has_reference=False,
-            pose_note="a clean, well-lit frontal headshot — head and shoulders, "
-                      "plain neutral studio background, looking straight into "
-                      "the lens, natural relaxed expression")
-        # Divergence guard: when a reference was given, re-roll until the generated
-        # face is clearly NOT the same individual (ArcFace cosine below the floor).
-        # Enforces the hard rule with a number instead of trusting the prompt.
-        CLONE_MAX = 0.40   # >= this reads as the same person; keep her distinct
-        tries = 3 if ref_vec is not None else 1
-        row, best_sim = None, None
-        for attempt in range(tries):
-            job["stage"] = "generating face" + (f" (distinct try {attempt + 1})" if attempt else "")
-            cand = generate.generate(
+        # 2) generate her first face
+        job["stage"] = "generating face"
+        if seed_upload and seed_upload.exists():
+            # Base her on the reference's LIKENESS, but always render a REAL,
+            # photorealistic human — so a stylised/anime/drawn reference becomes a
+            # believable real person, never reproduced as art. (A strict identity
+            # copy here made an anime upload come back as anime — wrong for the
+            # realistic pipeline and the ArcFace gate.)
+            prompt = (
+                "A photorealistic portrait headshot of a REAL human woman whose "
+                "face is based on @image1. Take her facial features, structure, "
+                "hairstyle and overall likeness from @image1, but render her as a "
+                "real, photorealistic human being with natural skin and true human "
+                "anatomy. If @image1 is a drawing, anime or stylised art, "
+                "reinterpret it faithfully as a believable real person with those "
+                "same features. Head-and-shoulders framing, plain neutral studio "
+                "background, soft even lighting, looking into the lens, natural "
+                "relaxed expression. Photorealistic RAW photo, real skin texture "
+                "and pores, sharp focus on the face — never illustrated, cartoon "
+                "or CGI.")
+            row = generate.generate(
+                prompt=prompt, refs=[seed_upload], aspect="3:4",
+                session=generate.new_session(f"seed face: {name}"), progress=job,
+                meta={"guided_seed": True, "from_upload": True})
+        else:
+            portrait = promptlib.compose(
+                parts, has_reference=False,
+                pose_note="a clean, well-lit frontal headshot — head and shoulders, "
+                          "plain neutral studio background, looking straight into "
+                          "the lens, natural relaxed expression")
+            row = generate.generate(
                 prompt=portrait, refs=None, aspect="3:4",
                 session=generate.new_session(f"seed face: {name}"), progress=job,
-                meta={"guided_seed": True, "from_upload": bool(seed_upload)})
-            sim = None
-            if ref_vec is not None:
-                try:
-                    gv = gate.analyze(IMAGES / cand["file"]).vector
-                    if gv is not None:
-                        sim = gate.similarity(gv, ref_vec)
-                except Exception:  # noqa: BLE001 — unmeasurable -> accept the candidate
-                    sim = None
-            if row is None or (sim is not None and (best_sim is None or sim < best_sim)):
-                row, best_sim = cand, sim
-            if sim is None or sim < CLONE_MAX:
-                break
-        if best_sim is not None:
-            row.setdefault("meta", {})["ref_similarity"] = round(best_sim, 4)
+                meta={"guided_seed": True})
 
         # 3) set the generated face as the CALIBRATION SEED
         src = IMAGES / row["file"]
