@@ -283,7 +283,7 @@ async def create_character_guided(
         if src.exists():
             seed_ref = _unique_ref_path("seed-face.png")
             shutil.copy2(src, seed_ref)
-            cfg = _bio_cfg()
+            cfg = _bio_cfg_raw()
             cfg["calib_seed"] = seed_ref.name
             BIO_REF_PATH.write_text(json.dumps(cfg, indent=2) + "\n")
             row.setdefault("meta", {})["seed_ref"] = seed_ref.name
@@ -314,7 +314,7 @@ async def create_character_guided(
                 if bsrc.exists():
                     bdst = REFS / "body-canonical.png"
                     shutil.copy2(bsrc, bdst)
-                    cfg = _bio_cfg()
+                    cfg = _bio_cfg_raw()
                     cfg["body_reference"] = bdst.name
                     BIO_REF_PATH.write_text(json.dumps(cfg, indent=2) + "\n")
                     row.setdefault("meta", {})["body_ref"] = bdst.name
@@ -736,7 +736,7 @@ def set_calib_seed(req: CalibSeedReq):
     name = Path(req.reference).name
     if not (REFS / name).exists():
         raise HTTPException(400, f"no such reference: {name}")
-    cfg = _bio_cfg()
+    cfg = _bio_cfg_raw()
     cfg["calib_seed"] = name
     BIO_REF_PATH.write_text(json.dumps(cfg, indent=2) + "\n")
     return {"calib_seed": name}
@@ -935,6 +935,14 @@ def _bio_cfg() -> dict:
             "calib_seed": cfg.get("calib_seed")}
 
 
+def _bio_cfg_raw() -> dict:
+    """The bio.json as stored, WITHOUT injecting the Kiara.png / cd-body.png
+    defaults. Use this for read-modify-WRITE: writing _bio_cfg() would bake the
+    original character's reference into every new character's bio.json (the
+    reference/body stay unset until calibration promotes a real face)."""
+    return json.loads(BIO_REF_PATH.read_text()) if BIO_REF_PATH.exists() else {}
+
+
 def _bio_ref() -> str:
     return _bio_cfg()["reference"]
 
@@ -1013,7 +1021,7 @@ def set_bio_ref(req: BioRefReq):
     name = Path(req.reference).name
     if not (REFS / name).exists():
         raise HTTPException(400, f"no such reference: {name}")
-    cfg = _bio_cfg()
+    cfg = _bio_cfg_raw()
     cfg["reference"] = name
     BIO_REF_PATH.write_text(json.dumps(cfg, indent=2) + "\n")
     return {"reference": name}
@@ -1044,7 +1052,7 @@ def bio_reference_from_run(payload: dict = Body(...)):
     except (gate.NoFaceFound, ValueError):
         dest.unlink(missing_ok=True)
         raise HTTPException(400, "no face detected in that image") from None
-    cfg = _bio_cfg()
+    cfg = _bio_cfg_raw()
     cfg["reference"] = dest.name
     BIO_REF_PATH.write_text(json.dumps(cfg, indent=2) + "\n")
     return {"reference": dest.name}
@@ -1159,7 +1167,7 @@ def body_ref_save(payload: dict = Body(...)):
         raise HTTPException(404, run_id)
     dest = REFS / "body-canonical.png"
     shutil.copy2(IMAGES / row["file"], dest)
-    cfg = _bio_cfg()
+    cfg = _bio_cfg_raw()
     cfg["body_reference"] = "body-canonical.png"
     BIO_REF_PATH.write_text(json.dumps(cfg, indent=2) + "\n")
     return {"body_reference": "body-canonical.png"}
@@ -1230,7 +1238,7 @@ def body_select(req: BodySelectReq):
     if not b or not src:
         raise HTTPException(404, req.id)
     shutil.copy2(src, REFS / "body-canonical.png")   # the active body reference
-    cfg = _bio_cfg()
+    cfg = _bio_cfg_raw()
     cfg["body_reference"] = "body-canonical.png"
     BIO_REF_PATH.write_text(json.dumps(cfg, indent=2) + "\n")
     # restore the matching bust text so the figure stays consistent
