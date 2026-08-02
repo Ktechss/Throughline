@@ -17,9 +17,9 @@ from pathlib import Path
 import fal_client
 
 from . import config, db, gate
-from .config import (GPT_IMAGE, GPT_IMAGE_SIZE, IMAGES, LOCAL_ENDPOINT,
-                     LOCAL_PY, LOCAL_WORKER, RESOLUTION, SCENE_EDIT,
-                     SCENE_TEXT2IMG)
+from .config import (ARCHIVE_FORMAT, ARCHIVE_QUALITY, GPT_IMAGE, GPT_IMAGE_SIZE,
+                     IMAGES, LOCAL_ENDPOINT, LOCAL_PY, LOCAL_WORKER, RESOLUTION,
+                     SCENE_EDIT, SCENE_TEXT2IMG)
 
 # The pipeline was rebuilt around nano-banana-pro as the PRIMARY generator: it
 # renders the full figure range gpt-image-2's moderation refuses, and the
@@ -94,6 +94,36 @@ def auto_level(dest: Path) -> float:
     `auto_leveled: 0` stay stable; re-enable only behind an explicit opt-in.
     """
     return 0.0
+
+
+def archive(dest: Path) -> Path:
+    """Re-encode a finished download to the archive format. Returns the kept file.
+
+    Runs AFTER the gate, deliberately. The recorded verdict is then computed on
+    the pristine 4K download, so the number in the db is never a number about a
+    re-encode — even though it was measured not to matter (see config).
+
+    Best-effort by design: if anything goes wrong the original PNG stays and the
+    row keeps pointing at it. A shot that generated fine must never be lost to a
+    space optimisation.
+    """
+    if not ARCHIVE_QUALITY or dest.suffix.lower() == f".{ARCHIVE_FORMAT}":
+        return dest
+    out = dest.with_suffix(f".{ARCHIVE_FORMAT}")
+    try:
+        from PIL import Image
+        with Image.open(dest) as im:
+            im.convert("RGB").save(out, ARCHIVE_FORMAT.upper(),
+                                   quality=ARCHIVE_QUALITY, method=4)
+        # Only drop the original once the replacement is on disk and plausible.
+        if out.stat().st_size < 10_000:
+            out.unlink(missing_ok=True)
+            return dest
+        dest.unlink(missing_ok=True)
+        return out
+    except Exception:  # noqa: BLE001 — keep the PNG, keep the shot
+        out.unlink(missing_ok=True)
+        return dest
 
 
 def new_session(label: str = "") -> dict:
@@ -320,6 +350,10 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
     if (meta or {}).get("expected_low"):
         row["verdict"]["expected_low"] = True
 
+    # Shrink last: the verdict above was scored on the pristine download, and the
+    # row must name whatever file actually survives.
+    row["file"] = archive(dest).name
+
     db.runs_insert(row, character_id=owner)   # atomic + pinned to the owning character
     return row
 
@@ -392,6 +426,10 @@ def _generate_local(rid, dest, *, prompt, system, refs, seed, session,
     # gate draws between a framing confound and a real identity miss.
     if (meta or {}).get("expected_low"):
         row["verdict"]["expected_low"] = True
+
+    # Shrink last: the verdict above was scored on the pristine download, and the
+    # row must name whatever file actually survives.
+    row["file"] = archive(dest).name
 
     db.runs_insert(row, character_id=owner)   # atomic + pinned to the owning character
     return row

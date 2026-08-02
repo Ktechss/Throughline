@@ -158,6 +158,33 @@ SCENE_TEXT2IMG = "fal-ai/nano-banana-pro"
 # 0.547 against one crop's 0.811. Raise this only with a measurement in hand.
 REF_BUDGET = 2
 
+# --------------------------------------------------------------------------
+# How a finished image is ARCHIVED.
+# --------------------------------------------------------------------------
+# fal returns 4K PNG: ~25 MB per shot, 6.5 GB for 360 of them, and a migration
+# that has to move it. WebP q90 is ~2 MB — 12x smaller.
+#
+# Measured 2026-08-02 on the six largest generated images with faces, re-encoded
+# and re-scored against the real gallery:
+#
+#   webp-lossless  69% of size   worst delta +0.0000   mean +0.0000
+#   webp q95       14%           worst      +0.0052    mean +0.0006
+#   webp q90        8%           worst      +0.0104    mean +0.0002
+#   webp q85        6%           worst      -0.0133    mean +0.0001
+#
+# NO verdict flipped at any setting and face size moved at most 1px. The shifts
+# scatter both directions around zero — noise, not degradation.
+#
+# This applies ONLY to generated output. A REFERENCE is different in kind: it is
+# read by ArcFace as ground truth and its quality propagates into every image she
+# appears in, so refs/ and bodies/ stay lossless. Measured on references, lossy
+# cost a real and consistent embedding shift (mean self-similarity 0.985, worst
+# 0.969), where lossless was exactly 1.0000.
+#
+# Set ARCHIVE_QUALITY = 0 to keep the original PNG.
+ARCHIVE_FORMAT = "webp"
+ARCHIVE_QUALITY = 90
+
 # Endpoints take different arguments and silently ignore foreign ones, which is
 # worse than erroring — you get a 1024px image while believing you asked for 4K.
 # generate() keys off this rather than guessing.

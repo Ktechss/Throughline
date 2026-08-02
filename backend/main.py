@@ -305,8 +305,7 @@ async def create_character_guided(
         src = IMAGES / row["file"]
         seed_ref = None
         if src.exists():
-            seed_ref = _unique_ref_path("seed-face.png")
-            shutil.copy2(src, seed_ref)
+            seed_ref = _promote(src, _unique_ref_path("seed-face.png"))
             cfg = _bio_cfg_raw()
             cfg["calib_seed"] = seed_ref.name
             BIO_REF_PATH.write_text(json.dumps(cfg, indent=2) + "\n")
@@ -336,8 +335,7 @@ async def create_character_guided(
                     fallback_endpoint=SCENE_EDIT)
                 bsrc = IMAGES / body_row["file"]
                 if bsrc.exists():
-                    bdst = REFS / "body-canonical.png"
-                    shutil.copy2(bsrc, bdst)
+                    bdst = _promote(bsrc, REFS / "body-canonical.png")
                     cfg = _bio_cfg_raw()
                     cfg["body_reference"] = bdst.name
                     BIO_REF_PATH.write_text(json.dumps(cfg, indent=2) + "\n")
@@ -1120,8 +1118,7 @@ def bio_reference_from_run(payload: dict = Body(...)):
     # profiles, so the browser served a CACHED face from another character even
     # though the file on disk was correct. Per-character names keep URLs distinct.
     cid = config.get_active()
-    dest = REFS / f"{cid}-identity.png"
-    shutil.copy2(IMAGES / row["file"], dest)
+    dest = _promote(IMAGES / row["file"], REFS / f"{cid}-identity.png")
     try:
         gate.analyze(dest)   # must contain a detectable face
     except (gate.NoFaceFound, ValueError):
@@ -1240,12 +1237,11 @@ def body_ref_save(payload: dict = Body(...)):
     row = next((r for r in generate.all_runs() if r["id"] == run_id), None)
     if not row:
         raise HTTPException(404, run_id)
-    dest = REFS / "body-canonical.png"
-    shutil.copy2(IMAGES / row["file"], dest)
+    dest = _promote(IMAGES / row["file"], REFS / "body-canonical.png")
     cfg = _bio_cfg_raw()
-    cfg["body_reference"] = "body-canonical.png"
+    cfg["body_reference"] = dest.name
     BIO_REF_PATH.write_text(json.dumps(cfg, indent=2) + "\n")
-    return {"body_reference": "body-canonical.png"}
+    return {"body_reference": dest.name}
 
 
 # ---------------------------------------------------------------- body types
@@ -1290,7 +1286,7 @@ def body_save(payload: dict = Body(...)):
     if not row:
         raise HTTPException(404, run_id)
     safe = "".join(c for c in name if c.isalnum() or c in "-_ ").strip() or run_id
-    shutil.copy2(IMAGES / row["file"], BODIES / f"{safe}.png")
+    _promote(IMAGES / row["file"], BODIES / f"{safe}.png")
     data = _bodies()
     data["bodies"] = [b for b in data["bodies"] if b["id"] != safe]
     data["bodies"].append({"id": safe, "build": _bust_text(),
@@ -1312,9 +1308,9 @@ def body_select(req: BodySelectReq):
     src = _find_by_id(BODIES, req.id)
     if not b or not src:
         raise HTTPException(404, req.id)
-    shutil.copy2(src, REFS / "body-canonical.png")   # the active body reference
+    dest = _promote(src, REFS / "body-canonical.png")   # the active body reference
     cfg = _bio_cfg_raw()
-    cfg["body_reference"] = "body-canonical.png"
+    cfg["body_reference"] = dest.name
     BIO_REF_PATH.write_text(json.dumps(cfg, indent=2) + "\n")
     # restore the matching bust text so the figure stays consistent
     if b.get("build"):
@@ -1395,6 +1391,31 @@ def level_ref_head(path: Path) -> float:
     im.rotate(f.roll, resample=Image.BICUBIC, expand=True,
               fillcolor=(245, 245, 245)).save(path)
     return round(f.roll, 1)
+
+
+_IMAGE_EXT = (".png", ".jpg", ".jpeg", ".webp")
+
+
+def _promote(src: Path, dest: Path) -> Path:
+    """Copy a generated image into a saved slot, KEEPING the source's format.
+
+    Generated output is archived as WebP (config.ARCHIVE_*), so a destination
+    spelled `.png` would write a WebP file wearing a PNG extension — readable,
+    because PIL sniffs content, but a lie on disk and to anything that trusts the
+    name. Callers name the slot they want; the real suffix is decided here, and
+    callers that persist a filename persist the returned one.
+
+    Safe to point at a fixed slot: any same-stem image already there is removed
+    first, so switching body-canonical from .png to .webp cannot leave two files
+    with one of them stale and both resolvable by `_find_by_id`.
+    """
+    dest = dest.with_suffix(src.suffix)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    for stale in dest.parent.glob(f"{dest.stem}.*"):
+        if stale != dest and stale.suffix.lower() in _IMAGE_EXT:
+            stale.unlink(missing_ok=True)
+    shutil.copy2(src, dest)
+    return dest
 
 
 def _find_by_id(directory: Path, ident: str) -> Path | None:
@@ -1709,8 +1730,7 @@ def wardrobe_from_run(payload: dict = Body(...)):
     if not row:
         raise HTTPException(404, run_id)
     # Auto-name <Category><next#>; no-clobber as a final safety net.
-    dest = _unique_wardrobe_path(_next_wardrobe_name(category))
-    shutil.copy2(IMAGES / row["file"], dest)
+    dest = _promote(IMAGES / row["file"], _unique_wardrobe_path(_next_wardrobe_name(category)))
     # Persist the description it was made with + its category, keyed to THIS file's
     # stem, so image and description can never belong to different outfits.
     meta = _wardrobe_meta()
@@ -1808,8 +1828,7 @@ def pose_ref_from_run(payload: dict = Body(...)):
     if not row:
         raise HTTPException(404, run_id)
     safe = "".join(c for c in name if c.isalnum() or c in "-_") or run_id
-    dest = POSE_REFS / f"{safe}.png"
-    shutil.copy2(IMAGES / row["file"], dest)
+    dest = _promote(IMAGES / row["file"], POSE_REFS / f"{safe}.png")
     return {"id": dest.stem, "file": dest.name}   # saved as-is, never rotated
 
 
@@ -2128,10 +2147,7 @@ def _render_corner(key: str, job: dict) -> dict:
         progress=job, meta={"home_create": key})
     src = IMAGES / row["file"]
     if src.exists():
-        old = _corner_file(key)
-        if old and old.suffix.lower() != ".png":
-            old.unlink(missing_ok=True)
-        shutil.copy2(src, PLACES / f"{key}.png")
+        _promote(src, PLACES / f"{key}.png")
     return row
 
 
