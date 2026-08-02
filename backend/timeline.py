@@ -13,7 +13,9 @@ it, each chosen because it is visible in a photograph and cheap to say:
   shaped. A June photo has wet ground in it or it is lying.
 - **Era.** Hair length, colour and cut move in slow steps. Continuity here is
   what makes two photos six months apart read as the same person living, rather
-  than two attempts at the same prompt.
+  than two attempts at the same prompt. ⚠ An era's hair line DESCRIBES her, which
+  is the one thing the pipeline otherwise refuses to do over a reference — so it
+  is opt-in per era (`apply_hair`) and never on by default. See `clause`.
 - **Manicure.** Polish has a lifespan of about two and a half weeks. Nails
   picked per-shot at random are noise; nails picked by date are a clock, and the
   chipped tail end of a cycle is the kind of detail nobody fakes.
@@ -130,8 +132,21 @@ def clause(when: _date, tl: dict, nail_ids: list[str] | None = None) -> tuple[st
     e = era(when, tl.get("eras") or [])
     if e:
         facts["era"] = e.get("name") or e.get("from")
+        # ⚠ Hair is IDENTITY, and identity is carried by the reference image, never
+        # by words — `hair.base` is identity=True and gets dropped the moment a
+        # reference exists, precisely so nobody describes her over it (measured:
+        # reference + description 0.834 vs reference + terse 0.860).
+        #
+        # An era's hair line breaks that rule by construction: it is a description
+        # of her, injected regardless of what the reference shows. Sometimes that
+        # is exactly what you want — the whole point of an era is that she got a
+        # haircut and the reference predates it — but it is a deliberate override
+        # with a measured cost, not a default. So it stays silent unless the era
+        # opts in, and `apply_hair` is recorded in the facts so a shot carrying an
+        # overridden hairstyle can be told apart later from one that isn't.
         hair = (e.get("hair") or "").strip()
-        if hair:
+        if hair and e.get("apply_hair"):
+            facts["hair_override"] = True
             bits.append(f"her hair at this point in the year: {hair}")
         note = (e.get("note") or "").strip()
         if note:
