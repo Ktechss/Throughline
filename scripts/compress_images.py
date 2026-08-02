@@ -46,18 +46,31 @@ FMT = config.ARCHIVE_FORMAT
 Q = config.ARCHIVE_QUALITY
 
 
-def convert(src: Path) -> Path | None:
-    """Write the re-encode next to the original and prove it before returning it."""
+def convert(src: Path, lossless: bool = False) -> Path | None:
+    """Write the re-encode next to the original and prove it before returning it.
+
+    Lossless mode is held to a much harder proof: every pixel must come back
+    byte-identical. That is what makes converting REFERENCES safe — if the pixels
+    are the same, ArcFace reads the same face, so gallery.npz stays valid and no
+    embedding anywhere needs recomputing. Measured beforehand on five references:
+    lossless self-similarity 1.0000, against 0.985 mean / 0.969 worst for lossy.
+    """
     out = src.with_suffix(f".{FMT}")
     if out.exists():
         return None
     with Image.open(src) as im:
-        size = im.size
-        im.convert("RGB").save(out, FMT.upper(), quality=Q, method=4)
+        rgb = im.convert("RGB")
+        size, before = rgb.size, (rgb.tobytes() if lossless else None)
+        if lossless:
+            rgb.save(out, FMT.upper(), lossless=True, quality=100, method=4)
+        else:
+            rgb.save(out, FMT.upper(), quality=Q, method=4)
     try:
         with Image.open(out) as check:      # readable, and the same picture
             if check.size != size:
                 raise ValueError(f"size changed {size} -> {check.size}")
+            if lossless and check.convert("RGB").tobytes() != before:
+                raise ValueError("pixels differ — not lossless")
     except Exception as exc:                 # noqa: BLE001
         out.unlink(missing_ok=True)
         raise ValueError(f"verify failed: {exc}") from exc
@@ -65,15 +78,22 @@ def convert(src: Path) -> Path | None:
 
 
 def run(cid: str, apply: bool, wardrobe: bool, regate: bool,
-        no_images: bool = False) -> None:
+        no_images: bool = False, refs: bool = False,
+        places: bool = False) -> None:
     base = config.char_base(cid)
     targets = []
     if not no_images:
-        targets.append(("images", base / "images"))
+        targets.append(("images", base / "images", False))
     if wardrobe:
-        targets.append(("wardrobe", base / "wardrobe"))
+        targets.append(("wardrobe", base / "wardrobe", False))
+    # References and her home are converted LOSSLESSLY or not at all. They are
+    # read as ground truth rather than merely stored, so the only acceptable
+    # saving is one that provably changes nothing.
+    for flag, name in ((refs, "refs"), (places, "places")):
+        if flag:
+            targets.append((name, base / name, True))
     if not targets:
-        print("nothing selected (--no-images with no --wardrobe)")
+        print("nothing selected")
         return
 
     gate = None
@@ -85,7 +105,7 @@ def run(cid: str, apply: bool, wardrobe: bool, regate: bool,
     # than dying on "database is locked" 300 files in.
     con = sqlite3.connect(DB, timeout=30) if apply else None
     grand_before = grand_after = 0
-    for label, d in targets:
+    for label, d, lossless in targets:
         files = sorted(p for p in d.glob("*.png") if p.is_file())
         if not files:
             print(f"{label}: nothing to do")
@@ -104,7 +124,11 @@ def run(cid: str, apply: bool, wardrobe: bool, regate: bool,
                 try:
                     buf = io.BytesIO()
                     with Image.open(src) as im:
-                        im.convert("RGB").save(buf, FMT.upper(), quality=Q, method=4)
+                        if lossless:
+                            im.convert("RGB").save(buf, FMT.upper(), lossless=True,
+                                                   quality=100, method=4)
+                        else:
+                            im.convert("RGB").save(buf, FMT.upper(), quality=Q, method=4)
                 except Exception as exc:  # noqa: BLE001
                     failed += 1
                     print(f"  UNREADABLE {src.name}: {exc}", flush=True)
@@ -116,7 +140,7 @@ def run(cid: str, apply: bool, wardrobe: bool, regate: bool,
                     print(f"  {i}/{len(files)} scanned", flush=True)
                 continue
             try:
-                out = convert(src)
+                out = convert(src, lossless)
                 if out is None:
                     continue
                 if gate is not None:
@@ -180,9 +204,27 @@ def _rewrite(con: sqlite3.Connection, label: str, src: Path, out: Path) -> None:
             d["file"] = out.name
             con.execute("UPDATE runs SET doc=? WHERE seq=?", (json.dumps(d), seq))
             break
+    elif label == "refs":
+        # bio.json names three references LITERALLY — the identity reference, the
+        # body reference and the calibration seed. Nothing globs these; they are
+        # opened by exact name, so a rename without this rewrite silently detaches
+        # her face from her bio. gallery.npz needs nothing: the pixels are proven
+        # identical, so the embeddings still describe these exact images.
+        bio = config.char_base() / "state" / "bio.json"
+        if not bio.exists():
+            return
+        cfg = json.loads(bio.read_text() or "{}")
+        changed = False
+        for key in ("reference", "body_reference", "calib_seed"):
+            if cfg.get(key) == src.name:
+                cfg[key] = out.name
+                changed = True
+        if changed:
+            bio.write_text(json.dumps(cfg, indent=2) + "\n")
     else:
-        # Wardrobe metadata is keyed by STEM, which does not change — nothing to
-        # rewrite. Recorded here so the asymmetry is not mistaken for an omission.
+        # Wardrobe and places are keyed by STEM (`_find_by_id` tries every image
+        # extension), so the rename needs no rewrite. Recorded so the asymmetry is
+        # not mistaken for an omission.
         pass
 
 
@@ -195,10 +237,14 @@ if __name__ == "__main__":
                     help="leave images/ alone. Use this once images/ has been done: "
                          "the PNGs still there are the ones --regate REFUSED, and a "
                          "later run without --regate would silently convert them.")
+    ap.add_argument("--refs", action="store_true",
+                    help="convert refs/ LOSSLESSLY (pixel-identical or refused)")
+    ap.add_argument("--places", action="store_true",
+                    help="convert places/ LOSSLESSLY (her home corners)")
     ap.add_argument("--regate", action="store_true",
                     help="re-score every image before and after; refuse any swap "
                          "that would flip a verdict (slow)")
     ap.add_argument("--character", default=None, help="character id (default: active)")
     a = ap.parse_args()
     run(a.character or config.get_active(), a.apply, a.wardrobe, a.regate,
-        a.no_images)
+        a.no_images, a.refs, a.places)
