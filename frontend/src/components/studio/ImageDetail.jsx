@@ -40,7 +40,19 @@ export default function ImageDetail({ image, wardrobe = [], onClose, onMark, onT
           {(run.verdict?.reason || run.moderation_fallback) && (
             <div className="rounded-lg bg-amber-500/10 ring-1 ring-amber-500/20 p-3 text-[11px] text-amber-300 flex gap-2">
               <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
-              {run.verdict?.reason || "served by the scene model (weaker identity) after a moderation refusal"}
+              <span>
+                {/* Which confound explains the score. "drift" is the only one that
+                    is about her; the rest are framing, and read as red not amber. */}
+                {run.verdict?.diagnosis && (
+                  <span className={cn("mr-2 rounded px-1.5 py-0.5 font-semibold uppercase tracking-wider text-[10px]",
+                    run.verdict.diagnosis === "drift"
+                      ? "bg-red-500/20 text-red-300"
+                      : "bg-amber-500/20 text-amber-200")}>
+                    {run.verdict.diagnosis}
+                  </span>
+                )}
+                {run.verdict?.reason || "served by the scene model (weaker identity) after a moderation refusal"}
+              </span>
             </div>
           )}
 

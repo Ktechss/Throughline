@@ -3,10 +3,9 @@
 ## Project description
 
 Throughline is a character-asset pipeline for producing hundreds of
-photorealistic images (and short video clips) of the *same* fictional person over
-time, without identity drift. It is a multi-character studio: each character has
-its own identity fingerprint, calibration, body library, wardrobe, poses, images
-and videos.
+photorealistic images of the *same* fictional person over time, without identity drift. It is a multi-character studio: each character has
+its own identity fingerprint, calibration, body library, wardrobe, poses and
+images.
 
 The spine of the system is a measured identity check, not a human eyeball. Every
 generated image is embedded with ArcFace and scored against the character's
@@ -32,7 +31,7 @@ under `/api`. Long operations run as backend jobs that the UI polls.
 
 - Two top-level views: a **character picker** (landing) and a **studio** for the
   active character.
-- Studio has five tabs: **shoot**, **bio**, **calibrate**, **video**, **review**.
+- Studio has four tabs: **shoot**, **bio**, **calibrate**, **review**.
 - The review tab shows a live count of shot images (excludes wardrobe/body/calibration runs).
 - "Switch character" returns to the landing picker; if a generation is still in
   progress, a confirmation warns that the in-progress preview will be lost.
@@ -138,31 +137,6 @@ A three-step character-origin flow:
   - **Recalibrate threshold** (needs ≥3 faces) — shows resulting threshold,
     self-agreement mean/min, and face count.
   - **Reset** the fingerprint (confirmed).
-
-## Video tab (animate stills / make videos)
-
-Two workflows via a mode toggle:
-
-- **Make Video** (multi-scene from a scenario):
-  - Scenario textarea for a director to storyboard into scenes.
-  - Outfit select (auto — director picks, or a specific wardrobe outfit).
-  - Length slider (6–30 s).
-  - **Make Video** builds the clip (live busy status).
-- **Animate Still** (one clip from a still):
-  - Pick from a grid of up to 30 approved stills (gate-kept or manually approved).
-  - Describe the scene, then **direct this scene** — auto-fills model, dialogue,
-    scene words, camera move, duration, resolution, director note, image brief,
-    and outfit pick.
-  - Optionally **generate a scene still** from the proposed brief + outfit.
-  - Choose a **model** (e.g. seedance / kling / happy-horse) and a **camera move**.
-  - happy-horse configurator: dialogue (blank = silent), resolution 720p/1080p,
-    duration 3–15 s, seed (blank = random), safety-checker toggle, keep/silent
-    audio toggle.
-  - Extra motion/scene words field.
-  - **Generate video** (needs a selected still).
-- **Clips list**: plays each generated clip with controls/loop; shows metadata
-  (scene count or "talking" or camera move, duration, model, dialogue) and
-  **per-frame gate results** (frame, similarity, kept/rejected status).
 
 ## Review tab (curate & export)
 

@@ -108,6 +108,7 @@ NAILS_META = CharPath("state", "nails.json")       # nail-style metadata: {stem:
 PLACES_META = CharPath("state", "places.json")     # place metadata: {stem: {name, category}}
 HOME_PATH = CharPath("state", "home.json")         # her home: {style}; corner images live in places/<key>.*
 BIO_PATH = CharPath("state", "bio.json")           # reference / body_reference / calib_seed
+TIMELINE_PATH = CharPath("state", "timeline.json")  # her year: {eras: [{from, name, hair, note}]}
 
 
 def ensure_char_dirs(cid: str | None = None) -> None:
@@ -148,6 +149,14 @@ TEXT2IMG = "fal-ai/gpt-image-2"
 # split is identity first, scene second.
 SCENE_EDIT = "fal-ai/nano-banana-pro/edit"
 SCENE_TEXT2IMG = "fal-ai/nano-banana-pro"
+
+# How many reference images one shot may spend. @image1 (face) and @image2
+# (outfit, or her build when no outfit is chosen) are the two that earn a slot;
+# every reference after them measurably dilutes identity rather than reinforcing
+# it. Measured here 2026-08-02 on shots at a matched 400-600px face size: 2 refs
+# 0.622 (n=54) vs 3 refs 0.579 (n=23). FINDINGS saw it harder — three face crops
+# 0.547 against one crop's 0.811. Raise this only with a measurement in hand.
+REF_BUDGET = 2
 
 # Endpoints take different arguments and silently ignore foreign ones, which is
 # worse than erroring — you get a 1024px image while believing you asked for 4K.

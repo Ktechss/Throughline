@@ -50,7 +50,7 @@ export default function Layout() {
             <div className="px-3 pt-6 pb-2">
               <div className="text-[10px] uppercase tracking-[0.18em] text-zinc-600">Studio workflow</div>
               <p className="mt-2 text-[11px] leading-relaxed text-zinc-600">
-                Shoot, Bio, Calibrate, Video &amp; Review live in the tab bar above the character.
+                Shoot, Bio, Calibrate &amp; Review live in the tab bar above the character.
               </p>
             </div>
           )}

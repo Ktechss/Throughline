@@ -3,12 +3,11 @@
 **One face. Hundreds of shots. Zero drift.**
 
 Throughline is a character-asset pipeline for producing hundreds of photorealistic
-images (and short video clips) of the *same* fictional person over time — across
-outfits, poses, scenes and angles — without the face drifting into a different
-person every generation.
+images of the *same* fictional person over time — across outfits, poses, scenes
+and angles — without the face drifting into a different person every generation.
 
 It's a **multi-character studio**: each character carries its own identity
-fingerprint, calibration, body library, wardrobe, poses, images and videos.
+fingerprint, calibration, body library, wardrobe, poses and images.
 
 ---
 
@@ -50,8 +49,6 @@ re-ID can't key on it); for that there's a manual approve/reject verdict.
   fingerprint → recalibrate the threshold.
 - **Outfit designer** — describe an outfit from a photo (Claude), enrich it with a
   tweak + attribute pickers, generate a turnaround, and save it to the wardrobe.
-- **Video** — animate an approved still or storyboard a multi-scene clip, with
-  per-frame gate results. *(Wired; still lightly tested.)*
 - **Review** — keep-rate stats by pose/outfit, approve/reject, export the
   human-approved **gold set** (a future LoRA dataset), and reclaim disk.
 
@@ -70,7 +67,7 @@ re-ID can't key on it); for that there's a manual approve/reject verdict.
 | `CLAUDE.md` | Project context and hard rules |
 | `data/` | Generated images, gallery, per-character state, SQLite db — **gitignored** |
 
-Runs / videos / wardrobe metadata live in a single global SQLite db
+Runs and wardrobe metadata live in a single global SQLite db
 (`data/eve1.db`); the per-character files live under `data/characters/<id>/`.
 
 ---
@@ -108,7 +105,7 @@ cd frontend && npm install && npm run dev      # http://localhost:5173
 `.env` keys either way:
 
 ```
-FAL_KEY=…            # image/video generation (fal.ai)
+FAL_KEY=…            # image generation (fal.ai)
 ANTHROPIC_API_KEY=…  # Claude — bio writing, AI prompt, describe/enrich
 ```
 
@@ -116,8 +113,8 @@ ANTHROPIC_API_KEY=…  # Claude — bio writing, AI prompt, describe/enrich
 
 ## Status & notes
 
-- Active WIP. The **video** clip pipeline is wired but lightly tested; "zero drift"
-  is the design goal (the gate *measures* drift), not a guarantee.
+- Active WIP. "Zero drift" is the design goal (the gate *measures* drift), not a
+  guarantee.
 - She is entirely fictional — no real person's likeness, anywhere. Never put a real
   person's name in a prompt.
 - ⚠ Keep secrets out of git: `.env` is gitignored (only `.env.example` is

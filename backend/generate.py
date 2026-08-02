@@ -137,8 +137,16 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
              session: dict | None = None, endpoint: str | None = None,
              extra: dict | None = None, progress: dict | None = None,
              fallback_endpoint: str | None = None,
-             resolution: str | None = None) -> dict:
+             resolution: str | None = None, gated: bool = True) -> dict:
     """One generation, gated and recorded.
+
+    gated=False for output that is not a photo OF her — a wardrobe turnaround is
+    a garment swatch, and only its clothing is ever used downstream. Scoring one
+    is not a measurement: the sheet holds four faces, `analyze` embeds whichever
+    panel renders the largest, and in a full-body panel that face lands near
+    200px — under every floor that makes a number mean anything. Measured over
+    118 turnarounds: 116 rejected, every one of them for face size, mean 0.483.
+    A gate that cannot pass a thing by construction should not be judging it.
 
     refs order matters and is the caller's responsibility. Measured on the
     previous build: an identity reference plus ONE face crop scored 0.860, where
@@ -160,7 +168,8 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
     if primary == LOCAL_ENDPOINT:
         return _generate_local(rid, dest, prompt=prompt, system=system,
                                refs=refs, seed=seed, session=session,
-                               pose_file=pose_file, meta=meta, extra=extra)
+                               pose_file=pose_file, meta=meta, extra=extra,
+                               gated=gated)
 
     # Upload refs ONCE and reuse the URLs across both endpoints — re-uploading
     # for the fallback would double the cost and latency for nothing.
@@ -291,21 +300,32 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
 
     # Gate it if a gallery exists. No gallery yet is the normal state during a
     # seed hunt — that is not an error, it is the phase before there is a her.
-    try:
-        row["verdict"] = gate.check(dest).dict()
-    except FileNotFoundError:
-        row["verdict"] = {"status": "ungated", "reason": "gallery is empty"}
-    except gate.NoFaceFound as exc:
-        row["verdict"] = {"status": "no_face", "reason": str(exc)[:120]}
-    except ValueError as exc:
-        row["verdict"] = {"status": "error", "reason": str(exc)[:120]}
+    if not gated:
+        row["verdict"] = {"status": "ungated",
+                          "reason": "not a photo of her — only its clothing is used"}
+    else:
+        try:
+            row["verdict"] = gate.check(dest).dict()
+        except FileNotFoundError:
+            row["verdict"] = {"status": "ungated", "reason": "gallery is empty"}
+        except gate.NoFaceFound as exc:
+            row["verdict"] = {"status": "no_face", "reason": str(exc)[:120]}
+        except ValueError as exc:
+            row["verdict"] = {"status": "error", "reason": str(exc)[:120]}
+
+    # A shot asked to be imperfect is expected to score low: blur and a half-caught
+    # expression degrade the geometry the embedding is built on. Marking the verdict
+    # keeps that number out of any later read on drift — the same separation the
+    # gate draws between a framing confound and a real identity miss.
+    if (meta or {}).get("expected_low"):
+        row["verdict"]["expected_low"] = True
 
     db.runs_insert(row, character_id=owner)   # atomic + pinned to the owning character
     return row
 
 
 def _generate_local(rid, dest, *, prompt, system, refs, seed, session,
-                    pose_file, meta, extra) -> dict:
+                    pose_file, meta, extra, gated: bool = True) -> dict:
     """Drive the local SDXL worker in its own venv as a subprocess.
 
     The identity reference is the FIRST ref — IP-Adapter takes one face image.
@@ -353,14 +373,25 @@ def _generate_local(rid, dest, *, prompt, system, refs, seed, session,
         "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "cost_usd": 0.0, "mark": None, "meta": meta or {},
     }
-    try:
-        row["verdict"] = gate.check(dest).dict()
-    except FileNotFoundError:
-        row["verdict"] = {"status": "ungated", "reason": "gallery is empty"}
-    except gate.NoFaceFound as exc:
-        row["verdict"] = {"status": "no_face", "reason": str(exc)[:120]}
-    except ValueError as exc:
-        row["verdict"] = {"status": "error", "reason": str(exc)[:120]}
+    if not gated:
+        row["verdict"] = {"status": "ungated",
+                          "reason": "not a photo of her — only its clothing is used"}
+    else:
+        try:
+            row["verdict"] = gate.check(dest).dict()
+        except FileNotFoundError:
+            row["verdict"] = {"status": "ungated", "reason": "gallery is empty"}
+        except gate.NoFaceFound as exc:
+            row["verdict"] = {"status": "no_face", "reason": str(exc)[:120]}
+        except ValueError as exc:
+            row["verdict"] = {"status": "error", "reason": str(exc)[:120]}
+
+    # A shot asked to be imperfect is expected to score low: blur and a half-caught
+    # expression degrade the geometry the embedding is built on. Marking the verdict
+    # keeps that number out of any later read on drift — the same separation the
+    # gate draws between a framing confound and a real identity miss.
+    if (meta or {}).get("expected_low"):
+        row["verdict"]["expected_low"] = True
 
     db.runs_insert(row, character_id=owner)   # atomic + pinned to the owning character
     return row

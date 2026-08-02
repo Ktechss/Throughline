@@ -63,6 +63,13 @@ MIN_FACE_PX = 160
 # Below this the number ranks but does not adjudicate.
 LOW_CONFIDENCE_PX = 320
 
+# Where the face-size gradient stops paying. Measured on this project's own 207
+# shots (2026-08-02): <250px 0.472, 250-400px 0.548, 400-600px 0.612, 600+ 0.608.
+# The curve is steep up to here and flat after, so a face under 400px is losing
+# identity to FRAMING, and a bigger face than this buys nothing back. This is the
+# number that turns "reject, 0.55" into "reframe closer" instead of a shrug.
+FACE_PLATEAU_PX = 400
+
 # Max |candidate.yaw - entry.yaw| before the comparison stops being about
 # identity. corr(|yaw|, sim) = -0.761, so beyond this the score is dominated by
 # head angle and reporting it as identity is how you delete every profile of the
@@ -121,6 +128,7 @@ class Verdict:
     threshold: float
     face: Face
     source_yaw: float | None = None   # yaw of the reference it was scored against
+    faces_in_frame: int = 1           # >1 means the subject was CHOSEN from several
 
     @property
     def pose_delta(self) -> float | None:
@@ -144,7 +152,40 @@ class Verdict:
         return self.face.width < LOW_CONFIDENCE_PX
 
     @property
+    def diagnosis(self) -> str:
+        """For a REJECTED verdict: which known confound explains the number.
+
+        A low score has two very different meanings — "the model drew someone
+        else" and "you gave the gate a face it cannot read" — and they call for
+        opposite actions (re-roll vs reframe). Every confound below is measured,
+        so which one is present is derivable from `face_px` and `yaw` rather than
+        argued about per image. `drift` is returned only when none of them
+        applies: that is the one case where the number really is about identity.
+
+        Empty for anything that was not rejected — there is nothing to explain.
+        """
+        if self.status != "rejected":
+            return ""
+        if self.face.width < FACE_PLATEAU_PX:
+            return "small-face"
+        if self.face.pose_class != "frontal":
+            return "off-frontal"
+        if self.face.tilted:
+            return "tilted"
+        return "drift"
+
+    @property
     def reason(self) -> str:
+        # Always say so when the subject was picked out of a crowd: the score is a
+        # max over candidates, which flatters it slightly, and knowing WHICH face
+        # was measured is part of reading the number at all.
+        crowd = (f"{self.faces_in_frame} faces in frame — scored the one best "
+                 f"matching the gallery ({self.face.width}px at yaw "
+                 f"{self.face.yaw:+.1f}). " if self.faces_in_frame > 1 else "")
+        return crowd + self._reason
+
+    @property
+    def _reason(self) -> str:
         if self.face.width < MIN_FACE_PX:
             return (f"face is {self.face.width}px, under the {MIN_FACE_PX}px floor — "
                     f"too little signal to make any claim")
@@ -153,6 +194,28 @@ class Verdict:
                     f"{self.face.yaw:+.1f} — {self.pose_delta:.0f} apart. Beyond "
                     f"{POSE_DELTA_MAX:.0f} the score measures head angle, not "
                     f"identity. Import a reference at this angle to judge it.")
+        # A rejection with a confound in it is a framing note, not a verdict on
+        # her. Say which, and say what to do about it — the whole point of
+        # recording yaw and face_px next to the score.
+        d = self.diagnosis
+        if d == "small-face":
+            return (f"face is {self.face.width}px, under the {FACE_PLATEAU_PX}px "
+                    f"plateau — identity falls off with framing below this "
+                    f"(measured: 0.55 at 250-400px vs 0.61 at 400-600px). Reframe "
+                    f"closer before reading this as drift.")
+        if d == "off-frontal":
+            return (f"head is {abs(self.face.yaw):.0f} off-frontal "
+                    f"({self.face.pose_class.replace('_', '-')}) and the threshold "
+                    f"is flat — corr(|yaw|, sim) = -0.761, so this number is partly "
+                    f"measuring angle. Judge it against a same-angle reference.")
+        if d == "tilted":
+            return (f"head is rolled {self.face.roll:+.0f}, past the "
+                    f"{ROLL_LEVEL_MAX:.0f} level mark — a lean the references do "
+                    f"not have costs similarity on its own.")
+        if d == "drift":
+            return (f"face is {self.face.width}px and near-frontal "
+                    f"({self.face.yaw:+.1f}) — no framing confound to explain "
+                    f"this. The model drew someone else; re-roll or fix the prompt.")
         return ""
 
     @property
@@ -171,22 +234,42 @@ class Verdict:
                 "source_yaw": None if self.source_yaw is None else round(self.source_yaw, 1),
                 "pose_delta": None if self.pose_delta is None else round(self.pose_delta, 1),
                 "pose_mismatch": self.pose_mismatch,
+                "faces_in_frame": self.faces_in_frame,
+                "diagnosis": self.diagnosis,
                 "reason": self.reason}
 
 
-def analyze(path: str | Path) -> Face:
-    """Embed the largest face. Largest is right: she is always the subject."""
+def _wrap(f) -> Face:
+    # insightface pose is [pitch, yaw, roll].
+    return Face(vector=f.normed_embedding, pitch=float(f.pose[0]),
+                yaw=float(f.pose[1]), roll=float(f.pose[2]),
+                width=int(f.bbox[2] - f.bbox[0]))
+
+
+def _detect(path: str | Path):
     img = cv2.imread(str(path))
     if img is None:
         raise ValueError(f"could not read image: {path}")
     faces = _get_app().get(img)
     if not faces:
         raise NoFaceFound(f"no face detected in {Path(path).name}")
-    f = max(faces, key=lambda x: (x.bbox[2] - x.bbox[0]) * (x.bbox[3] - x.bbox[1]))
-    # insightface pose is [pitch, yaw, roll].
-    return Face(vector=f.normed_embedding, pitch=float(f.pose[0]),
-                yaw=float(f.pose[1]), roll=float(f.pose[2]),
-                width=int(f.bbox[2] - f.bbox[0]))
+    return faces
+
+
+def analyze(path: str | Path) -> Face:
+    """Embed the largest face. Largest is right for a REFERENCE: a curated
+    reference is her, alone. For a generated image use `analyze_all` + the
+    gallery — see `check`, where largest is exactly the wrong rule."""
+    faces = _detect(path)
+    return _wrap(max(faces, key=lambda x: (x.bbox[2] - x.bbox[0]) * (x.bbox[3] - x.bbox[1])))
+
+
+def analyze_all(path: str | Path) -> list[Face]:
+    """Every face in the image, largest first."""
+    faces = _detect(path)
+    faces.sort(key=lambda x: (x.bbox[2] - x.bbox[0]) * (x.bbox[3] - x.bbox[1]),
+               reverse=True)
+    return [_wrap(f) for f in faces]
 
 
 def face_box(path: str | Path) -> tuple[int, int, int, int] | None:
@@ -290,28 +373,44 @@ def check(path: str | Path, threshold: float | None = None) -> Verdict:
     first, verdict second. If even the closest entry is too far, `Verdict`
     abstains — we genuinely cannot judge that pose and should say so rather than
     return a confident number about head angle.
+
+    ## Which FACE, when there is more than one
+
+    `analyze` takes the largest, which is right for a reference and wrong here.
+    The moment anyone else is in shot — a friend, a passer-by, a face on a poster
+    — the largest face is whoever stood closest to the lens, and scoring THEM
+    against her gallery reports a stranger's 0.3 as her drift. So the subject is
+    the face that best matches the gallery: "which of these is most likely her"
+    is the question actually being asked. `faces_in_frame` is recorded because
+    taking a max over several candidates flatters the score a little, and a
+    number whose selection rule you can't see is the kind this module exists to
+    prevent.
     """
     g = load_gallery()
     if not g:
         raise FileNotFoundError("gallery is empty — import an identity reference "
                                 "and seed it from data/refs")
-    face = analyze(path)
     meta = load_meta()
-
     posed = {n: meta[n]["yaw"] for n in g if n in meta and "yaw" in meta[n]}
-    if posed:
-        name = min(posed, key=lambda n: abs(posed[n] - face.yaw))
-        src_yaw = posed[name]
-    else:
+
+    def score(face: Face) -> tuple[float, str, float | None]:
+        """This face's fair score: pose-matched entry first, then similarity."""
+        if posed:
+            name = min(posed, key=lambda n: abs(posed[n] - face.yaw))
+            return similarity(face.vector, g[name]), name, posed[name]
         # No recorded yaws (a hand-seeded gallery). Fall back to similarity and
         # report no source yaw, so the verdict cannot claim a fairness it has
         # not checked.
         name = max(g, key=lambda n: similarity(face.vector, g[n]))
-        src_yaw = None
+        return similarity(face.vector, g[name]), name, None
+
+    faces = analyze_all(path)
+    face = max(faces, key=lambda f: score(f)[0]) if len(faces) > 1 else faces[0]
+    sim, name, src_yaw = score(face)
 
     thr = threshold if threshold is not None else load_threshold()
-    return Verdict(similarity(face.vector, g[name]), name, thr, face,
-                   source_yaw=src_yaw)
+    return Verdict(sim, name, thr, face, source_yaw=src_yaw,
+                   faces_in_frame=len(faces))
 
 
 def reset_gallery() -> None:

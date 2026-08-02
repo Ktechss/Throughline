@@ -255,6 +255,18 @@ def default_parts() -> list[Part]:
                "she never removes). OFF by default — turn it on and describe hers. "
                "This is standing jewelry, not the per-shot sunglasses/hats toggle."),
 
+        # The objects a real person carries around for years. Recurrence is the
+        # point: a stranger's photos are full of one-off props, whereas the same
+        # scuffed phone case turning up in mirror selfie after mirror selfie is
+        # the sort of continuity nobody thinks to fake. OFF by default — an
+        # invented kit is worse than none, so describe hers before enabling.
+        P("accessories.everyday", "accessories", "Everyday carry",
+          "the same phone in a well-used case, an everyday shoulder bag, a slim "
+          "watch on her left wrist", enabled=False,
+          note="Objects that recur across her whole year — phone + case (visible "
+               "in every mirror selfie), bag, watch, water bottle, sunglasses. "
+               "Only what is plausibly in frame; this is continuity, not a list."),
+
         # -- wardrobe / pose / scene ----------------------------------------
         # placeholder=True: these are what you get with an EMPTY brief. The
         # moment a brief exists it replaces them outright — a prompt saying both
@@ -433,6 +445,78 @@ SHOT_TYPES = {
     "pov": "First-person POV phone photo",   # faceless — see the pov branch in compose_tagged()
 }
 
+# WHO IS HOLDING THE CAMERA.
+#
+# Every shot used to have the same invisible photographer, which is a thing real
+# camera rolls never have. A year of someone's photos is a mixture: things they
+# took of themselves, things a friend took, the one a stranger took badly outside
+# a monument. That mixture is most of what makes a set read as a life.
+#
+# It is also a direct lever on identity, which is why each entry carries `face`.
+# Measured here over 207 shots: a face under 400px loses similarity to framing
+# alone (0.55 at 250-400px vs 0.61 at 400-600px). Selfies put the face near the
+# lens and land comfortably above that line; a stranger's wide shot does not. So
+# the holder is both a realism choice and a budget decision, and the UI should
+# show which is which rather than leaving it to be discovered per shot.
+CAMERA_HOLDERS = {
+    "": {"label": "Unspecified", "face": "", "text": ""},
+    "selfie": {
+        "label": "Selfie (arm's length)", "face": "large",
+        "text": "She is taking this herself at arm's length on the front camera — "
+                "her nearer arm reaches out of frame toward the lens, the "
+                "perspective is slightly wide and close, her face fills much of "
+                "the frame and her eyes are on the lens."},
+    "mirror": {
+        "label": "Mirror selfie", "face": "large",
+        "text": "A mirror selfie: she is photographing her own reflection, the "
+                "phone held at chest height and angled at the glass, clear of her "
+                "face. The room behind her appears reflected; the real camera is "
+                "not in the frame."},
+    "friend": {
+        "label": "Taken by a friend", "face": "medium",
+        "text": "A friend a few steps away took this — unposed and slightly "
+                "imperfect, she is aware of the camera without performing for it, "
+                "the framing a little loose and off-centre."},
+    "stranger": {
+        "label": "Taken by a stranger", "face": "small",
+        "text": "A stranger she handed the phone to took this — dead-centre, a "
+                "little too much headroom, a plain straight-on composition, and "
+                "she stands slightly formally for it."},
+    "timer": {
+        "label": "Propped, self-timer", "face": "small",
+        "text": "The phone is propped on a surface on its self-timer — a fixed "
+                "slightly low angle, marginally off-level, and she has walked into "
+                "frame and is still settling."},
+}
+
+# HOW IMPERFECT THE PHOTOGRAPH IS.
+#
+# Every shot the pipeline makes is composed, focused and well-lit. Real camera
+# rolls are not: roughly a third of any real one is mediocre, and the complete
+# ABSENCE of a bad frame is itself the tell — it reads as a product catalogue
+# rather than a person's photos.
+#
+# ⚠ These deliberately cost similarity. Motion blur and a half-closed eye degrade
+# exactly the geometry ArcFace reads, so a flawed shot scores low and that is the
+# intended outcome, not drift. Runs carry `flaws` in their meta and their verdict
+# is tagged `expected_low` so the number is never mistaken for an identity
+# failure — the same distinction `Verdict.diagnosis` draws.
+SNAPSHOT_FLAWS = {
+    "": {"label": "Clean", "expected_low": False, "text": ""},
+    "subtle": {
+        "label": "Slightly imperfect", "expected_low": False,
+        "text": "Not a perfectly made photograph: the horizon is a touch off "
+                "level, the centring is imperfect, and there is a trace of "
+                "handheld softness — the ordinary flaws of a real phone snap."},
+    "snapshot": {
+        "label": "Genuinely imperfect", "expected_low": True,
+        "text": "An unflattering real snapshot that nobody curated: mild motion "
+                "blur where she or her hand moved, an off-level horizon, an "
+                "awkward crop that clips an edge of her, and a plain half-caught "
+                "expression rather than a held one. In low light it is lit by a "
+                "harsh direct on-camera flash with a hard shadow behind her."},
+}
+
 # Pose library, ported from ai-influencer's POSE_MAP — text pose descriptions
 # someone tuned until they reliably produce each stance. These are the primary
 # pose direction; the reference images carry identity, the pose text carries the
@@ -444,6 +528,34 @@ from .poses_data import POSE_GROUPS  # noqa: E402 — large generated pose libra
 POSES_LIBRARY = {"": ""}
 for _cat_poses in POSE_GROUPS.values():
     POSES_LIBRARY.update(_cat_poses)
+
+
+def carry_clause(parts: list["Part"], skip: set[str] | None = None) -> str:
+    """The standing grooming and accessories she has in EVERY shot.
+
+    These sections existed and were reaching nothing: `compose_tagged` only ever
+    pulled `body` parts (via `build_clause`), so an enabled "signature
+    accessories" or "everyday nails" changed the BIO prompt and silently did
+    nothing to an actual shot. The checkbox was a real knob for one code path and
+    decoration for the one people use.
+
+    Which matters more than it sounds, because recurrence is most of what makes a
+    set of images read as one person's life rather than a hundred separate
+    generations. The same chain, the same watch, the same phone case — cheap to
+    say, and the kind of continuity that is only visible across the whole year.
+
+    `skip` drops parts a more specific directive has already claimed: a chosen
+    manicure reference or the calendar's own nails should not be arguing with the
+    generic nails line.
+    """
+    out = [p.text.strip().rstrip(".") for p in parts
+           if p.section in ("grooming", "accessories")
+           and p.id not in (skip or set())
+           and getattr(p, "enabled", True) and p.text.strip()]
+    if not out:
+        return ""
+    return ("Constant across all her photos, unchanged by the scene: "
+            + "; ".join(out) + ".")
 
 
 def build_clause(parts: list["Part"]) -> str:
@@ -465,7 +577,8 @@ def build_clause(parts: list["Part"]) -> str:
 
 def compose_tagged(brief: str, *, pose_text: str = "", has_wardrobe: bool = False,
                    pose_ref_tag: str = "", build_text: str = "", n_skin: int = 0,
-                   shot_type: str = "candid",
+                   shot_type: str = "candid", camera_holder: str = "",
+                   flaws: str = "", carry_text: str = "",
                    realism: bool = True, pov: bool = False) -> tuple[str, list[dict]]:
     """The ai-influencer technique, ported and validated on fal gpt-image-2.
 
@@ -502,6 +615,8 @@ def compose_tagged(brief: str, *, pose_text: str = "", has_wardrobe: bool = Fals
             parts_out.append("Any sleeve or cuff on her forearm matches the outfit in @image2.")
         if build_text:
             parts_out.append(build_text)
+        if carry_text:
+            parts_out.append(carry_text)
         if realism:
             parts_out.append(
                 "Photorealistic phone snapshot: sharp focus on the subject and her "
@@ -512,6 +627,12 @@ def compose_tagged(brief: str, *, pose_text: str = "", has_wardrobe: bool = Fals
 
     opener = SHOT_TYPES.get(shot_type, SHOT_TYPES["candid"])
     parts_out = [f"{opener} of @image1. {brief.strip()}"]
+
+    # Who took it — placed early, because it decides the distance and the framing
+    # everything after it is written against.
+    holder = (CAMERA_HOLDERS.get(camera_holder) or {}).get("text", "")
+    if holder:
+        parts_out.append(holder)
 
     if pose_ref_tag:
         # A pose REFERENCE IMAGE of her. References leak pose strongly, so this
@@ -527,6 +648,9 @@ def compose_tagged(brief: str, *, pose_text: str = "", has_wardrobe: bool = Fals
 
     if build_text:
         parts_out.append(build_text)
+
+    if carry_text:
+        parts_out.append(carry_text)
 
     if has_wardrobe:
         # The wardrobe reference is a turnaround of HER wearing the outfit, so it
@@ -552,6 +676,14 @@ def compose_tagged(brief: str, *, pose_text: str = "", has_wardrobe: bool = Fals
             "moles and beauty marks reproduced from @image1 — never smoothed, "
             "airbrushed or retouched. Crisp focus on the eyes. Shot on a phone, "
             "not a professional camera.")
+
+    # Flaws go LAST so they qualify the realism line above rather than being
+    # overruled by it — "crisp focus on the eyes" and "mild motion blur" are a
+    # contradiction, and the model resolves a contradiction by whichever it read
+    # most recently.
+    flaw = (SNAPSHOT_FLAWS.get(flaws) or {}).get("text", "")
+    if flaw:
+        parts_out.append(flaw)
 
     return sanitise(" ".join(parts_out))
 

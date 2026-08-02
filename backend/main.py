@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date
 from pathlib import Path
 
 import shutil
@@ -18,11 +19,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
-from . import config, db, describe, gate, generate, prompt as promptlib, prompter, skeleton
+from . import (config, db, describe, gate, generate, prompt as promptlib, prompter,
+               skeleton, timeline)
 from .config import (BODIES, BODIES_META, CHARACTERS, CharPath, GOLD, HOME_PATH,
                      IMAGES, NAILS, NAILS_META, PARTS_PATH, PLACES, POSE_REFS,
-                     POSES, REFS, ROOT, SCENE_EDIT, SCENE_TEXT2IMG, STATE,
-                     WARDROBE)
+                     POSES, REF_BUDGET, REFS, ROOT, SCENE_EDIT, SCENE_TEXT2IMG,
+                     STATE, TIMELINE_PATH, WARDROBE)
 
 app = FastAPI(title="Throughline")
 
@@ -1635,6 +1637,12 @@ def wardrobe_create(req: OutfitCreateReq):
         return generate.generate(prompt=prompt, system="", refs=refs, aspect="16:9",
                                  session=generate.new_session(f"create outfit: {label}"),
                                  progress=job,
+                                 # A turnaround is a garment swatch, not a photo of
+                                 # her — /api/wardrobe/from-run uses only its clothing.
+                                 # Gating it scores whichever of its four panels
+                                 # renders the biggest face, at ~200px: 116 of 118 were
+                                 # rejected for face size alone. Not a measurement.
+                                 gated=False,
                                  meta={"outfit_create": req.outfit, "body": _bodies().get("active")},
                                  # A revealing outfit turnaround can trip gpt-image-2's
                                  # moderation; render it on the scene model instead of
@@ -1923,7 +1931,36 @@ HOME_CORNERS = [
     {"key": "terrace", "label": "Rooftop / terrace / garden", "keywords": ["terrace", "rooftop", "garden", "patio", "backyard"],
      "gen": "a rooftop terrace / garden — plants, comfortable outdoor seating, string lights, an open sky"},
 ]
-_CORNER = {c["key"]: c for c in HOME_CORNERS}
+# The places OUTSIDE the flat that she returns to.
+#
+# A real life happens in a small number of repeated places. Someone's year of
+# photos is mostly the same gym, the same café, the same desk, the same platform
+# — not a hundred locations visited once each, which is what a brief-driven
+# pipeline produces by default and which reads as a travel brochure rather than a
+# person. These use the same storage, upload and generate machinery as the home
+# corners; the only difference is that they are hers-but-public, so an "away"
+# brief SHOULD match one, where it must never match her bathroom.
+REGULAR_PLACES = [
+    {"key": "reg_gym", "label": "Her gym", "keywords": ["gym", "workout", "weights", "treadmill"],
+     "gen": "a mid-size city gym floor — racks and machines, rubber flooring, wall mirrors, "
+            "strip lighting, a water station"},
+    {"key": "reg_cafe", "label": "Her café", "keywords": ["cafe", "café", "coffee shop", "espresso"],
+     "gen": "a small neighbourhood café — a counter with a espresso machine, mismatched wooden "
+            "tables, plants, menu board, big street-facing windows"},
+    {"key": "reg_desk", "label": "Her work desk", "keywords": ["at work", "the office", "her desk at work", "workplace"],
+     "gen": "one desk in an open-plan office — a monitor, a laptop on a stand, a mug, a lanyard, "
+            "low partitions and other desks behind"},
+    {"key": "reg_commute", "label": "Her metro station", "keywords": ["metro", "station", "platform", "commute", "train"],
+     "gen": "an elevated urban metro platform — tiled floor, yellow safety line, overhead signage, "
+            "a train approaching, city buildings beyond"},
+    {"key": "reg_street", "label": "Her street", "keywords": ["her street", "outside her building", "her block", "downstairs"],
+     "gen": "a residential city street outside an apartment block — parked two-wheelers, a "
+            "compound wall, shop shutters, overhead cables, trees"},
+]
+
+# Merged so upload / generate / file / thumb / delete work by key for both kinds.
+_CORNER = {c["key"]: c for c in [*HOME_CORNERS, *REGULAR_PLACES]}
+_REGULAR_KEYS = {c["key"] for c in REGULAR_PLACES}
 # Only these rooms open to the outside — the balcony/window VIEW (buildings, street,
 # skyline) belongs here and NOWHERE else. Every other corner is a fully interior room.
 _VIEW_ROOMS = {"balcony", "terrace", "living_room"}
@@ -1953,7 +1990,16 @@ def get_home():
         f = _corner_file(c["key"])
         corners.append({"key": c["key"], "label": c["label"], "view": c["key"] in _VIEW_ROOMS,
                         "has_image": bool(f), "file": f.name if f else None})
-    return {"style": h["style"], "surroundings": h["surroundings"], "corners": corners}
+    # Her regulars ride the same storage and the same /api/home/{key} endpoints —
+    # listed separately only because the UI groups "her flat" and "places she
+    # goes" differently, and because an away brief treats them oppositely.
+    regulars = []
+    for c in REGULAR_PLACES:
+        f = _corner_file(c["key"])
+        regulars.append({"key": c["key"], "label": c["label"], "view": False,
+                         "has_image": bool(f), "file": f.name if f else None})
+    return {"style": h["style"], "surroundings": h["surroundings"],
+            "corners": corners, "regulars": regulars}
 
 
 class HomeStyleReq(BaseModel):
@@ -2000,7 +2046,14 @@ def home_generate(key: str):
     # open outward (balcony/terrace/living room); every other corner is a fully
     # interior room and must NOT show the city/buildings/street — that leak is the
     # bug this scoping fixes.
-    if key in _VIEW_ROOMS:
+    if key in _REGULAR_KEYS:
+        # Not her home — a public place she returns to. The house style and the
+        # interior-only scoping both belong to the flat and would actively fight
+        # a gym or a metro platform, so neither applies here.
+        base = (f"A photorealistic photograph of {corner['gen']}. One specific, "
+                f"real, slightly worn everyday place — the same one every time, "
+                f"not a showroom version of it.")
+    elif key in _VIEW_ROOMS:
         base = (f"A photorealistic photograph of {corner['gen']}, part of one real home."
                 + (f" Home style and materials: {style}." if style else "")
                 + (f" The outside view visible from here: {surroundings}." if surroundings else ""))
@@ -2022,6 +2075,9 @@ def home_generate(key: str):
         row = generate.generate(
             prompt=prompt, system="", refs=None, aspect="4:3",
             endpoint=SCENE_TEXT2IMG, session=generate.new_session(f"home: {corner['label']}"),
+            # An empty room has no face in it by design ("NO people" above), so
+            # gating one only ever records no_face — a failure that isn't one.
+            gated=False,
             progress=job, meta={"home_create": key})
         src = IMAGES / row["file"]
         if src.exists():
@@ -2059,15 +2115,96 @@ def home_delete(key: str):
     return {"ok": True}
 
 
-def _infer_home_corner(brief: str) -> Path | None:
-    """If the brief names a room we have an image for, return that corner's image."""
+# Places that are emphatically NOT her flat. A home corner is a literal, forceful
+# instruction — "the location is exactly the room shown in @imageN … do not invent
+# or substitute a different room" — attached to a real photo of her home. So an
+# ambiguous room noun is dangerous: "washroom", "at the mirror", "desk" and "bar"
+# all exist outside the house too. Measured in the wild: "during the interval she
+# went to the washroom" at a CINEMA matched the bathroom corner and rendered her
+# home bathroom, reference photo and all. When the brief puts her somewhere else,
+# infer nothing and let the brief describe the place.
+_AWAY_MARKERS = (
+    "cinema", "movie", "theatre", "theater", "multiplex", "mall", "restaurant",
+    "cafe", "café", "coffee shop", "hotel", "airport", "terminal", "station",
+    "metro", "train", "flight", "museum", "gallery", "stadium", "concert",
+    "gym", "salon", "spa", "clinic", "hospital", "temple", "church", "market",
+    "shop", "store", "supermarket", "beach", "park", "street", "road",
+    "college", "university", "school", "campus", "wedding", "party", "club",
+    "pub", "rooftop bar", "workplace", "went out", "out for", "outside",
+    "on the way", "public",
+)
+
+
+def _infer_place(brief: str) -> tuple[Path | None, str]:
+    """The place image this brief should be anchored to, and which kind it is.
+
+    Her REGULARS are tried first and are never suppressed: they are places she
+    goes precisely when she is out, so "at the gym" should pin her gym.
+
+    Home corners are only inferred when nothing marks her as away — see
+    `_AWAY_MARKERS`. Silently anchoring a shot to her flat because a word like
+    "washroom" appeared is worse than not anchoring it at all: the caller asked
+    for a cinema and got her bathroom, with no visible reason why.
+    """
     b = (brief or "").lower()
+    for c in REGULAR_PLACES:
+        if any(k in b for k in c["keywords"]):
+            f = _corner_file(c["key"])
+            if f:
+                return f, "regular"
+    if any(m in b for m in _AWAY_MARKERS):
+        return None, ""
     for c in HOME_CORNERS:
         if any(k in b for k in c["keywords"]):
             f = _corner_file(c["key"])
             if f:
-                return f
-    return None
+                return f, "home"
+    return None, ""
+
+
+# ----------------------------------------------------------------- her timeline
+# The eras a year of shots is drawn against. Deliberately thin: an era is a date
+# she changed visibly, and what changed. Everything else about a date (season,
+# manicure wear) is derived, so there is nothing here to keep in sync.
+@app.get("/api/shot/options")
+def shot_options():
+    """The axes a shot can be varied along, for the UI to render as pickers.
+
+    `face` on a camera holder is the expected face size it produces — the same
+    axis `gate.FACE_PLATEAU_PX` is about, surfaced at the point of choosing so the
+    identity cost of a wide shot is visible before it is paid rather than after.
+    """
+    return {
+        "shot_types": [{"id": k, "label": v} for k, v in promptlib.SHOT_TYPES.items()],
+        "camera_holders": [{"id": k, **v} for k, v in promptlib.CAMERA_HOLDERS.items()],
+        "flaws": [{"id": k, **v} for k, v in promptlib.SNAPSHOT_FLAWS.items()],
+    }
+
+
+@app.get("/api/timeline")
+def get_timeline():
+    tl = timeline.load(TIMELINE_PATH)
+    today = date.today()
+    clause, facts = timeline.clause(today, tl, sorted(_nails_meta()))
+    return {"eras": tl.get("eras") or [], "today": facts, "preview": clause}
+
+
+@app.put("/api/timeline")
+def put_timeline(payload: dict = Body(...)):
+    """Replace the era list. Each entry: {from: YYYY-MM-DD, name?, hair?, note?}."""
+    eras = payload.get("eras")
+    if not isinstance(eras, list):
+        raise HTTPException(400, "eras must be a list")
+    for e in eras:
+        if not isinstance(e, dict):
+            raise HTTPException(400, "each era must be an object")
+        try:
+            date.fromisoformat(str(e.get("from", "")))
+        except ValueError:
+            raise HTTPException(400, f"era needs a valid 'from' date: {e!r}") from None
+    TIMELINE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    TIMELINE_PATH.write_text(json.dumps({"eras": eras}, indent=2) + "\n")
+    return {"eras": eras}
 
 
 class ShotReq(BaseModel):
@@ -2092,6 +2229,16 @@ class ShotReq(BaseModel):
     pov: bool = False                # faceless first-person POV product/lifestyle shot —
                                      # the face ref anchors skin tone but stays out of frame;
                                      # nails/setting/outfit are the anchors, gate is N/A
+    ref_budget: bool = True          # hold this shot to REF_BUDGET references, demoting
+                                     # extras to their text form. Off = attach every
+                                     # reference and pay the measured ~0.04/slot
+    date: str | None = None          # ISO date this shot happens on. Drives season,
+                                     # appearance era and the manicure cycle — see
+                                     # timeline.py. None = today (no clause is forced)
+    camera_holder: str = ""          # who took it: selfie/mirror/friend/stranger/timer.
+                                     # Also a face-size lever — see CAMERA_HOLDERS
+    flaws: str = ""                  # "" | subtle | snapshot. Deliberate imperfection;
+                                     # "snapshot" is expected to score low, by design
 
 
 class AiPromptReq(BaseModel):
@@ -2158,40 +2305,113 @@ def shot(req: ShotReq):
         if body.exists():
             refs.append(body)
 
-    # @image3 = pose reference (her, in the desired pose/head orientation).
+    # ------------------------------------------------------------------ the date
+    # When this shot happens. Season, hair era and the manicure cycle all fall out
+    # of it, which is what makes a year of images a year rather than a catalogue.
+    # A nail choice from the calendar is a DEFAULT: an explicit pick always wins,
+    # so the cycle never overrides a deliberate one.
+    try:
+        when = (date.fromisoformat(req.date) if req.date else date.today())
+    except ValueError as exc:
+        raise HTTPException(400, f"bad date {req.date!r}: expected YYYY-MM-DD") from exc
+    tl_clause, tl_facts = timeline.clause(
+        when, timeline.load(TIMELINE_PATH), sorted(_nails_meta()))
+    nail_id = req.nail_id or (tl_facts.get("nail_id") if not req.pov else None)
+
+    # ---------------------------------------------------------- reference budget
+    # Every reference past the second measurably costs identity. Measured on this
+    # project's own runs (2026-08-02), comparing only shots at a matched face size
+    # of 400-600px so framing can't explain it: 2 refs scored 0.622 (n=54), 3 refs
+    # 0.579 (n=23). Barely 0.006 of that gap is the yaw difference between the
+    # groups. FINDINGS saw the same shape harder still — three face crops scored
+    # 0.547 against one crop's 0.811 — and gives the reason: more references don't
+    # give the model more identity, they give it more to BLEND.
+    #
+    # So slots are spent, not accumulated. @image1 (face) and @image2 (outfit or
+    # build) are the two that earn their place; everything after competes with
+    # them. An extra is DEMOTED to its text form where it has one — text costs no
+    # slot — and only dropped when it has none. Never silently: whatever gets
+    # demoted is recorded in meta and returned to the caller, and `ref_budget=false`
+    # turns the whole thing off for a shot that genuinely needs the image.
+    budget_left = max(0, REF_BUDGET - len(refs)) if req.ref_budget else 99
+    demoted: list[str] = []
+
+    # An AI prompt is used VERBATIM and was written against the tags that existed
+    # when Claude wrote it — /api/shot/ai-prompt hands it "@image3" for a pose ref.
+    # Demoting that ref afterwards would leave the prompt pointing at an image the
+    # model never receives, which is worse than spending the slot. So a tag the
+    # prompt already names is not up for demotion.
+    verbatim = (req.prompt or "").strip() if not req.pov else ""
+
+    # @image3 = pose reference (her, in the desired pose/head orientation). Its text
+    # form is the pose library entry — but only if the user actually picked one, so
+    # a pose ref used ALONE is kept rather than silently losing the pose entirely.
     pose_ref_tag = ""
     if req.pose_ref_id:
         pr = _find_by_id(POSE_REFS, req.pose_ref_id)
         if not pr:
             raise HTTPException(400, f"no such pose reference: {req.pose_ref_id}")
-        refs.append(pr)
-        pose_ref_tag = "@image3"
+        has_pose_text = bool(req.pose_text or promptlib.POSES_LIBRARY.get(req.pose_id or ""))
+        if budget_left > 0 or not has_pose_text or "@image3" in verbatim:
+            refs.append(pr)
+            pose_ref_tag = f"@image{len(refs)}"
+            budget_left -= 1
+        else:
+            demoted.append("pose-ref (using the pose text instead)")
 
-    # @imageN = manicure reference (her nail design). Costs a reference slot — an
-    # identity trade the user opts into per shot for an exact nail match. The tag
-    # is positional, so compute it from the current ref count before appending.
+    # @imageN = manicure reference (her nail design). Cheapest thing to demote: the
+    # saved nail description carries shape, colour and finish as words.
     nail_tag = ""
     nail_desc = ""
-    if req.nail_id:
-        nail = _find_by_id(NAILS, req.nail_id)
+    if nail_id:
+        nail = _find_by_id(NAILS, nail_id)
         if not nail:
-            raise HTTPException(400, f"no such nail style: {req.nail_id}")
-        nail_tag = f"@image{len(refs) + 1}"
-        refs.append(nail)
-        nail_desc = (_nails_meta().get(req.nail_id, {}) or {}).get("description", "")
+            raise HTTPException(400, f"no such nail style: {nail_id}")
+        nm = _nails_meta().get(nail_id, {}) or {}
+        nail_desc = (nm.get("description") or "").strip()
+        if not nail_desc:
+            # No written description; the category is at least the colour family,
+            # which is enough to keep a calendar-picked manicure out of a ref slot.
+            cat = (nm.get("category") or "").strip()
+            nail_desc = f"{cat} nails" if cat else ""
+        # An image slot is only ever spent on a manicure the USER asked for. The
+        # calendar picks one for every shot, and letting that buy a reference
+        # would quietly put every shot over budget — which is the exact cost this
+        # section exists to stop.
+        explicit = bool(req.nail_id)
+        if budget_left > 0 or (explicit and not nail_desc):
+            # The tag is positional, so compute it before appending.
+            nail_tag = f"@image{len(refs) + 1}"
+            refs.append(nail)
+            budget_left -= 1
+        elif explicit:
+            demoted.append("nail-ref (using its description instead)")
 
     # @imageN = home corner, inferred from the brief. If the brief names a room she
     # has an image for, anchor the setting to HER home so it stays the same house.
+    # Inferred, never asked for — so it yields first when the budget is tight, and
+    # it has no text form to fall back to.
     place_tag = ""
-    home_corner = _infer_home_corner(req.brief)
+    home_corner, place_kind = _infer_place(req.brief)
     if home_corner:
-        place_tag = f"@image{len(refs) + 1}"
-        refs.append(home_corner)
+        if budget_left > 0:
+            place_tag = f"@image{len(refs) + 1}"
+            refs.append(home_corner)
+            budget_left -= 1
+        else:
+            home_corner, place_kind = None, ""
+            demoted.append("place-ref (setting comes from the brief instead)")
 
     # Body-shape tuning from the editable body parts — folded into BOTH paths so
     # bust/waist/hips edits actually change the output. The AI prompter is barred
     # from describing her body, so it's appended after Claude's scene prompt.
-    build_text = promptlib.build_clause(_load_parts())
+    _parts = _load_parts()
+    build_text = promptlib.build_clause(_parts)
+    # Standing grooming/accessories — the objects that recur across her whole
+    # year. A specific manicure (chosen or from the calendar) already speaks for
+    # her nails, so the generic nails part stands down rather than contradicting it.
+    carry_text = promptlib.carry_clause(
+        _parts, skip={"grooming.nails"} if nail_id else set())
     # POV is a specific faceless first-person framing that a generic AI prompt (which
     # references @image1 and describes her posing) would fight — so POV always uses
     # the template's POV branch and ignores any AI prompt.
@@ -2202,6 +2422,15 @@ def shot(req: ShotReq):
         base = req.prompt.strip()
         if build_text:
             base = f"{base} {build_text}"
+        if carry_text:
+            base = f"{base} {carry_text}"
+        # Same treatment as the build clause: appended rather than handed to
+        # Claude. Who held the camera and how imperfect the frame is are
+        # photographic facts, and an AI prompt written before they were chosen
+        # would otherwise contradict them.
+        holder = (promptlib.CAMERA_HOLDERS.get(req.camera_holder) or {}).get("text", "")
+        if holder:
+            base = f"{base} {holder}"
         # A pose picked alongside an AI prompt must still take effect — otherwise a
         # multi-pose batch reuses the one pose already frozen into the AI prompt and
         # every image comes back in the same stance. Append the chosen pose as an
@@ -2212,13 +2441,19 @@ def shot(req: ShotReq):
                     "Use exactly this pose, overriding any other stance, gesture or "
                     "body position described above; keep the same scene, framing, "
                     "outfit, lighting and identity.")
+        # Flaws last, for the same reason as in compose_tagged: they qualify the
+        # sharpness the prompt above asks for, and the later line wins.
+        flaw = (promptlib.SNAPSHOT_FLAWS.get(req.flaws) or {}).get("text", "")
+        if flaw:
+            base = f"{base} {flaw}"
         text, sanitised = promptlib.sanitise(base)
     else:
         pose_text = req.pose_text or promptlib.POSES_LIBRARY.get(req.pose_id or "", "")
         text, sanitised = promptlib.compose_tagged(
             req.brief, pose_text=pose_text, has_wardrobe=has_wardrobe,
             pose_ref_tag=pose_ref_tag, build_text=build_text, shot_type=req.shot_type,
-            pov=req.pov)
+            camera_holder=req.camera_holder, flaws=req.flaws,
+            carry_text=carry_text, pov=req.pov)
 
     # Carry the outfit's FULL styling into the shot. The turnaround (@image2) has
     # her head cropped and may not show every accessory, so the saved outfit
@@ -2277,14 +2512,27 @@ def shot(req: ShotReq):
     # Home reference: the brief named one of her rooms — put her in HER home, the
     # exact space shown in the corner image, so the house stays consistent.
     if place_tag:
+        where = ("a place she goes regularly" if place_kind == "regular"
+                 else "her own home")
+        thing = "space" if place_kind == "regular" else "room"
         place_line, _ = promptlib.sanitise(
-            f"SETTING — her own home: the location and background of this photo is "
-            f"exactly the room shown in {place_tag} — reproduce that same space (the "
+            f"SETTING — {where}: the location and background of this photo is "
+            f"exactly the {thing} shown in {place_tag} — reproduce that same place (the "
             f"furniture, walls, layout, décor and overall setting) faithfully and keep "
-            f"it consistent. Do not invent or substitute a different room. She is "
+            f"it consistent. Do not invent or substitute a different {thing}. She is "
             f"naturally within this space doing what the brief describes; her identity "
             f"still comes only from @image1.")
         text = f"{text} {place_line}"
+
+    # The date, last: season, hair era and manicure wear. Appended rather than
+    # handed to the prompter for the same reason the build clause is — Claude is
+    # barred from describing her, and hair and nails sit right on that line.
+    # POV shots are faceless and hairless in frame, so only the season applies.
+    if tl_clause:
+        when_line, _ = promptlib.sanitise(
+            timeline.clause(when, {}, [])[0] if req.pov else tl_clause)
+        if when_line:
+            text = f"{text} {when_line}"
 
     label = req.brief.strip()[:60] or "untitled shot"
     session = generate.new_session(label)
@@ -2310,14 +2558,22 @@ def shot(req: ShotReq):
             meta={"brief": req.brief, "bio_references": [p.name for p in refs],
                   "wardrobe": req.wardrobe_id, "pose_id": req.pose_id,
                   "pose_text": pose_text_used,
-                  "pose_ref": req.pose_ref_id, "nail_id": req.nail_id,
+                  "pose_ref": req.pose_ref_id, "nail_id": nail_id,
                   "home_corner": home_corner.stem if home_corner else None,
                   "sanitised": sanitised, "pov": req.pov,
+                  "ref_demoted": demoted, "when": tl_facts,
+                  "camera_holder": req.camera_holder, "flaws": req.flaws,
+                  # A deliberately imperfect frame is EXPECTED to score low —
+                  # motion blur and a half-caught expression degrade the very
+                  # geometry ArcFace reads. Recording it here is what keeps that
+                  # low number from being counted as drift later.
+                  "expected_low": bool((promptlib.SNAPSHOT_FLAWS.get(req.flaws)
+                                        or {}).get("expected_low")),
                   "ai_prompt": bool(req.prompt and req.prompt.strip())},
         )
 
     jid = generate.start_job(label, run)
-    return {"job": jid, "sanitised": sanitised}
+    return {"job": jid, "sanitised": sanitised, "ref_demoted": demoted}
 
 
 @app.get("/api/jobs")

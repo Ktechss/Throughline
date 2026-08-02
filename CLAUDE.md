@@ -52,7 +52,7 @@ frontal images score high — so a broken pose control looks like success.
 | `backend/gate.py` | ArcFace. Gallery, abstain floor, calibration |
 | `backend/generate.py` | fal calls + run bookkeeping. Every run records its exact prompt |
 | `backend/main.py` | FastAPI |
-| `frontend/src/pages/Studio.jsx` | Shoot / bio / calibrate / video / review tabs (UI) |
+| `frontend/src/pages/Studio.jsx` | Shoot / bio / calibrate / review tabs (UI) |
 | `frontend/src/api/useStudio.js` | Frontend orchestration hub (data + all actions) |
 | `data/` | Generated images, poses, part tree, gallery. Gitignored |
 
@@ -86,10 +86,34 @@ one links `libGL`, absent on a GUI-less server).
   That is suggestion, not conditioning. Verify by reading back **yaw**, never
   similarity. If it's too weak, the same renderer feeds a real ControlNet
   endpoint unchanged.
-- **What does the pose reference cost in identity?** It spends a reference slot,
-  and three references measured 0.547 against one's 0.811. Unmeasured here.
-- **No face is chosen yet.** The gallery is empty, so runs come back `ungated`.
-  That is the correct state for a seed hunt — there is no "her" yet.
+- **How does she hold up off-frontal and full-body?** Every generator row in
+  `FINDINGS.md` is a frontal studio close-up. The two places both previous
+  generators collapsed are still untested here.
+
+## Measured here (was an open question)
+
+- **A reference slot costs ~0.04.** Comparing only shots at a matched 400-600px
+  face size, so framing can't explain it: 2 refs scored **0.622** (n=54), 3 refs
+  **0.579** (n=23) — and only ~0.006 of that gap is their yaw difference. Same
+  direction as FINDINGS' 0.547-vs-0.811. `config.REF_BUDGET` holds a shot to two
+  references and demotes the rest to their text form; observational, not a
+  controlled trial, so re-measure before raising it.
+- **Face size plateaus at ~400px.** Over 207 shots: <250px 0.472, 250-400px
+  0.548, 400-600px **0.612**, 600+ 0.608. Steep below, flat above. This is why
+  `gate.FACE_PLATEAU_PX` exists and why the prompter frames tight by default.
+- **Most rejections are framing, not drift.** Of 67 shot rejections: 23
+  small-face, 22 off-frontal, 12 tilted, and only **10** with no confound to
+  explain them. `Verdict.diagnosis` names which, so the distinction stops being
+  a judgement call.
+- **A wardrobe turnaround cannot be gated.** The sheet holds four faces, the gate
+  embeds the largest, and in a full-body panel that lands near 200px — 116 of 118
+  rejected, every one for face size. They generate `gated=False` now: a garment
+  swatch is not a photo of her.
+
+## Still true
+
+- **The gallery is Kiara's**, 12 entries, threshold 0.58. The seed hunt is over;
+  `ungated` now means a swatch or an empty gallery, not "no her yet".
 
 ## Hard rules
 
