@@ -109,6 +109,26 @@ FAL_KEY=…            # image generation (fal.ai)
 ANTHROPIC_API_KEY=…  # Claude — bio writing, AI prompt, describe/enrich
 ```
 
+### Moving to another machine
+
+Cloning gets you the app, not the character. `data/` is gitignored — and it holds
+her face (`refs/`), the gallery the gate scores against (`state/gallery.npz`),
+your part-tree edits (`state/parts.json`), and the run history and `mark`
+verdicts (`eve1.db`). Without it every run comes back `ungated` and the prompter
+falls back to `default_parts()`.
+
+From the machine that has her:
+
+```bash
+./scripts/sync_data.sh user@newbox:~/Throughline    # ~750 MB — everything but
+                                                    # past generations + outfit
+                                                    # photos (--all sends those)
+```
+
+Then on the new box: `./setup.sh`, fill in `.env` (never copied — it holds your
+keys), `./run.sh`. The ArcFace model (`buffalo_l`, ~290 MB) downloads itself into
+`~/.insightface` on the first gate check.
+
 ---
 
 ## Status & notes
