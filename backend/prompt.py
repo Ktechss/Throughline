@@ -475,11 +475,13 @@ CAMERA_HOLDERS = {
         # head, same scene and references, scored 0.628. Eye sockets are where
         # ArcFace reads identity, and a tilt the gallery does not have costs about
         # 0.09 on its own (0.521 tilted vs 0.608 level over 180 shots).
+        # Positive phrasing only. An earlier version said "NOT down at the phone
+        # screen ... not tilted" and named exactly what it was trying to avoid;
+        # tilted heads went from 20% of shots to 43%. Describe the head you want.
         "text": "A mirror selfie: she is photographing her own reflection, the "
                 "phone held at chest height and angled at the glass, clear of her "
-                "face. She looks straight at her own reflection — her eyes on the "
-                "mirror, NOT down at the phone screen — with her chin level and "
-                "her head upright, not tilted. The room behind her appears "
+                "face. She looks straight into her own eyes in the mirror, chin "
+                "level, head upright and balanced. The room behind her appears "
                 "reflected; the real camera is not in the frame."},
     "friend": {
         "label": "Taken by a friend", "face": "medium",

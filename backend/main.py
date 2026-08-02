@@ -2229,12 +2229,19 @@ class ShotReq(BaseModel):
     pov: bool = False                # faceless first-person POV product/lifestyle shot —
                                      # the face ref anchors skin tone but stays out of frame;
                                      # nails/setting/outfit are the anchors, gate is N/A
-    ref_budget: bool = True          # hold this shot to REF_BUDGET references, demoting
-                                     # extras to their text form. Off = attach every
-                                     # reference and pay the measured ~0.04/slot
-    date: str | None = None          # ISO date this shot happens on. Drives season,
-                                     # appearance era and the manicure cycle — see
-                                     # timeline.py. None = today (no clause is forced)
+    ref_budget: bool = False         # OFF by default, deliberately. Holding a shot to
+                                     # REF_BUDGET buys ~0.04 of similarity and costs the
+                                     # nail/pose/place REFERENCE IMAGES, which is a bad
+                                     # trade: a demoted nail becomes its description, and
+                                     # most nails have none — picking nail15 sent the
+                                     # model the words "yellow nails" and dropped the
+                                     # manicure entirely. Opt in per shot when identity
+                                     # matters more than the extras.
+    date: str | None = None          # ISO date this shot happens on. None = today
+    use_timeline: bool = False       # OFF by default: appending season/manicure text to
+                                     # every shot changes output nobody asked to change.
+                                     # Set true (with a date) when you WANT the year to
+                                     # show — monsoon light, a manicure at its end
     camera_holder: str = ""          # who took it: selfie/mirror/friend/stranger/timer.
                                      # Also a face-size lever — see CAMERA_HOLDERS
     flaws: str = ""                  # "" | subtle | snapshot. Deliberate imperfection;
@@ -2316,6 +2323,13 @@ def shot(req: ShotReq):
         raise HTTPException(400, f"bad date {req.date!r}: expected YYYY-MM-DD") from exc
     tl_clause, tl_facts = timeline.clause(
         when, timeline.load(TIMELINE_PATH), sorted(_nails_meta()))
+    if not req.use_timeline:
+        # Recorded but not applied: the date still lands in meta so a set can be
+        # ordered later, while the prompt stays exactly what the caller asked for.
+        tl_clause = ""
+        tl_facts = {"date": when.isoformat(), "applied": False}
+    # The calendar only ever supplies a manicure when the timeline is in use; an
+    # explicit pick always wins either way.
     nail_id = req.nail_id or (tl_facts.get("nail_id") if not req.pov else None)
 
     # ---------------------------------------------------------- reference budget
