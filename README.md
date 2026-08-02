@@ -196,10 +196,23 @@ The first gate check downloads ArcFace (`buffalo_l`, ~290 MB) into
 Two deliberate gaps, both by the definition above:
 
 - **No past generations.** `images/` is skipped, so review rows show their numbers
-  without their pictures. `--with-images` sends them (7.2 GB instead of 750 MB).
+  without their pictures.
 - **Empty wardrobe.** Dropped entirely — images *and* db rows — so the far side
   gets a clean wardrobe rather than a list of garments whose files aren't there.
-  Your source db is never modified. There is no flag to include it.
+
+Neither is identity, so neither is sent by default. Both can be, and the source db
+is never modified either way:
+
+| | Sends | Total |
+|---|---|---|
+| *(default)* | bio, body, home, gallery, runs | **750 MB** |
+| `--with-wardrobe` | + 110 outfit images **and** their 109 db rows | 4.0 GB |
+| `--with-images` | + 361 past generations | 7.2 GB |
+| `--all` | both | 11 GB |
+
+The wardrobe's rows and images move together or not at all — rows without images
+is a wardrobe of broken thumbnails, images without rows is a folder the app can't
+see. One flag governs both.
 
 ### Verify it arrived
 
