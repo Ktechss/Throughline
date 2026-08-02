@@ -51,7 +51,7 @@ _SYSTEM = (
     "studio shots too. Crisp focus on the eyes. Do NOT use AI-slop words: "
     "stunning, ethereal, hyper-realistic, 8k, ultra-detailed, perfect, glowing, "
     "flawless, masterpiece, breathtaking, gorgeous.\n"
-    "4. Keep it SHORT and directive: roughly 60-130 words. Concrete photographic "
+    "4. Keep it SHORT and directive: roughly 40-115 words. Concrete photographic "
     "facts beat adjectives.\n"
     "5. RENDER THE PLACE AS OBJECTS, NOT AS ITS NAME. An image model cannot draw "
     "a label. 'A cinema washroom' produces a generic home bathroom; what makes it "
@@ -64,27 +64,26 @@ _SYSTEM = (
     "it into a prop that IS in shot (a ticket stub and a popcorn cup on the "
     "counter). If a named place would otherwise render as somewhere generic, that "
     "is the failure this rule exists to prevent.\n"
-    "6. FRAME HER CLOSE ENOUGH TO BE RECOGNISABLE. Identity is measured off the "
-    "face, and below roughly 400px of face the score falls off with framing alone "
-    "(measured: 0.55 at 250-400px vs 0.61 at 400-600px; bigger than that buys "
-    "nothing). Unless the brief explicitly asks for a wide, full-body or "
-    "environmental shot, choose the tighter framing that still tells the story — "
-    "waist-up or closer — and light her face from the front or side rather than "
-    "behind. If the brief DOES ask for a wide shot, write it as asked; just don't "
-    "drift wide by default.\n"
-    "6a. HER HEAD. Write these as plain positive description — never as a negation.\n"
-    "   (i) Where she is looking: in a selfie, at the lens; in a mirror shot, at "
-    "her own reflection. Prefer that over writing her looking down at a phone, a "
-    "screen or her hands, unless the brief asks for it.\n"
-    "   (ii) Her head sits level and upright, balanced on her neck.\n"
-    "   (iii) Face toward the camera, with a natural expression — a smile rather "
-    "than a scream or a wide-open mouth.\n"
-    "   Say what you DO want and stop there. Naming a thing you don't want ('not "
-    "tilted', 'no tilt') tends to produce it: after an earlier version of this "
-    "rule told you to write 'not tilted', the share of tilted heads went from 20% "
-    "to 43%. Describe the head you want and never mention tilting at all.\n"
-    "7. Do NOT sexualise: no revealing/tight/skimpy intensifiers, no anatomical "
+    "6. Do NOT sexualise: no revealing/tight/skimpy intensifiers, no anatomical "
     "focus. Describe the scene and action neutrally.\n\n"
+    # Two rules lived here and were removed on 2026-08-02. Both existed to serve
+    # the gate's similarity score rather than the picture the owner asked for, and
+    # FRAMING IS THE OWNER'S CALL — the brief says how close to stand.
+    #
+    #   "Frame her close enough to be recognisable" biased every prompt toward
+    #   waist-up because a face under ~400px measures lower. It quietly overrode
+    #   briefs that wanted full-body or environmental shots.
+    #
+    #   "Her head" prescribed gaze, head angle and expression. Its first version
+    #   said to write "not tilted" and named the thing it meant to prevent: tilted
+    #   heads went from 20% of shots to 43%. Rewriting it positively did not earn
+    #   it back a place — it was still directing the shot on the score's behalf.
+    #
+    # The measurements behind them are real and still recorded (gate.FACE_PLATEAU_PX,
+    # ROLL_LEVEL_MAX, and Verdict.confounds, which names small-face / off-frontal /
+    # tilted after the fact). Keep them as a way to READ a result, not as a rule
+    # that rewrites the request. If they ever come back, they belong behind a flag
+    # the caller sets per shot.
     "STRUCTURE the prompt as: lead with @image1 as the subject and what she is "
     "doing (place, time, mood, activity), then the framing/pose and the "
     "camera/lighting the brief implies, then keep the reference directives you "
