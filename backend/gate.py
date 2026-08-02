@@ -152,27 +152,39 @@ class Verdict:
         return self.face.width < LOW_CONFIDENCE_PX
 
     @property
-    def diagnosis(self) -> str:
-        """For a REJECTED verdict: which known confound explains the number.
+    def confounds(self) -> list[str]:
+        """EVERY known confound present, worst first — not just the first one.
 
         A low score has two very different meanings — "the model drew someone
         else" and "you gave the gate a face it cannot read" — and they call for
-        opposite actions (re-roll vs reframe). Every confound below is measured,
-        so which one is present is derivable from `face_px` and `yaw` rather than
-        argued about per image. `drift` is returned only when none of them
-        applies: that is the one case where the number really is about identity.
+        opposite actions (re-roll vs reframe). Each entry below is measured, so
+        which are present is derivable from `face_px`, `yaw` and `roll` rather
+        than argued about per image.
 
-        Empty for anything that was not rejected — there is nothing to explain.
+        Reporting only the first is how the compounding gets hidden, and the
+        compounding is the whole point: FINDINGS' stadium result is four
+        confounds stacking to cost 0.267, which is larger than the gap between
+        any two generators tested. A shot at 301px AND 34 off-frontal AND rolled
+        12 has three things wrong with it and needs three fixes; being told
+        "small-face" and stopping sends you to fix one and re-roll into the same
+        number.
         """
         if self.status != "rejected":
-            return ""
+            return []
+        out = []
         if self.face.width < FACE_PLATEAU_PX:
-            return "small-face"
+            out.append("small-face")
         if self.face.pose_class != "frontal":
-            return "off-frontal"
+            out.append("off-frontal")
         if self.face.tilted:
-            return "tilted"
-        return "drift"
+            out.append("tilted")
+        return out or ["drift"]
+
+    @property
+    def diagnosis(self) -> str:
+        """The confounds as one tag: "small-face+off-frontal+tilted", or "drift"
+        when nothing explains the score but her."""
+        return "+".join(self.confounds)
 
     @property
     def reason(self) -> str:
@@ -194,29 +206,38 @@ class Verdict:
                     f"{self.face.yaw:+.1f} — {self.pose_delta:.0f} apart. Beyond "
                     f"{POSE_DELTA_MAX:.0f} the score measures head angle, not "
                     f"identity. Import a reference at this angle to judge it.")
-        # A rejection with a confound in it is a framing note, not a verdict on
-        # her. Say which, and say what to do about it — the whole point of
-        # recording yaw and face_px next to the score.
-        d = self.diagnosis
-        if d == "small-face":
-            return (f"face is {self.face.width}px, under the {FACE_PLATEAU_PX}px "
-                    f"plateau — identity falls off with framing below this "
-                    f"(measured: 0.55 at 250-400px vs 0.61 at 400-600px). Reframe "
-                    f"closer before reading this as drift.")
-        if d == "off-frontal":
-            return (f"head is {abs(self.face.yaw):.0f} off-frontal "
-                    f"({self.face.pose_class.replace('_', '-')}) and the threshold "
-                    f"is flat — corr(|yaw|, sim) = -0.761, so this number is partly "
-                    f"measuring angle. Judge it against a same-angle reference.")
-        if d == "tilted":
-            return (f"head is rolled {self.face.roll:+.0f}, past the "
-                    f"{ROLL_LEVEL_MAX:.0f} level mark — a lean the references do "
-                    f"not have costs similarity on its own.")
-        if d == "drift":
-            return (f"face is {self.face.width}px and near-frontal "
-                    f"({self.face.yaw:+.1f}) — no framing confound to explain "
-                    f"this. The model drew someone else; re-roll or fix the prompt.")
-        return ""
+        # A rejection with confounds in it is a framing note, not a verdict on
+        # her. Say which — ALL of them — and what to do about each. Stacking is
+        # the thing worth seeing: three of these together is a different problem
+        # from any one of them, and a different amount of score to win back.
+        say = {
+            "small-face": (f"face is {self.face.width}px, under the "
+                           f"{FACE_PLATEAU_PX}px plateau — identity falls off with "
+                           f"framing below this (measured: 0.55 at 250-400px vs "
+                           f"0.61 at 400-600px), so reframe closer"),
+            "off-frontal": (f"head is {abs(self.face.yaw):.0f} off-frontal "
+                            f"({self.face.pose_class.replace('_', '-')}) against a "
+                            f"flat threshold — corr(|yaw|, sim) = -0.761, so the "
+                            f"number is partly measuring angle"),
+            "tilted": (f"head is rolled {self.face.roll:+.0f}, past the "
+                       f"{ROLL_LEVEL_MAX:.0f} level mark — measured here at a mean "
+                       f"0.521 tilted vs 0.608 level, about 0.09 on its own"),
+            "drift": (f"face is {self.face.width}px and near-frontal "
+                      f"({self.face.yaw:+.1f}) with a level head — no framing "
+                      f"confound explains this. The model drew someone else; "
+                      f"re-roll or fix the prompt"),
+        }
+        found = self.confounds
+        if not found:
+            return ""
+        parts = [say[c] for c in found if c in say]
+        if len(parts) == 1:
+            return parts[0][0].upper() + parts[0][1:] + "."
+        # Plural: lead with the count, because "three things are wrong" is the
+        # actionable fact and any one of them read alone understates the fix.
+        head = (f"{len(parts)} confounds stacked, which compound — FINDINGS "
+                f"measured four of them costing 0.267 together. ")
+        return head + "; ".join(parts) + "."
 
     @property
     def status(self) -> str:
@@ -235,7 +256,7 @@ class Verdict:
                 "pose_delta": None if self.pose_delta is None else round(self.pose_delta, 1),
                 "pose_mismatch": self.pose_mismatch,
                 "faces_in_frame": self.faces_in_frame,
-                "diagnosis": self.diagnosis,
+                "diagnosis": self.diagnosis, "confounds": self.confounds,
                 "reason": self.reason}
 
 

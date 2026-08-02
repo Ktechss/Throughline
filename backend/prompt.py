@@ -468,10 +468,19 @@ CAMERA_HOLDERS = {
                 "the frame and her eyes are on the lens."},
     "mirror": {
         "label": "Mirror selfie", "face": "large",
+        # The gaze and head clauses are here rather than left to the brief because
+        # they were measured, twice, on the same shot. A first attempt let the
+        # model read "mirror selfie" as looking DOWN at the phone with a 12 head
+        # tilt and scored 0.334; forcing the eyes to the reflection with a level
+        # head, same scene and references, scored 0.628. Eye sockets are where
+        # ArcFace reads identity, and a tilt the gallery does not have costs about
+        # 0.09 on its own (0.521 tilted vs 0.608 level over 180 shots).
         "text": "A mirror selfie: she is photographing her own reflection, the "
                 "phone held at chest height and angled at the glass, clear of her "
-                "face. The room behind her appears reflected; the real camera is "
-                "not in the frame."},
+                "face. She looks straight at her own reflection — her eyes on the "
+                "mirror, NOT down at the phone screen — with her chin level and "
+                "her head upright, not tilted. The room behind her appears "
+                "reflected; the real camera is not in the frame."},
     "friend": {
         "label": "Taken by a friend", "face": "medium",
         "text": "A friend a few steps away took this — unposed and slightly "
