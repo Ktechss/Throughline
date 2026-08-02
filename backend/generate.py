@@ -468,6 +468,12 @@ def job_status(jid: str) -> dict | None:
     if not j:
         return None
     out = {k: j[k] for k in ("id", "label", "stage", "done", "error", "run")}
+    # `stage` is owned by generate() and gets overwritten on every call
+    # ("downloading", "leveling & gating"). A job that makes SEVERAL generations —
+    # guided creation building ten home corners — needs somewhere to say which one
+    # it is on that the next generate() will not clobber. That is `step`: set by
+    # the job function, never by generate().
+    out["step"] = j.get("step")
     out["retry"] = j.get("retry")
     out["elapsed"] = j.get("elapsed", round(_now() - j["started"], 1))
     return out

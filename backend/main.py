@@ -184,13 +184,23 @@ async def create_character_guided(
     face_shape: str = Form(""),
     build: str = Form(""),
     height_cm: str = Form(""),
+    home_style: str = Form(""),
+    home_surroundings: str = Form(""),
     reference: UploadFile | None = File(None),
 ):
-    """Create a character from EXPLICIT essentials — face shape, body build and
-    height — plus an optional description/reference. Claude writes her bio, we
-    generate her first face AND a body reference that matches the chosen build,
-    and set the face as the calibration seed. She lands ready to calibrate.
-    Returns a job id; the slow work runs in the background (poll /api/jobs/{id})."""
+    """Create a character from her three defining pieces — BIO, BODY and HOME.
+
+    Those three are what a character IS here, and the flow is built to say so:
+    everything else (wardrobe, poses, nails) is per-shoot dressing that can be
+    thrown away and remade, while these are the things that, if lost, mean you
+    no longer have her. So creation writes her bio, generates her first face and
+    a body reference matching the chosen build, sets the face as the calibration
+    seed, and then builds her flat — one image per corner, from one shared house
+    style, so her home is a real place from the first shot rather than a room
+    invented afresh every time a brief mentions a kitchen.
+
+    Returns a job id; the slow work runs in the background (poll /api/jobs/{id}).
+    """
     name = name.strip()
     if not name:
         raise HTTPException(400, "name required")
@@ -334,6 +344,37 @@ async def create_character_guided(
                     row.setdefault("meta", {})["body_ref"] = bdst.name
             except Exception as exc:  # noqa: BLE001 — body is a bonus, not required
                 job["note"] = f"body generation skipped ({exc})"
+
+        # 5) HOME — the third of her three defining pieces. Ten corners from one
+        #    shared house style, so "her kitchen" means one specific kitchen from
+        #    the first shot onward.
+        #
+        #    Gated on the style text being present: with nothing to describe the
+        #    house, ten generations buy ten unrelated generic rooms — real spend
+        #    for something the Home tab can do better later, once she has a home
+        #    worth describing. Silence here is a deliberate skip, and it is said
+        #    out loud in the job note rather than left to be discovered.
+        style = home_style.strip()
+        if style or home_surroundings.strip():
+            HOME_PATH.write_text(json.dumps(
+                {"style": style, "surroundings": home_surroundings.strip()},
+                indent=2) + "\n")
+        if style:
+            done, failed = 0, []
+            for i, corner in enumerate(HOME_CORNERS, 1):
+                job["step"] = f"{corner['label']} ({i}/{len(HOME_CORNERS)})"
+                try:
+                    _render_corner(corner["key"], job)
+                    done += 1
+                except Exception as exc:  # noqa: BLE001 — one bad room is not a bad character
+                    failed.append(f"{corner['key']} ({exc})")
+            job["step"] = None
+            row.setdefault("meta", {})["home_corners"] = done
+            if failed:
+                job["note"] = f"home corners skipped: {', '.join(failed)}"
+        else:
+            job["note"] = ("home skipped — no house style given; "
+                           "generate corners from the Home tab")
         return row
 
     jid = generate.start_job(f"create {name}", run)
@@ -2031,16 +2072,16 @@ async def home_upload(key: str, file: UploadFile = File(...)):
     return {"key": key, "file": dest.name}
 
 
-@app.post("/api/home/{key}/generate")
-def home_generate(key: str):
-    """Generate this corner from the shared house style + the corner type, and save
-    it to the corner slot. Async — returns a job to poll. No people in the shot."""
-    if key not in _CORNER:
-        raise HTTPException(400, f"unknown corner: {key}")
+def _corner_prompt(key: str) -> str:
+    """The scene prompt for one corner, from the shared house style + corner type.
+
+    Split out of the endpoint so guided character creation builds her whole flat
+    through exactly the same wording the Home tab uses — one house, one prompt,
+    whichever door you came in by.
+    """
     corner = _CORNER[key]
     h = _home()
     style, surroundings = h["style"], h["surroundings"]
-    Path(PLACES).mkdir(parents=True, exist_ok=True)
 
     # The house is ONE coherent space. The outside view belongs only to rooms that
     # open outward (balcony/terrace/living room); every other corner is a fully
@@ -2070,24 +2111,39 @@ def home_generate(key: str):
         base + " Cohesive, lived-in, real home — NOT a showroom or staged catalogue. "
         "Natural available light, realistic materials. NO people, no text or logos. "
         "Shot on a phone, wide 24mm-equivalent lens, natural.")
+    return prompt
 
-    def run(job: dict) -> dict:
-        row = generate.generate(
-            prompt=prompt, system="", refs=None, aspect="4:3",
-            endpoint=SCENE_TEXT2IMG, session=generate.new_session(f"home: {corner['label']}"),
-            # An empty room has no face in it by design ("NO people" above), so
-            # gating one only ever records no_face — a failure that isn't one.
-            gated=False,
-            progress=job, meta={"home_create": key})
-        src = IMAGES / row["file"]
-        if src.exists():
-            old = _corner_file(key)
-            if old and old.suffix.lower() != ".png":
-                old.unlink(missing_ok=True)
-            shutil.copy2(src, PLACES / f"{key}.png")
-        return row
 
-    jid = generate.start_job(f"home: {corner['label']}", run)
+def _render_corner(key: str, job: dict) -> dict:
+    """Generate one corner and drop it into its slot. Shared by the Home tab and
+    guided character creation."""
+    corner = _CORNER[key]
+    Path(PLACES).mkdir(parents=True, exist_ok=True)
+    row = generate.generate(
+        prompt=_corner_prompt(key), system="", refs=None, aspect="4:3",
+        endpoint=SCENE_TEXT2IMG, session=generate.new_session(f"home: {corner['label']}"),
+        # An empty room has no face in it by design ("NO people" above), so
+        # gating one only ever records no_face — a failure that isn't one.
+        gated=False,
+        progress=job, meta={"home_create": key})
+    src = IMAGES / row["file"]
+    if src.exists():
+        old = _corner_file(key)
+        if old and old.suffix.lower() != ".png":
+            old.unlink(missing_ok=True)
+        shutil.copy2(src, PLACES / f"{key}.png")
+    return row
+
+
+@app.post("/api/home/{key}/generate")
+def home_generate(key: str):
+    """Generate this corner from the shared house style + the corner type, and save
+    it to the corner slot. Async — returns a job to poll. No people in the shot."""
+    if key not in _CORNER:
+        raise HTTPException(400, f"unknown corner: {key}")
+    corner = _CORNER[key]
+    jid = generate.start_job(f"home: {corner['label']}",
+                             lambda job: _render_corner(key, job))
     return {"job": jid}
 
 

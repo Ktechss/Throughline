@@ -1,11 +1,14 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, charView, STAGE } from "@/api/throughline";
-import { ShieldCheck, ShieldAlert, Plus, X, Sparkles, Upload, Ruler, Trash2, Loader2, Pencil } from "lucide-react";
+import { ShieldCheck, ShieldAlert, Plus, X, Sparkles, Upload, Ruler, Trash2, Loader2, Pencil, Home } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const FACE_SHAPES = ["oval", "round", "square", "heart", "diamond", "oblong"];
 const BODY_TYPES = ["slim", "athletic", "curvy", "voluptuous", "full-figured"];
+// HOME_CORNERS in backend/main.py. Shown so the generation cost of filling in the
+// home field is visible before it is paid, not after.
+const HOME_CORNER_COUNT = 10;
 
 export default function Landing() {
   const navigate = useNavigate();
@@ -56,6 +59,8 @@ export default function Landing() {
       fd.append("face_shape", form.face_shape || "");
       fd.append("build", form.build || "");
       fd.append("height_cm", form.height_cm || "");
+      fd.append("home_style", form.home_style || "");
+      fd.append("home_surroundings", form.home_surroundings || "");
       if (form.file) fd.append("reference", form.file);
       const r = await fetch("/api/characters/guided", { method: "POST", body: fd });
       if (!r.ok) throw new Error((await r.text()).slice(0, 300));
@@ -64,7 +69,10 @@ export default function Landing() {
       for (;;) {
         await new Promise((res) => setTimeout(res, 1200));
         const st = await api.get(`/api/jobs/${job}`);
-        setBuilding(labelFor(st.stage));
+        // `step` outranks `stage`: while the ten home corners generate, stage is
+        // whatever the current generation is doing, and the useful thing to show
+        // is which room we are on.
+        setBuilding(st.step ? `Her home — ${st.step}…` : labelFor(st.stage));
         if (st.done) { if (st.error) setErr(st.error); break; }
       }
       setShowCreate(false);
@@ -199,6 +207,8 @@ function CreateDrawer({ onClose, onCreate, building }) {
   const [faceShape, setFaceShape] = useState(null);
   const [bodyType, setBodyType] = useState(null);
   const [height, setHeight] = useState(168);
+  const [homeStyle, setHomeStyle] = useState("");
+  const [homeSurroundings, setHomeSurroundings] = useState("");
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
   const ftIn = `${Math.floor(height / 30.48)}′${Math.round((height / 2.54) % 12)}″`;
@@ -211,7 +221,8 @@ function CreateDrawer({ onClose, onCreate, building }) {
 
   const submit = () => {
     if (!name.trim() || building) return;
-    onCreate({ name: name.trim(), description, face_shape: faceShape, build: bodyType, height_cm: height, file });
+    onCreate({ name: name.trim(), description, face_shape: faceShape, build: bodyType,
+               height_cm: height, home_style: homeStyle, home_surroundings: homeSurroundings, file });
   };
 
   return (
@@ -283,9 +294,31 @@ function CreateDrawer({ onClose, onCreate, building }) {
             )}
           </div>
 
+          {/* HOME — the third defining piece, alongside her bio and her body.
+              Filling it in builds all ten corners now, so "her kitchen" means one
+              specific kitchen from the first shot. Left blank it is skipped
+              entirely rather than spending ten generations on generic rooms. */}
+          <div className="pt-1 border-t border-white/5">
+            <label className="text-[12px] font-medium text-zinc-300 flex items-center gap-1.5"><Home className="h-3.5 w-3.5" /> Her home</label>
+            <p className="text-[10px] text-zinc-500 mb-1.5 mt-0.5">
+              Filled in, all {HOME_CORNER_COUNT} corners generate now from this one style — her flat becomes a real place. Left blank, it's skipped and you build it later from the Home tab.
+            </p>
+            <textarea value={homeStyle} onChange={(e) => setHomeStyle(e.target.value)} rows={2}
+              className="w-full rounded-lg bg-white/5 ring-1 ring-white/10 px-3 py-2 text-[13px] focus:ring-white/30 outline-none resize-none"
+              placeholder="Style and materials — e.g. a modern Bangalore flat, 12th floor, tile and marble floors, warm materials" />
+            <input value={homeSurroundings} onChange={(e) => setHomeSurroundings(e.target.value)}
+              className="mt-2 w-full rounded-lg bg-white/5 ring-1 ring-white/10 px-3 py-2 text-[13px] focus:ring-white/30 outline-none"
+              placeholder="What's visible outside (balcony/terrace/living room only)" />
+            {homeStyle.trim() && (
+              <p className="text-[10px] text-amber-300/80 mt-1.5">+{HOME_CORNER_COUNT} generations on submit — this takes a few minutes.</p>
+            )}
+          </div>
+
           <div className="rounded-lg bg-white/[0.03] ring-1 ring-white/5 p-3 flex gap-2.5">
             <Sparkles className="h-4 w-4 text-amber-300 flex-shrink-0 mt-0.5" />
-            <p className="text-[11px] text-zinc-400 leading-relaxed">On submit: bio → first face → seed, with a live build-progress label. New character lands on the calibrate tab.</p>
+            <p className="text-[11px] text-zinc-400 leading-relaxed">
+              On submit: bio → face → body{homeStyle.trim() ? " → home" : ""}, with a live build-progress label. New character lands on the calibrate tab.
+            </p>
           </div>
         </div>
 

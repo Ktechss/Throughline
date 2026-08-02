@@ -109,21 +109,39 @@ FAL_KEY=…            # image generation (fal.ai)
 ANTHROPIC_API_KEY=…  # Claude — bio writing, AI prompt, describe/enrich
 ```
 
+### What a character *is*
+
+Three things: her **bio**, her **body**, and her **home**.
+
+| | Stored as | Why it's identity |
+|---|---|---|
+| **Bio** | `state/bio.json`, `state/parts.json`, `refs/` | `refs/` is `@image1` — her face. Measured 0.860 with a reference against 0.531 from description alone, so words cannot stand in for it. `parts.json` is her written identity; absent, the code falls back to `default_parts()` and she is quietly replaced by a stranger's defaults. |
+| **Body** | `state/bodies.json`, `bodies/`, `bio.json → body_reference` | The one axis the gate is blind to (person re-ID keys on clothing, which varies by design). No automated backstop, so losing it is unrecoverable. |
+| **Home** | `state/home.json`, `places/` | Ten corners from one shared house style. "Her kitchen" means one specific kitchen, not a kitchen invented per shot. |
+
+Everything else — wardrobe, poses, nails, past generations — is per-shoot
+dressing. It can be remade. These three cannot.
+
+Guided creation is built around exactly this: **bio → body → home**. Fill in the
+home style and all ten corners generate on submit (≈10 extra generations, a few
+minutes); leave it blank and it's skipped entirely, to be built later from the
+Home tab.
+
 ### Moving to another machine
 
-Cloning gets you the app, not the character. `data/` is gitignored — and it holds
-her face (`refs/`), the gallery the gate scores against (`state/gallery.npz`),
-your part-tree edits (`state/parts.json`), and the run history and `mark`
-verdicts (`eve1.db`). Without it every run comes back `ungated` and the prompter
-falls back to `default_parts()`.
-
-From the machine that has her:
+Cloning gets you the app, not the character — `data/` is gitignored. From the
+machine that has her:
 
 ```bash
-./scripts/sync_data.sh user@newbox:~/Throughline    # ~750 MB — everything but
-                                                    # past generations + outfit
-                                                    # photos (--all sends those)
+./scripts/sync_data.sh user@newbox:~/Throughline    # ~750 MB
 ```
+
+Sends bio, body and home, plus the gallery the gate scores against
+(`state/gallery.npz` — without it every run comes back `ungated`), her nails,
+poses, approved shots, and `eve1.db` for the run history and `mark` verdicts.
+Skips past generations (`--with-images` includes them) and **drops the wardrobe
+entirely**, both its images and its db rows — outfits are what she wears, not who
+she is. Your source db is never modified.
 
 Then on the new box: `./setup.sh`, fill in `.env` (never copied — it holds your
 keys), `./run.sh`. The ArcFace model (`buffalo_l`, ~290 MB) downloads itself into
