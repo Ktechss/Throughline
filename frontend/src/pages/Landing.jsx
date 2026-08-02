@@ -16,6 +16,7 @@ export default function Landing() {
   const [active, setActive] = useState(null);
   const [showCreate, setShowCreate] = useState(false);
   const [building, setBuilding] = useState(null); // progress label while a new character builds
+  const [picking, setPicking] = useState(null);   // {character, candidates} awaiting a face choice
   const [err, setErr] = useState(null);
 
   const load = async () => {
@@ -47,8 +48,12 @@ export default function Landing() {
     catch (er) { setErr(String(er)); }
   };
 
-  // Guided creation: Claude writes bio -> generates first face -> sets seed. We
-  // poll the build job to completion, then drop into the new character's studio.
+  // Guided creation, in two acts. Act one writes her bio, generates several
+  // master-face candidates and builds her home; it commits NOTHING. Act two is
+  // `choose` below — the human picks the face, and only then does she get a
+  // reference, a calibration seed and a body. Splitting it is the whole point:
+  // the master face is the image every future picture descends from, so it
+  // should not be whatever the first seed happened to return.
   const create = async (form) => {
     setErr(null);
     setBuilding("Starting…");
@@ -61,21 +66,46 @@ export default function Landing() {
       fd.append("height_cm", form.height_cm || "");
       fd.append("home_style", form.home_style || "");
       fd.append("home_surroundings", form.home_surroundings || "");
+      fd.append("reference_mode", form.file ? "inspiration" : "none");
       if (form.file) fd.append("reference", form.file);
       const r = await fetch("/api/characters/guided", { method: "POST", body: fd });
       if (!r.ok) throw new Error((await r.text()).slice(0, 300));
       const { character, job } = await r.json();
-      // poll the build job
       for (;;) {
         await new Promise((res) => setTimeout(res, 1200));
         const st = await api.get(`/api/jobs/${job}`);
-        // `step` outranks `stage`: while the ten home corners generate, stage is
-        // whatever the current generation is doing, and the useful thing to show
-        // is which room we are on.
-        setBuilding(st.step ? `Her home — ${st.step}…` : labelFor(st.stage));
-        if (st.done) { if (st.error) setErr(st.error); break; }
+        // `step` outranks `stage`: during the faces and the ten home corners,
+        // `stage` is whatever the current generation is doing, and the useful
+        // thing to show is which face or which room we are on.
+        setBuilding(st.step ? `${st.step}…` : labelFor(st.stage));
+        if (st.done) {
+          if (st.error) { setErr(st.error); break; }
+          const cands = st.run?.candidates || [];
+          if (!cands.length) { setErr("no face candidates were generated"); break; }
+          setShowCreate(false);
+          setPicking({ character, candidates: cands });
+          break;
+        }
       }
-      setShowCreate(false);
+    } catch (e) { setErr(String(e)); }
+    finally { setBuilding(null); }
+  };
+
+  // Act two: commit the chosen face. The backend validates it holds a detectable
+  // face before making it her reference, then generates the body from it.
+  const choose = async (character, runId) => {
+    setErr(null);
+    setBuilding("Locking her face…");
+    try {
+      const res = await api.send(`/api/characters/${character.id}/master-face`,
+                                 "POST", { run_id: runId });
+      setBuilding("Generating her body…");
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 1200));
+        const st = await api.get(`/api/jobs/${res.job}`);
+        if (st.done) break;       // a body failure is not fatal — she is usable
+      }
+      setPicking(null);
       await api.send("/api/characters/active", "PUT", { id: character.id }).catch(() => {});
       navigate(`/studio?char=${character.id}&tab=calibrate`);
     } catch (e) { setErr(String(e)); }
@@ -188,6 +218,7 @@ export default function Landing() {
       </section>
 
       {showCreate && <CreateDrawer onClose={() => !building && setShowCreate(false)} onCreate={create} building={building} />}
+      {picking && <FacePicker {...picking} onChoose={choose} building={building} />}
     </div>
   );
 }
@@ -200,6 +231,59 @@ function labelFor(stage) {
   if (/retry/i.test(stage || "")) return "Retrying (moderation)…";
   return STAGE[stage] || "Building her…";
 }
+
+// The one judgement call this project deliberately leaves to a human. Everything
+// else about identity is a number — "is this still her?" is measured, never
+// eyeballed — but WHO SHE IS in the first place is a choice, and it is made once.
+// Deciding it from four faces beats inheriting whatever the first seed returned.
+function FacePicker({ character, candidates, onChoose, building }) {
+  const [sel, setSel] = useState(candidates[0]?.run_id || null);
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
+      <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" />
+      <div className="relative w-full max-w-3xl rounded-2xl bg-[#0d0d0f] ring-1 ring-white/10 overflow-hidden">
+        <div className="px-6 py-5 border-b border-white/5">
+          <h3 className="text-[15px] font-semibold">Choose {character.name}&rsquo;s face</h3>
+          <p className="text-[11px] text-zinc-500 mt-1 leading-relaxed">
+            Every future image of her descends from the one you pick — it becomes her
+            identity reference and her calibration seed. Nothing is locked in until you choose.
+          </p>
+        </div>
+
+        <div className="p-6 grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {candidates.map((c) => (
+            <button
+              key={c.run_id}
+              onClick={() => !building && setSel(c.run_id)}
+              className={cn(
+                "relative rounded-xl overflow-hidden ring-1 transition-all aspect-[3/4]",
+                sel === c.run_id
+                  ? "ring-2 ring-emerald-400 scale-[1.02]"
+                  : "ring-white/10 hover:ring-white/30 opacity-80 hover:opacity-100"
+              )}
+            >
+              <img src={`/api/images/${c.file}/thumb`} alt="" className="h-full w-full object-cover" />
+            </button>
+          ))}
+        </div>
+
+        <div className="px-6 py-4 border-t border-white/5 flex items-center gap-3">
+          <p className="flex-1 text-[11px] text-zinc-500">
+            Her body reference is generated from this face, so the two agree.
+          </p>
+          <button
+            onClick={() => sel && onChoose(character, sel)}
+            disabled={!sel || !!building}
+            className="rounded-lg bg-white text-black px-5 py-2.5 text-[13px] font-medium hover:bg-zinc-200 disabled:opacity-40 flex items-center gap-2"
+          >
+            {building ? <><Loader2 className="h-4 w-4 animate-spin" /> {building}</> : "Lock this face"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 
 function CreateDrawer({ onClose, onCreate, building }) {
   const [name, setName] = useState("");
@@ -232,7 +316,7 @@ function CreateDrawer({ onClose, onCreate, building }) {
         <div className="sticky top-0 bg-[#0d0d0f]/95 backdrop-blur border-b border-white/5 px-6 py-4 flex items-center justify-between z-10">
           <div>
             <h3 className="text-[15px] font-semibold">New character</h3>
-            <p className="text-[11px] text-zinc-500 mt-0.5">Claude writes the bio, then generates her first face.</p>
+            <p className="text-[11px] text-zinc-500 mt-0.5">Claude writes the bio, then generates faces for you to choose from.</p>
           </div>
           <button onClick={onClose} className="text-zinc-400 hover:text-white"><X className="h-5 w-5" /></button>
         </div>
@@ -278,7 +362,7 @@ function CreateDrawer({ onClose, onCreate, building }) {
           </div>
 
           <div>
-            <label className="text-[12px] font-medium text-zinc-300">Reference face</label>
+            <label className="text-[12px] font-medium text-zinc-300">Style reference <span className="text-zinc-500 font-normal">(optional)</span></label>
             {preview ? (
               <div className="mt-1.5 flex items-center gap-3">
                 <img src={preview} alt="reference" className="h-20 w-16 rounded-md object-cover ring-1 ring-white/15" />
@@ -288,7 +372,7 @@ function CreateDrawer({ onClose, onCreate, building }) {
               <label className="mt-1.5 rounded-lg border border-dashed border-white/15 px-4 py-6 flex flex-col items-center gap-2 text-center hover:border-white/30 cursor-pointer">
                 <Upload className="h-5 w-5 text-zinc-500" />
                 <p className="text-[11px] text-zinc-500">Upload a reference face image</p>
-                <p className="text-[10px] text-zinc-600">Her face will be built as a real human based on it.</p>
+                <p className="text-[10px] text-zinc-600">Used only for hair, mood and lighting — never her face. She will be a different person.</p>
                 <input type="file" accept="image/*" hidden onChange={pickFile} />
               </label>
             )}
@@ -317,7 +401,7 @@ function CreateDrawer({ onClose, onCreate, building }) {
           <div className="rounded-lg bg-white/[0.03] ring-1 ring-white/5 p-3 flex gap-2.5">
             <Sparkles className="h-4 w-4 text-amber-300 flex-shrink-0 mt-0.5" />
             <p className="text-[11px] text-zinc-400 leading-relaxed">
-              On submit: bio → face → body{homeStyle.trim() ? " → home" : ""}, with a live build-progress label. New character lands on the calibrate tab.
+              On submit: bio → 4 face candidates{homeStyle.trim() ? " → home" : ""}. You pick her face, then her body is generated from it and she lands on the calibrate tab.
             </p>
           </div>
         </div>

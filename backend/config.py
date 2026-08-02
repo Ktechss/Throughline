@@ -188,7 +188,16 @@ ARCHIVE_QUALITY = 90
 # Endpoints take different arguments and silently ignore foreign ones, which is
 # worse than erroring — you get a 1024px image while believing you asked for 4K.
 # generate() keys off this rather than guessing.
-GPT_IMAGE = {"openai/gpt-image-2/edit", "openai/gpt-image-2",
+#
+# ⚠ TEXT2IMG's id must be listed here VERBATIM. It was missing — the set had
+# "openai/gpt-image-2" while TEXT2IMG is "fal-ai/gpt-image-2" — and the first
+# thing that ever routed to it (character creation) hit exactly the failure this
+# comment describes: build_args took the nano branch, sent aspect_ratio="3:4" and
+# resolution="4K" to an endpoint that ignores both, and returned a 1024x768
+# LANDSCAPE master face with a 306px subject, under gate.FACE_PLATEAU_PX. The
+# run row recorded aspect 3:4 / 4K, so nothing looked wrong. Any endpoint added
+# to EDIT/TEXT2IMG belongs in this set on the same commit.
+GPT_IMAGE = {"openai/gpt-image-2/edit", "openai/gpt-image-2", "fal-ai/gpt-image-2",
              "fal-ai/gpt-image-1/edit-image", "fal-ai/gpt-image-1/text-to-image"}
 
 # gpt-image-2 takes image_size as an OBJECT (gpt-image-1 wants an enum string —

@@ -167,7 +167,8 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
              session: dict | None = None, endpoint: str | None = None,
              extra: dict | None = None, progress: dict | None = None,
              fallback_endpoint: str | None = None,
-             resolution: str | None = None, gated: bool = True) -> dict:
+             resolution: str | None = None, gated: bool = True,
+             character: str | None = None) -> dict:
     """One generation, gated and recorded.
 
     gated=False for output that is not a photo OF her — a wardrobe turnaround is
@@ -191,8 +192,15 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
     """
     refs = refs or []
     rid = uuid.uuid4().hex[:10]
-    owner = config.get_active()   # pin the character NOW — a mid-render switch must not misfile this
-    dest = IMAGES / f"{rid}.png"
+    # Pin the character NOW — a mid-render switch must not misfile this. An
+    # explicit `character` pins it harder still: IMAGES is a live proxy onto
+    # whoever is active, so a long job (character creation makes a dozen images
+    # over ~15 minutes) would otherwise write its later images into whichever
+    # character the user clicked on meanwhile. Callers that own a character for
+    # the length of a job pass it; everything else keeps the active one.
+    owner = character or config.get_active()
+    dest = config.char_base(owner) / "images" / f"{rid}.png"
+    dest.parent.mkdir(parents=True, exist_ok=True)
     primary = endpoint or (PRIMARY_EDIT if refs else PRIMARY_T2I)
 
     if primary == LOCAL_ENDPOINT:

@@ -165,11 +165,46 @@ def default_parts() -> list[Part]:
           "mid-moment rather than styled for a camera."),
 
         # -- face (SEED HUNT ONLY) -------------------------------------------
+        # Two kinds of part live here and the distinction matters. The FEATURES
+        # (eyes, brows, nose, lips) are what people describe when asked what
+        # someone looks like. The GEOMETRY below them — forehead, cheekbones,
+        # cheek fullness, jawline, chin — is what actually makes a face
+        # recognisable, and it is what ArcFace keys on.
+        #
+        # Only the features were specified here for a long time, and the cost
+        # showed up as drift nobody could name: a generated face would keep the
+        # dark almond eyes and the full lips and still be a different woman,
+        # because the skull underneath was redrawn every seed. Every complaint in
+        # a careful side-by-side of a drifted generation is on this list —
+        # "longer and narrower", "jawline and chin more tapered", "fuller cheeks"
+        # — and none of them is an eye colour.
         P("face.eyes", "face", "Eyes", "large almond dark-brown eyes", identity=True),
         P("face.brows", "face", "Brows", "naturally thick, softly arched brows", identity=True),
         P("face.nose", "face", "Nose", "a straight nose with a narrow bridge", identity=True),
         P("face.lips", "face", "Lips", "medium-full lips, muted dusty rose", identity=True),
-        P("face.shape", "face", "Face shape", "a soft oval face with a gently tapered jaw", identity=True),
+        P("face.shape", "face", "Face shape", "a soft oval face", identity=True),
+        P("face.forehead", "face", "Forehead", "a medium-width forehead of average "
+          "height, with a softly rounded hairline", identity=True),
+        P("face.cheekbones", "face", "Cheekbones",
+          "gently defined cheekbones, present but not sharp or high-fashion",
+          identity=True),
+        P("face.cheeks", "face", "Cheek fullness",
+          "subtle cheek fullness, soft under the eye rather than hollow",
+          identity=True),
+        P("face.jawline", "face", "Jawline",
+          "a smooth, softly tapered jawline — defined but not angular", identity=True),
+        P("face.chin", "face", "Chin", "a softly rounded chin of medium length",
+          identity=True),
+        # Asymmetry earns its slot twice over: it is the single strongest cue
+        # separating a photograph from a render, AND it is a stable identity
+        # anchor rather than a beauty adjective. Perfect symmetry is the tell.
+        P("face.asymmetry", "face", "Natural asymmetry",
+          "one eyebrow sits fractionally higher than the other, one eye opens "
+          "very slightly wider, and one cheek is marginally fuller — the ordinary "
+          "asymmetry every real face has", identity=True,
+          note="Never remove this for being 'imperfect'. A face with none of it "
+               "reads as CGI, and symmetry is not what makes a face attractive — "
+               "specific proportions are."),
         P("face.marks", "face", "Distinguishing marks",
           "clear even skin, no prominent marks", identity=True,
           note="Marks are OFF by default — a character should not get a mole she "
@@ -213,9 +248,34 @@ def default_parts() -> list[Part]:
         P("body.posture", "body", "Posture", "elegant posture, a long neck"),
 
         # -- hair / skin -----------------------------------------------------
+        # hair.base is ONE blob covering colour, length, texture and parting at
+        # once. That is fine for a character already locked to a reference — it
+        # is identity=True and gets dropped the moment one exists — but it is a
+        # poor thing to hand a generator that is inventing a face from nothing,
+        # where each axis wants stating separately.
+        #
+        # So the granular parts ship OFF. An existing character keeps its blob
+        # and gains five switches it can ignore; guided creation enables these
+        # and disables the blob for the character it is building, so nobody ever
+        # renders both.
         P("hair.base", "hair", "Hair",
           "very long jet-black hair to the waist, centre part, soft waves from "
-          "shoulder level", identity=True),
+          "shoulder level", identity=True,
+          note="The single-line form. Guided creation turns this OFF in favour of "
+               "the granular hair parts below; it stays on for characters made "
+               "before those existed."),
+        P("hair.colour", "hair", "Hair colour", "jet black with a cool sheen",
+          identity=True, enabled=False),
+        P("hair.length", "hair", "Hair length", "very long, falling to the waist",
+          identity=True, enabled=False),
+        P("hair.texture", "hair", "Hair texture",
+          "thick and glossy, soft waves from shoulder level down", identity=True,
+          enabled=False),
+        P("hair.parting", "hair", "Parting", "a relaxed centre part", identity=True,
+          enabled=False),
+        P("hair.hairline", "hair", "Hairline & flyaways",
+          "a softly rounded hairline with fine baby hairs at the temples and a "
+          "few flyaway strands catching the light", identity=True, enabled=False),
         P("skin.tone", "skin", "Tone", "warm neutral beige skin with a golden undertone",
           identity=True),
         P("skin.facts", "skin", "Photographic facts",

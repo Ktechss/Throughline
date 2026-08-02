@@ -22,10 +22,10 @@ from pydantic import BaseModel
 from . import (config, db, describe, gate, generate, prompt as promptlib, prompter,
                skeleton, timeline)
 from .config import (ARCHIVE_FORMAT, ARCHIVE_QUALITY, BODIES, BODIES_META,
-                     CHARACTERS, CharPath, GOLD, HOME_PATH,
+                     CHARACTERS, CharPath, EDIT, GOLD, HOME_PATH,
                      IMAGES, NAILS, NAILS_META, PARTS_PATH, PLACES, POSE_REFS,
                      POSES, REF_BUDGET, REFS, ROOT, SCENE_EDIT, SCENE_TEXT2IMG,
-                     STATE, TIMELINE_PATH, WARDROBE)
+                     STATE, TEXT2IMG, TIMELINE_PATH, WARDROBE)
 
 app = FastAPI(title="Throughline")
 
@@ -173,6 +173,99 @@ _BUILD_FRAME = {
 }
 
 
+# --------------------------------------------------------------------------
+# The MASTER FACE. Every image of her ever made descends from this one photo, so
+# whatever it gets wrong is wrong forever — which is why it gets a fixed studio
+# spec instead of whatever framing the moment suggests.
+# --------------------------------------------------------------------------
+# Deliberately boring. A neutral closed-mouth face on a plain background is the
+# easiest thing in the world for ArcFace to read, and the gallery is later built
+# from this seed — so a master face caught mid-laugh at an angle poisons every
+# comparison that follows. The 85mm/head-and-shoulders framing is also the
+# cheapest identity win available: it puts the face over gate.FACE_PLATEAU_PX,
+# worth a measured 0.61 against 0.55 below it.
+MASTER_FACE_PRESENTATION = (
+    "Head-and-shoulders framing, eye-level camera, 85mm portrait lens, shallow "
+    "depth of field. A calm, relaxed, closed-mouth expression looking straight "
+    "into the lens. Minimal natural makeup, a plain cream top, no jewellery and "
+    "nothing in her hair. Warm neutral background, soft diffused window-style "
+    "light, accurate skin tones, professional full-frame camera realism."
+)
+
+# Facts, not wishes — the same principle as skin.facts in the part tree. A model
+# can render "visible pores"; it cannot render "realistic".
+MASTER_FACE_REALISM = (
+    "Show authentic human skin: visible pores, fine peach fuzz, subtle "
+    "pigmentation variation, faint under-eye texture, mild natural redness and a "
+    "few tiny blemishes. Include realistic catchlights, moist waterlines, visible "
+    "tear ducts, natural eyelid creases and individual eyebrow hairs. Her "
+    "proportions are balanced but naturally imperfect, never mirror-symmetrical."
+)
+
+# What to steer AWAY from. Every item here is a specific failure this pipeline
+# has actually produced, not a generic quality incantation.
+MASTER_FACE_NEGATIVE = (
+    "Avoid: any resemblance to a celebrity or public figure, plastic or waxy "
+    "skin, an airbrushed or beauty-filter appearance, perfect symmetry, oversized "
+    "eyes, an unnaturally tiny nose, exaggerated lips, an unnaturally sharp "
+    "jawline, heavy makeup, CGI, illustration, or doll-like features."
+)
+
+
+# How an uploaded reference may be used. This is a SAFETY boundary as much as a
+# quality one, and the two happen to agree.
+#
+# The old creation prompt said "Take her facial features, structure, hairstyle
+# and overall likeness from @image1" — an instruction to COPY whatever was
+# uploaded. Point that at a photograph of a real person and the pipeline produces
+# that person's likeness, which this project forbids outright (see CLAUDE.md: she
+# is entirely fictional, no real person's likeness, anywhere, ever).
+#
+# So an upload can only ever be INSPIRATION here: hair, mood, lighting, framing —
+# never the face. Identity-lock mode is real and useful, but it belongs to HER
+# OWN approved master face, which is what every later shot already does; it is
+# not something an upload can opt into.
+REFERENCE_MODES = ("none", "inspiration")
+
+# Enough to see real variation without turning creation into a spending
+# decision. Four faces from one spec differ in exactly the way that matters
+# here — same brief, different person — which is the choice being made.
+MASTER_FACE_CANDIDATES = 4
+
+_INSPIRATION_CLAUSE = (
+    "Use the attached image ONLY as loose inspiration for the hairstyle, "
+    "photographic mood, lighting and general presentation. Create a clearly "
+    "DIFFERENT, completely fictional woman with a facial identity of her own. Do "
+    "not copy or closely replicate the reference person's face, eyes, nose, lips, "
+    "smile, jawline or facial proportions, and she must not resemble any "
+    "celebrity or public figure. Her face comes from the description below, not "
+    "from the attached image."
+)
+
+
+def _master_face_prompt(parts: list[promptlib.Part], inspired: bool) -> str:
+    """The prompt one master-face candidate is generated from.
+
+    The face itself comes from `compose(has_reference=False)` — the one place in
+    this pipeline that DOES describe her, because a brand-new character has no
+    reference yet and the seed has to come from words. Everything else here is
+    fixed: presentation, realism, and what to avoid.
+    """
+    face = promptlib.compose(parts, has_reference=False,
+                             pose_note=MASTER_FACE_PRESENTATION)
+    blocks = [_INSPIRATION_CLAUSE] if inspired else []
+    blocks += [
+        "A highly photorealistic close-up identity portrait of a completely "
+        "fictional woman, shot on a professional full-frame camera — a real "
+        "photographed individual with a memorable, original face, never a CGI "
+        "character, illustration or generic AI beauty model.",
+        face,
+        MASTER_FACE_REALISM,
+        MASTER_FACE_NEGATIVE,
+    ]
+    return "\n\n".join(blocks)
+
+
 def _height_text(cm: int) -> str:
     total_in = round(cm / 2.54)
     return f"{cm}cm ({total_in // 12}'{total_in % 12}\")"
@@ -188,6 +281,7 @@ async def create_character_guided(
     home_style: str = Form(""),
     home_surroundings: str = Form(""),
     reference: UploadFile | None = File(None),
+    reference_mode: str = Form("inspiration"),
 ):
     """Create a character from her three defining pieces — BIO, BODY and HOME.
 
@@ -217,6 +311,8 @@ async def create_character_guided(
             height = 0
     except (ValueError, TypeError):
         height = 0
+    if reference_mode not in REFERENCE_MODES:
+        raise HTTPException(400, f"reference_mode must be one of {REFERENCE_MODES}")
 
     cid = _unique_char_id(name)
     config.ensure_char_dirs(cid)
@@ -224,7 +320,7 @@ async def create_character_guided(
     config.set_active(cid)                # the build job runs on the now-active char
 
     seed_upload: Path | None = None
-    if reference is not None:
+    if reference is not None and reference_mode != "none":
         data = await reference.read()
         if data:
             ext = Path(reference.filename or "seed.png").suffix.lower()
@@ -236,10 +332,19 @@ async def create_character_guided(
     def run(job: dict) -> dict:
         # 1) Claude writes her identity fields; the explicit pickers OVERRIDE
         job["stage"] = "writing bio"
-        parts = _load_parts()
+        parts = _load_parts(cid)
+        # The granular hair parts ship OFF so existing characters keep their
+        # single-line hair.base. A character born here has no such history, so it
+        # gets the granular form and the blob is retired for it — describing hair
+        # colour, length, texture, parting and hairline separately is what a
+        # generator inventing a face from nothing actually needs.
+        parts = [promptlib.Part(**{**p.dict(),
+                                   "enabled": p.id != "hair.base"})
+                 if p.id.startswith("hair.") else p
+                 for p in parts]
         writable = [p for p in parts
                     if p.section in ("subject", "face", "hair", "skin", "body")
-                    and p.id != "subject.energy"]
+                    and p.id != "subject.energy" and p.enabled]
         fields = [{"id": p.id, "label": p.label, "hint": p.text} for p in writable]
         desc = description
         if shape:
@@ -262,87 +367,52 @@ async def create_character_guided(
             updates["body.frame"] = _BUILD_FRAME[build]
         if height:
             updates["body.height"] = _height_text(height)
-        if updates:
-            parts = [promptlib.Part(**{**p.dict(), "text": updates.get(p.id, p.text)})
-                     for p in parts]
-            _save_parts(parts)
+        parts = [promptlib.Part(**{**p.dict(), "text": updates.get(p.id, p.text)})
+                 for p in parts]
+        _save_parts(parts, cid)
 
-        # 2) generate her first face
-        job["stage"] = "generating face"
-        if seed_upload and seed_upload.exists():
-            # Base her on the reference's LIKENESS, but always render a REAL,
-            # photorealistic human — so a stylised/anime/drawn reference becomes a
-            # believable real person, never reproduced as art. (A strict identity
-            # copy here made an anime upload come back as anime — wrong for the
-            # realistic pipeline and the ArcFace gate.)
-            prompt = (
-                "A photorealistic portrait headshot of a REAL human woman whose "
-                "face is based on @image1. Take her facial features, structure, "
-                "hairstyle and overall likeness from @image1, but render her as a "
-                "real, photorealistic human being with natural skin and true human "
-                "anatomy. If @image1 is a drawing, anime or stylised art, "
-                "reinterpret it faithfully as a believable real person with those "
-                "same features. Head-and-shoulders framing, plain neutral studio "
-                "background, soft even lighting, looking into the lens, natural "
-                "relaxed expression. Photorealistic RAW photo, real skin texture "
-                "and pores, sharp focus on the face — never illustrated, cartoon "
-                "or CGI.")
-            row = generate.generate(
-                prompt=prompt, refs=[seed_upload], aspect="3:4",
-                session=generate.new_session(f"seed face: {name}"), progress=job,
-                meta={"guided_seed": True, "from_upload": True})
-        else:
-            portrait = promptlib.compose(
-                parts, has_reference=False,
-                pose_note="a clean, well-lit frontal headshot — head and shoulders, "
-                          "plain neutral studio background, looking straight into "
-                          "the lens, natural relaxed expression")
-            row = generate.generate(
-                prompt=portrait, refs=None, aspect="3:4",
-                session=generate.new_session(f"seed face: {name}"), progress=job,
-                meta={"guided_seed": True})
-
-        # 3) set the generated face as the CALIBRATION SEED
-        src = IMAGES / row["file"]
-        seed_ref = None
-        if src.exists():
-            seed_ref = _promote(src, _unique_ref_path("seed-face.png"))
-            cfg = _bio_cfg_raw()
-            cfg["calib_seed"] = seed_ref.name
-            BIO_REF_PATH.write_text(json.dumps(cfg, indent=2) + "\n")
-            row.setdefault("meta", {})["seed_ref"] = seed_ref.name
-
-        # 4) generate a BODY reference matching the chosen build — the strong lever
-        #    for proportions. Explicit figure text renders the build faithfully;
-        #    best-effort, so a body failure never breaks the character.
-        if seed_ref and seed_ref.exists():
-            job["stage"] = "generating body"
-            figure = _BUILD_FIGURE.get(build) or promptlib.build_clause(parts)
-            body_prompt = (
-                "Full-body studio photograph of @image1 on a plain white seamless "
-                "background, lit flat and even. She stands straight and relaxed "
-                "facing the camera, arms at her sides, neutral expression, wearing "
-                "simple fitted plain activewear (a fitted tank top and leggings) so "
-                "her figure is clearly visible. Her FIGURE is the whole point of "
-                "this image: render her exact build faithfully and prominently, "
-                f"never substituting a generic slim fashion-model physique. Her "
-                f"build: {figure}. Her face and identity exactly match @image1. "
-                "Photorealistic, real skin texture, natural anatomy.")
+        # 2) generate MASTER-FACE CANDIDATES.
+        #
+        # Several, not one. The master face is the image every future picture of
+        # her descends from, so committing to whatever the first seed returned
+        # was the single worst-leveraged decision in the pipeline: a face nobody
+        # chose, generated once, locked in forever. Generating a handful and
+        # letting a human pick costs a few more images once and is the only
+        # judgement call in this project that SHOULD be a human's — it is
+        # choosing who she is, not measuring whether it is still her.
+        #
+        # Nothing is committed here. No reference, no calib seed, no body. The
+        # candidates are just rows; the pick endpoint does the committing.
+        job["stage"] = "generating faces"
+        prompt = _master_face_prompt(parts, inspired=bool(seed_upload))
+        refs = [seed_upload] if seed_upload else None
+        session = generate.new_session(f"master face: {name}")
+        candidates, errors = [], []
+        for i in range(MASTER_FACE_CANDIDATES):
+            job["step"] = f"face {i + 1}/{MASTER_FACE_CANDIDATES}"
             try:
-                body_row = generate.generate(
-                    prompt=body_prompt, refs=[seed_ref], aspect="3:4",
-                    session=generate.new_session(f"body: {name}"), progress=job,
-                    meta={"body_ref_create": True, "guided": True},
-                    fallback_endpoint=SCENE_EDIT)
-                bsrc = IMAGES / body_row["file"]
-                if bsrc.exists():
-                    bdst = _promote(bsrc, REFS / "body-canonical.png")
-                    cfg = _bio_cfg_raw()
-                    cfg["body_reference"] = bdst.name
-                    BIO_REF_PATH.write_text(json.dumps(cfg, indent=2) + "\n")
-                    row.setdefault("meta", {})["body_ref"] = bdst.name
-            except Exception as exc:  # noqa: BLE001 — body is a bonus, not required
-                job["note"] = f"body generation skipped ({exc})"
+                cand = generate.generate(
+                    prompt=prompt, refs=refs, aspect="3:4",
+                    # gpt-image-2 for the one image that compounds forever:
+                    # measured 0.813 against nano-banana's 0.678 on exactly this
+                    # shot (a frontal studio close-up). Shots stay on nano.
+                    endpoint=(EDIT if refs else TEXT2IMG),
+                    fallback_endpoint=SCENE_EDIT,
+                    session=session, progress=job, character=cid,
+                    # No gallery exists yet by definition — this IS the seed
+                    # hunt. Gating would only ever record "gallery is empty".
+                    gated=False,
+                    meta={"guided_seed": True, "candidate": i + 1,
+                          "from_upload": bool(seed_upload)})
+                candidates.append(cand)
+            except Exception as exc:  # noqa: BLE001 — one bad candidate is not a failed character
+                errors.append(str(exc)[:120])
+        job["step"] = None
+        if not candidates:
+            raise RuntimeError("no face candidates could be generated: "
+                               + "; ".join(errors[:2]))
+        if errors:
+            job["note"] = f"{len(errors)} of {MASTER_FACE_CANDIDATES} faces failed"
 
         # 5) HOME — the third of her three defining pieces. Ten corners from one
         #    shared house style, so "her kitchen" means one specific kitchen from
@@ -354,30 +424,119 @@ async def create_character_guided(
         #    worth describing. Silence here is a deliberate skip, and it is said
         #    out loud in the job note rather than left to be discovered.
         style = home_style.strip()
+        corners_done = 0
         if style or home_surroundings.strip():
-            HOME_PATH.write_text(json.dumps(
+            _state_path("home.json", cid).write_text(json.dumps(
                 {"style": style, "surroundings": home_surroundings.strip()},
                 indent=2) + "\n")
         if style:
-            done, failed = 0, []
+            failed = []
             for i, corner in enumerate(HOME_CORNERS, 1):
                 job["step"] = f"{corner['label']} ({i}/{len(HOME_CORNERS)})"
                 try:
-                    _render_corner(corner["key"], job)
-                    done += 1
+                    _render_corner(corner["key"], job, cid)
+                    corners_done += 1
                 except Exception as exc:  # noqa: BLE001 — one bad room is not a bad character
                     failed.append(f"{corner['key']} ({exc})")
             job["step"] = None
-            row.setdefault("meta", {})["home_corners"] = done
             if failed:
                 job["note"] = f"home corners skipped: {', '.join(failed)}"
         else:
             job["note"] = ("home skipped — no house style given; "
                            "generate corners from the Home tab")
-        return row
+
+        # Nothing is committed yet — that is the point. The caller picks one of
+        # these and POSTs it back to /api/characters/{cid}/master-face, which is
+        # where the reference, the calibration seed and the body get set.
+        return {"character": cid, "home_corners": corners_done,
+                "candidates": [{"run_id": c["id"], "file": c["file"]}
+                               for c in candidates]}
 
     jid = generate.start_job(f"create {name}", run)
     return {"character": _char_view(char), "job": jid}
+
+
+class MasterFaceReq(BaseModel):
+    run_id: str
+
+
+@app.post("/api/characters/{cid}/master-face")
+def set_master_face(cid: str, req: MasterFaceReq):
+    """Commit one candidate as her MASTER FACE. This is where a character becomes
+    usable, and it is deliberately a separate, human-made step.
+
+    Creation generates candidates and commits nothing. This endpoint takes the
+    chosen one and makes it three things at once:
+
+      reference    — @image1 on every future shot. Creation never used to set
+                     this, so a new character fell back to DEFAULT_BIO_REF
+                     ('Kiara.png'), a file only the original character has, and
+                     `shot()` refused every request with a message pointing at
+                     the wrong tab. A character you cannot photograph is not a
+                     character.
+      calib_seed   — the face calibration generates its gallery angles FROM.
+      body ref     — generated from it, so build and face agree.
+
+    The face is verified to contain a detectable face first. `/api/bio/reference/
+    from-run` has always done this and creation never did, which meant a seed
+    with no findable face surfaced much later as an unexplained calibration
+    failure.
+    """
+    if not db.chars_get(cid):
+        raise HTTPException(404, cid)
+    row = next((r for r in generate.all_runs() if r["id"] == req.run_id), None)
+    if not row:
+        raise HTTPException(404, req.run_id)
+    src = config.char_base(cid) / "images" / row["file"]
+    if not src.exists():
+        raise HTTPException(404, f"{row['file']} is not on disk")
+
+    dest = _promote(src, config.char_base(cid) / "refs" / f"{cid}-identity.png")
+    try:
+        gate.analyze(dest)
+    except (gate.NoFaceFound, ValueError):
+        dest.unlink(missing_ok=True)
+        raise HTTPException(400, "no face detected in that candidate — pick another") from None
+
+    bio_path = _state_path("bio.json", cid)
+    cfg = json.loads(bio_path.read_text()) if bio_path.exists() else {}
+    cfg["reference"] = dest.name        # the fix: she is shootable from here on
+    cfg["calib_seed"] = dest.name
+    bio_path.write_text(json.dumps(cfg, indent=2) + "\n")
+
+    def run(job: dict) -> dict:
+        # The body reference is a bonus, not a requirement — she already has a
+        # face and can be photographed. A body failure must not undo that.
+        job["stage"] = "generating body"
+        parts = _load_parts(cid)
+        figure = _BUILD_FIGURE.get((row.get("meta") or {}).get("build") or "") \
+            or promptlib.build_clause(parts)
+        body_prompt = (
+            "Full-body studio photograph of @image1 on a plain white seamless "
+            "background, lit flat and even. She stands straight and relaxed "
+            "facing the camera, arms at her sides, neutral expression, wearing "
+            "simple fitted plain activewear (a fitted tank top and leggings) so "
+            "her figure is clearly visible. Her FIGURE is the whole point of this "
+            "image: render her exact build faithfully and prominently, never "
+            f"substituting a generic slim fashion-model physique. Her build: "
+            f"{figure}. Her face and identity exactly match @image1. "
+            "Photorealistic, real skin texture, natural anatomy.")
+        body_row = generate.generate(
+            prompt=body_prompt, refs=[dest], aspect="3:4",
+            endpoint=EDIT, fallback_endpoint=SCENE_EDIT,
+            session=generate.new_session(f"body: {cid}"), progress=job,
+            character=cid, meta={"body_ref_create": True, "guided": True})
+        bsrc = config.char_base(cid) / "images" / body_row["file"]
+        if bsrc.exists():
+            bdst = _promote(bsrc, config.char_base(cid) / "refs" / "body-canonical.png")
+            c = json.loads(bio_path.read_text())
+            c["body_reference"] = bdst.name
+            bio_path.write_text(json.dumps(c, indent=2) + "\n")
+            body_row.setdefault("meta", {})["body_ref"] = bdst.name
+        return body_row
+
+    return {"reference": dest.name, "calib_seed": dest.name,
+            "job": generate.start_job(f"body: {cid}", run)}
 
 
 @app.get("/api/characters/{cid}/avatar")
@@ -412,7 +571,17 @@ def delete_character(cid: str):
 
 # ---------------------------------------------------------------- parts
 
-def _load_parts() -> list[promptlib.Part]:
+# A background job owns its character for its whole life, so it must not read the
+# ACTIVE one on every write — the user is free to click another character while a
+# ~15-minute build runs, and CharPath would happily follow them. Passing `cid`
+# resolves against that character's folder instead; omitting it keeps the old
+# active-character behaviour every request handler wants.
+def _state_path(name: str, cid: str | None = None) -> Path:
+    return config.char_base(cid) / "state" / name
+
+
+def _load_parts(cid: str | None = None) -> list[promptlib.Part]:
+    PARTS_PATH = _state_path("parts.json", cid)
     if PARTS_PATH.exists():
         stored = [promptlib.Part(**d) for d in json.loads(PARTS_PATH.read_text())]
         # Backfill: append any NEW default parts (e.g. grooming/accessories added
@@ -428,8 +597,9 @@ def _load_parts() -> list[promptlib.Part]:
     return parts
 
 
-def _save_parts(parts: list[promptlib.Part]) -> None:
-    PARTS_PATH.write_text(json.dumps([p.dict() for p in parts], indent=2) + "\n")
+def _save_parts(parts: list[promptlib.Part], cid: str | None = None) -> None:
+    _state_path("parts.json", cid).write_text(
+        json.dumps([p.dict() for p in parts], indent=2) + "\n")
 
 
 @app.get("/api/parts")
@@ -2032,7 +2202,8 @@ _REGULAR_KEYS = {c["key"] for c in REGULAR_PLACES}
 _VIEW_ROOMS = {"balcony", "terrace", "living_room"}
 
 
-def _home() -> dict:
+def _home(cid: str | None = None) -> dict:
+    HOME_PATH = _state_path("home.json", cid)
     if HOME_PATH.exists():
         try:
             d = json.loads(HOME_PATH.read_text())
@@ -2097,7 +2268,7 @@ async def home_upload(key: str, file: UploadFile = File(...)):
     return {"key": key, "file": dest.name}
 
 
-def _corner_prompt(key: str) -> str:
+def _corner_prompt(key: str, cid: str | None = None) -> str:
     """The scene prompt for one corner, from the shared house style + corner type.
 
     Split out of the endpoint so guided character creation builds her whole flat
@@ -2105,7 +2276,7 @@ def _corner_prompt(key: str) -> str:
     whichever door you came in by.
     """
     corner = _CORNER[key]
-    h = _home()
+    h = _home(cid)
     style, surroundings = h["style"], h["surroundings"]
 
     # The house is ONE coherent space. The outside view belongs only to rooms that
@@ -2139,21 +2310,23 @@ def _corner_prompt(key: str) -> str:
     return prompt
 
 
-def _render_corner(key: str, job: dict) -> dict:
+def _render_corner(key: str, job: dict, cid: str | None = None) -> dict:
     """Generate one corner and drop it into its slot. Shared by the Home tab and
-    guided character creation."""
+    guided character creation (which pins `cid` for the life of its job)."""
     corner = _CORNER[key]
-    Path(PLACES).mkdir(parents=True, exist_ok=True)
+    places = config.char_base(cid) / "places"
+    places.mkdir(parents=True, exist_ok=True)
     row = generate.generate(
-        prompt=_corner_prompt(key), system="", refs=None, aspect="4:3",
+        prompt=_corner_prompt(key, cid), system="", refs=None, aspect="4:3",
+        character=cid,
         endpoint=SCENE_TEXT2IMG, session=generate.new_session(f"home: {corner['label']}"),
         # An empty room has no face in it by design ("NO people" above), so
         # gating one only ever records no_face — a failure that isn't one.
         gated=False,
         progress=job, meta={"home_create": key})
-    src = IMAGES / row["file"]
+    src = config.char_base(cid) / "images" / row["file"]
     if src.exists():
-        _promote(src, PLACES / f"{key}.png")
+        _promote(src, places / f"{key}.png")
     return row
 
 
