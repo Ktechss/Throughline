@@ -127,25 +127,96 @@ home style and all ten corners generate on submit (≈10 extra generations, a fe
 minutes); leave it blank and it's skipped entirely, to be built later from the
 Home tab.
 
-### Moving to another machine
+---
 
-Cloning gets you the app, not the character — `data/` is gitignored. From the
-machine that has her:
+## Moving to another machine
+
+Three separate channels, none of which overlap. Cloning gets you the app; it
+cannot get you the character.
+
+| | Carried by |
+|---|---|
+| Code, docs, `package-lock.json`, `.env.example` | **git** |
+| `data/` — refs, places, bodies, state, `eve1.db` | **`scripts/sync_data.sh`** |
+| `FAL_KEY`, `ANTHROPIC_API_KEY` | **you, by hand** |
+
+`data/` is gitignored (11 GB) and `eve1.db` has never been in git on any branch.
+That is deliberate: it is binary, it churns on every generation, and it indexes
+images git should not be carrying.
+
+### 1. On the NEW machine — clone and install
 
 ```bash
-./scripts/sync_data.sh user@newbox:~/Throughline    # ~750 MB
+git clone git@github.com:Ktechss/Throughline.git
+cd Throughline
+./setup.sh
 ```
 
-Sends bio, body and home, plus the gallery the gate scores against
-(`state/gallery.npz` — without it every run comes back `ungated`), her nails,
-poses, approved shots, and `eve1.db` for the run history and `mark` verdicts.
-Skips past generations (`--with-images` includes them) and **drops the wardrobe
-entirely**, both its images and its db rows — outfits are what she wears, not who
-she is. Your source db is never modified.
+Needs **Python 3.11 specifically** — not 3.12+, not 3.14; `onnxruntime` has no
+wheels beyond it and `setup.sh` refuses rather than half-installing. Node 20+ too.
 
-Then on the new box: `./setup.sh`, fill in `.env` (never copied — it holds your
-keys), `./run.sh`. The ArcFace model (`buffalo_l`, ~290 MB) downloads itself into
-`~/.insightface` on the first gate check.
+### 2. On the OLD machine — send her
+
+```bash
+./scripts/sync_data.sh user@newbox:~/Throughline     # ~750 MB
+```
+
+No SSH between them? Write to a drive and carry it:
+
+```bash
+./scripts/sync_data.sh /mnt/d/throughline-backup     # then on the new box:
+                                                     #   cp -r /mnt/d/throughline-backup/data ~/Throughline/
+```
+
+⚠ **Migrate before you generate anything on the new box.** The sync overwrites
+`DEST/data/eve1.db` wholesale, so any runs made there first are silently replaced.
+
+### 3. On the NEW machine — keys, then go
+
+`.env` is never copied by the sync. Read the two keys off the old box (`cat .env`)
+and paste them into the new one's `.env`, which `setup.sh` has already created
+from the template.
+
+```bash
+./run.sh          # http://localhost:5173
+```
+
+The first gate check downloads ArcFace (`buffalo_l`, ~290 MB) into
+`~/.insightface`. One-off, needs network.
+
+### What you land with
+
+| Tab | State |
+|---|---|
+| **Bio** | Complete. Her part tree with your edits, every face reference, both body types, all 10 home corners, nails, timeline. |
+| **Calibrate** | Works immediately — gallery loads at its stored threshold, so the gate answers with a number from the first shot rather than `ungated`. |
+| **Shoot** | Generates normally. *The outfit picker is empty* — see below. |
+| **Review** | Every run, with prompt, seed, verdict, yaw, face_px, confounds and your marks. *Thumbnails are broken* — see below. |
+
+Two deliberate gaps, both by the definition above:
+
+- **No past generations.** `images/` is skipped, so review rows show their numbers
+  without their pictures. `--with-images` sends them (7.2 GB instead of 750 MB).
+- **Empty wardrobe.** Dropped entirely — images *and* db rows — so the far side
+  gets a clean wardrobe rather than a list of garments whose files aren't there.
+  Your source db is never modified. There is no flag to include it.
+
+### Verify it arrived
+
+```bash
+.venv/bin/python -c "
+from backend import gate, config
+n = lambda p: len([f for f in p.iterdir() if f.is_file()])
+print('gallery:', len(gate.load_gallery()), 'entries')
+print('refs:   ', n(config.REFS))
+print('bodies: ', n(config.BODIES))
+print('places: ', n(config.PLACES))
+"
+```
+
+A gallery of `0` means `state/gallery.npz` did not cross and every run will come
+back `ungated` — the number this whole project is built around would silently
+stop existing.
 
 ---
 
