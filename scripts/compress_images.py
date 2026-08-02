@@ -64,11 +64,17 @@ def convert(src: Path) -> Path | None:
     return out
 
 
-def run(cid: str, apply: bool, wardrobe: bool, regate: bool) -> None:
+def run(cid: str, apply: bool, wardrobe: bool, regate: bool,
+        no_images: bool = False) -> None:
     base = config.char_base(cid)
-    targets = [("images", base / "images")]
+    targets = []
+    if not no_images:
+        targets.append(("images", base / "images"))
     if wardrobe:
         targets.append(("wardrobe", base / "wardrobe"))
+    if not targets:
+        print("nothing selected (--no-images with no --wardrobe)")
+        return
 
     gate = None
     if regate:
@@ -185,9 +191,14 @@ if __name__ == "__main__":
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--apply", action="store_true", help="actually convert (default: dry run)")
     ap.add_argument("--wardrobe", action="store_true", help="also convert wardrobe/")
+    ap.add_argument("--no-images", action="store_true",
+                    help="leave images/ alone. Use this once images/ has been done: "
+                         "the PNGs still there are the ones --regate REFUSED, and a "
+                         "later run without --regate would silently convert them.")
     ap.add_argument("--regate", action="store_true",
                     help="re-score every image before and after; refuse any swap "
                          "that would flip a verdict (slow)")
     ap.add_argument("--character", default=None, help="character id (default: active)")
     a = ap.parse_args()
-    run(a.character or config.get_active(), a.apply, a.wardrobe, a.regate)
+    run(a.character or config.get_active(), a.apply, a.wardrobe, a.regate,
+        a.no_images)

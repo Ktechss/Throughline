@@ -21,7 +21,8 @@ from pydantic import BaseModel
 
 from . import (config, db, describe, gate, generate, prompt as promptlib, prompter,
                skeleton, timeline)
-from .config import (BODIES, BODIES_META, CHARACTERS, CharPath, GOLD, HOME_PATH,
+from .config import (ARCHIVE_FORMAT, ARCHIVE_QUALITY, BODIES, BODIES_META,
+                     CHARACTERS, CharPath, GOLD, HOME_PATH,
                      IMAGES, NAILS, NAILS_META, PARTS_PATH, PLACES, POSE_REFS,
                      POSES, REF_BUDGET, REFS, ROOT, SCENE_EDIT, SCENE_TEXT2IMG,
                      STATE, TIMELINE_PATH, WARDROBE)
@@ -1504,9 +1505,13 @@ def _outfit_ref(path: Path) -> Path:
     the original if no face is found or the face already fills the frame."""
     from PIL import Image
     OUTFIT_CROPS.mkdir(exist_ok=True)
-    cache = OUTFIT_CROPS / f"{path.stem}.png"
+    # Archive format, not PNG: these are crops of 4K turnarounds, and as PNG the
+    # cache grew to 1.4 GB — larger than the wardrobe it was derived from, for
+    # files that are rebuilt on demand and never shown to anyone.
+    cache = OUTFIT_CROPS / f"{path.stem}.{ARCHIVE_FORMAT}"
     if cache.exists() and cache.stat().st_mtime >= path.stat().st_mtime:
         return cache
+    (OUTFIT_CROPS / f"{path.stem}.png").unlink(missing_ok=True)   # pre-WebP crop
     try:
         box = gate.face_box(path)
     except ValueError:
@@ -1521,7 +1526,8 @@ def _outfit_ref(path: Path) -> Path:
     top = fy2 + int((fy2 - fy1) * 0.10)
     if top >= H - 40:
         return path   # face fills the frame (already a close crop) — nothing to gain
-    im.crop((0, top, W, H)).save(cache)
+    im.crop((0, top, W, H)).save(cache, ARCHIVE_FORMAT.upper(),
+                                 quality=ARCHIVE_QUALITY or 95, method=4)
     return cache
 
 
