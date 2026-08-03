@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import date
 from pathlib import Path
 
@@ -61,9 +62,18 @@ def _unique_char_id(name: str) -> str:
     return cid
 
 
+# An uploaded style reference is NOT her. It informs hair, mood and lighting and
+# nothing else (see REFERENCE_MODES), and it may well be a photograph of a real
+# person — which this project never displays as a character. It was reachable as
+# an avatar because the fallback below sorted refs/ alphabetically and
+# "seed-upload.png" won, so a character briefly wore a stranger's face on her
+# card. Excluded by name, at the one place that picks a face to show.
+_NOT_HER = ("seed-upload",)
+
+
 def _char_avatar_src(cid: str) -> Path | None:
-    """Best image to represent a character on its card: its BIO face if set, else
-    any reference, else its newest generated shot. None while still un-calibrated."""
+    """Best image to represent a character on its card: her BIO face if set, else
+    a face she was actually generated as. None while she has neither."""
     base = config.char_base(cid)
     bio = base / "state" / "bio.json"
     if bio.exists():
@@ -79,7 +89,8 @@ def _char_avatar_src(cid: str) -> Path | None:
         if d.exists():
             imgs = [x for x in sorted(d.iterdir())
                     if x.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp")
-                    and not x.name.startswith(".")]
+                    and not x.name.startswith(".")
+                    and not x.stem.startswith(_NOT_HER)]
             if imgs:
                 return imgs[-1] if sub == "images" else imgs[0]
     return None
@@ -237,6 +248,124 @@ _BUILD_FRAME = {
     "full-figured": "soft, full-figured build",
 }
 
+# --------------------------------------------------------------------------
+# The rest of the identity pickers.
+# --------------------------------------------------------------------------
+# Creation writes 28 identity fields and used to ask about three of them, so a
+# character was mostly whatever Claude invented from a sentence of free text —
+# and you only saw it after four faces had been generated from it. These are the
+# axes worth deciding up front.
+#
+# Every one is OPTIONAL and unset by default, which is the existing FACE_SHAPES
+# convention: "" means Claude decides, and that is what keeps characters from all
+# looking alike. A set pick does two things — it briefs Claude BEFORE the bio is
+# written (so the other fields are written to agree with it) and then overrides
+# the field afterwards, because the pick is authoritative.
+#
+# Values are photographable noun phrases, never adjectives. The rule from
+# prompter's rule 4 applies here too: a model can render "a smooth, softly
+# tapered jawline"; it cannot render "a nice jaw".
+PICKERS: dict[str, dict[str, str]] = {
+    # -- the skull. This is the geometry ArcFace keys on and the geometry a
+    #    drifted generation loses first, so it earns the most pickers.
+    "cheekbones": {
+        "low": "low, gently rounded cheekbones with a soft plane below them",
+        "soft": "softly defined cheekbones, present but not sharp",
+        "defined": "clearly defined cheekbones with a visible plane beneath",
+        "high": "high, quietly angular cheekbones",
+    },
+    "jawline": {
+        "soft": "a soft jawline with little visible angle",
+        "rounded": "a rounded jawline, wide at the angle and softly padded",
+        "tapered": "a smooth, softly tapered jawline — defined but not angular",
+        "square": "a squared jawline with a clear angle at the corner",
+    },
+    "chin": {
+        "rounded": "a softly rounded chin of medium length",
+        "pointed": "a narrow, gently pointed chin",
+        "square": "a squared chin with a flat front plane",
+        "long": "a longer-than-average chin, straight at the front",
+    },
+    # -- the features
+    "eyes": {
+        "almond": "almond-shaped eyes with a level set",
+        "round": "large rounded eyes with an open lid",
+        "hooded": "deep-set eyes with a heavy upper lid",
+        "downturned": "eyes with a gently downturned outer corner",
+        "upturned": "eyes with a slight upward tilt at the outer corner",
+    },
+    "brows": {
+        "fine": "fine, lightly filled brows with a soft arch",
+        "natural": "naturally full brows, softly groomed",
+        "full": "thick, strongly defined brows",
+        "straight": "straight-set brows with a minimal arch",
+        "arched": "clearly arched brows with a defined peak",
+    },
+    "nose": {
+        "small": "a small nose with a narrow bridge and a neat tip",
+        "straight": "a straight nose with an even bridge",
+        "rounded": "a rounded nose with a soft, full tip",
+        "aquiline": "a nose with a high bridge and a slight curve",
+        "broad": "a broader nose with a wide base and a soft tip",
+    },
+    "lips": {
+        "thin": "slim lips with a defined edge",
+        "medium": "medium lips with a fuller lower lip",
+        "full": "full lips with a clear cupid's bow",
+    },
+    # -- hair. Granular parts, enabled for characters born after 19e3bda8.
+    "hair_colour": {
+        "jet black": "jet black with a cool sheen",
+        "dark brown": "dark brown-black with a warm undertone",
+        "brown": "mid-brown with softer strands at the ends",
+        "chestnut": "warm chestnut brown",
+        "auburn": "dark auburn with a red cast in the light",
+    },
+    "hair_length": {
+        "crop": "cropped short, above the ear",
+        "bob": "a chin-length bob",
+        "shoulder": "shoulder-length",
+        "mid-back": "long, falling to the mid-back",
+        "waist": "very long, falling to the waist",
+    },
+    "hair_texture": {
+        "straight": "thick and straight, with a heavy fall",
+        "wavy": "softly wavy from around shoulder level",
+        "curly": "defined curls with visible spring",
+        "coily": "tightly coiled, dense and voluminous",
+    },
+}
+
+# Which part each picker writes. Split out rather than folded into PICKERS so the
+# vocabularies stay readable as plain option lists.
+_PICKER_PART = {
+    "cheekbones": "face.cheekbones", "jawline": "face.jawline", "chin": "face.chin",
+    "eyes": "face.eyes", "brows": "face.brows", "nose": "face.nose", "lips": "face.lips",
+    "hair_colour": "hair.colour", "hair_length": "hair.length",
+    "hair_texture": "hair.texture",
+}
+
+# Skin is two pickers composing ONE part, because that is how skin.tone reads —
+# "medium olive-brown skin with a warm undertone", not two sentences.
+SKIN_TONES = {
+    "fair": "fair", "light": "light", "medium": "medium",
+    "olive": "medium olive", "brown": "warm brown", "deep": "deep brown",
+}
+SKIN_UNDERTONES = {
+    "cool": "a cool undertone", "neutral": "a neutral undertone",
+    "warm": "a warm undertone", "golden": "a golden undertone",
+}
+
+
+def _skin_text(tone: str, undertone: str) -> str:
+    if not tone and not undertone:
+        return ""
+    t = SKIN_TONES.get(tone, "")
+    u = SKIN_UNDERTONES.get(undertone, "")
+    if t and u:
+        return f"{t} skin with {u}"
+    return f"{t} skin" if t else f"skin with {u}"
+
 
 # --------------------------------------------------------------------------
 # The MASTER FACE. Every image of her ever made descends from this one photo, so
@@ -343,6 +472,21 @@ async def create_character_guided(
     face_shape: str = Form(""),
     build: str = Form(""),
     height_cm: str = Form(""),
+    age: str = Form(""),
+    # The rest of the identity pickers (see PICKERS). All optional; blank means
+    # Claude decides, which is what keeps characters from converging on one face.
+    cheekbones: str = Form(""),
+    jawline: str = Form(""),
+    chin: str = Form(""),
+    eyes: str = Form(""),
+    brows: str = Form(""),
+    nose: str = Form(""),
+    lips: str = Form(""),
+    skin_tone: str = Form(""),
+    skin_undertone: str = Form(""),
+    hair_colour: str = Form(""),
+    hair_length: str = Form(""),
+    hair_texture: str = Form(""),
     home_style: str = Form(""),
     home_surroundings: str = Form(""),
     reference: UploadFile | None = File(None),
@@ -376,8 +520,26 @@ async def create_character_guided(
             height = 0
     except (ValueError, TypeError):
         height = 0
+    try:
+        years = int(float(age))
+        if not (18 <= years <= 60):
+            years = 0
+    except (ValueError, TypeError):
+        years = 0
     if reference_mode not in REFERENCE_MODES:
         raise HTTPException(400, f"reference_mode must be one of {REFERENCE_MODES}")
+
+    # Collect the free-form pickers, dropping anything not in its vocabulary. An
+    # unknown value is treated as unset rather than rejected: a stale UI should
+    # give you a Claude-invented field, not a failed character.
+    picks = {k: v for k, v in (
+        ("cheekbones", cheekbones), ("jawline", jawline), ("chin", chin),
+        ("eyes", eyes), ("brows", brows), ("nose", nose), ("lips", lips),
+        ("hair_colour", hair_colour), ("hair_length", hair_length),
+        ("hair_texture", hair_texture),
+    ) if v.strip().lower() in PICKERS[k]}
+    picks = {k: v.strip().lower() for k, v in picks.items()}
+    skin = _skin_text(skin_tone.strip().lower(), skin_undertone.strip().lower())
 
     cid = _unique_char_id(name)
     config.ensure_char_dirs(cid)
@@ -411,18 +573,29 @@ async def create_character_guided(
                     if p.section in ("subject", "face", "hair", "skin", "body")
                     and p.id != "subject.energy" and p.enabled]
         fields = [{"id": p.id, "label": p.label, "hint": p.text} for p in writable]
+        # BRIEF Claude with every set pick before it writes anything. The point
+        # is not redundancy with the override below: it is that the OTHER twenty
+        # fields get written to agree with the choice. Tell it the jaw is square
+        # and it will not hand back soft rounded cheeks to sit above it.
         desc = description
+        if years:
+            desc += f"\nShe is {years} years old."
         if shape:
             desc += f"\nHer face shape is {shape}."
         if build:
             desc += f"\nHer body build is {build}."
         if height:
             desc += f"\nHer height is {_height_text(height)}."
+        for key, val in picks.items():
+            desc += f"\nHer {key.replace('_', ' ')}: {PICKERS[key][val]}."
+        if skin:
+            desc += f"\nHer skin: {skin}."
         try:
             updates = prompter.write_bio(name, desc, fields)
         except prompter.PrompterError as exc:
             updates = {}
             job["note"] = f"bio auto-write skipped ({exc}); used defaults"
+
         # the pickers are authoritative — apply them ON TOP of the AI's text
         if shape:
             cur = updates.get("face.shape", "")
@@ -432,6 +605,19 @@ async def create_character_guided(
             updates["body.frame"] = _BUILD_FRAME[build]
         if height:
             updates["body.height"] = _height_text(height)
+        for key, val in picks.items():
+            updates[_PICKER_PART[key]] = PICKERS[key][val]
+        if skin:
+            updates["skin.tone"] = skin
+        if years:
+            # subject.age carries her DESCENT as well as her age ("A 26-year-old
+            # South Asian woman"), and the picker only chose the number — so
+            # substitute the number and leave the rest of Claude's phrase alone.
+            cur = updates.get("subject.age") or next(
+                (p.text for p in parts if p.id == "subject.age"), "")
+            updates["subject.age"] = (re.sub(r"\b\d{1,2}\b", str(years), cur, count=1)
+                                      if re.search(r"\b\d{1,2}\b", cur)
+                                      else f"A {years}-year-old woman")
         parts = [promptlib.Part(**{**p.dict(), "text": updates.get(p.id, p.text)})
                  for p in parts]
         _save_parts(parts, cid)
@@ -613,14 +799,27 @@ def character_avatar(cid: str):
     src = _char_avatar_src(cid)
     if not src:
         raise HTTPException(404, "no avatar yet")
-    cache = config.char_base(cid) / "state" / ".avatar.jpg"
-    cache.parent.mkdir(parents=True, exist_ok=True)
+    state = config.char_base(cid) / "state"
+    state.mkdir(parents=True, exist_ok=True)
+    # Key the cache on WHICH FILE it came from, not just that file's mtime. A
+    # single ".avatar.jpg" compared against src.mtime cannot notice the source
+    # being SWAPPED for a different file: choosing her master face points this at
+    # refs/<cid>-identity, whose mtime is older than a cache built minutes
+    # earlier from the upload — so the check said "fresh" and she kept the wrong
+    # face permanently. A per-source name makes a swap a cache miss by
+    # construction.
+    cache = state / f".avatar-{src.stem}.jpg"
     if not cache.exists() or cache.stat().st_mtime < src.stat().st_mtime:
         from PIL import Image
         im = Image.open(src).convert("RGB")
         im.thumbnail((512, 512))
         im.save(cache, "JPEG", quality=82)
-    return FileResponse(cache)
+        for stale in state.glob(".avatar*.jpg"):
+            if stale != cache:
+                stale.unlink(missing_ok=True)
+    # The browser caches by URL, and the URL does not change when she gets a
+    # face. Revalidate so the card updates the moment she does.
+    return FileResponse(cache, headers={"Cache-Control": "no-cache"})
 
 
 @app.delete("/api/characters/{cid}")
@@ -1680,12 +1879,23 @@ def _find_by_id(directory: Path, ident: str) -> Path | None:
     Uploads keep their original extension (.jpg, .webp, …); saves-from-run are
     .png. Assuming .png at lookup time was a bug — a .jpg outfit selected fine in
     the UI but 404'd on generate.
+
+    Case is the same class of bug. An outfit saved as "Dayout9" and a row keyed
+    "DayOut9" are the same garment to everyone except this function, which
+    stranded the row: it listed in the picker and 400'd on selection with "no
+    such wardrobe". Exact match still wins — two files differing only in case are
+    two files — but a unique case-insensitive match beats returning nothing.
     """
     for ext in (".png", ".jpg", ".jpeg", ".webp"):
         p = directory / f"{ident}{ext}"
         if p.exists():
             return p
-    return None
+    if not directory.exists():
+        return None
+    hits = [p for p in directory.iterdir()
+            if p.is_file() and p.stem.lower() == ident.lower()
+            and p.suffix.lower() in _IMAGE_EXT]
+    return hits[0] if len(hits) == 1 else None
 
 
 def _wardrobe_meta() -> dict:
@@ -1714,10 +1924,20 @@ def _unique_wardrobe_path(name: str) -> Path:
     an image and a different outfit's description desync). Suffixes -2, -3, … ."""
     safe = "".join(c for c in name if c.isalnum() or c in "-_ ").strip() or "outfit"
     safe = "-".join(safe.split())
-    if not (WARDROBE / f"{safe}.png").exists():
+
+    # Testing only "<name>.png" was a live no-clobber HOLE. Every wardrobe file
+    # is .webp since the archive migration, so ".png does not exist" was always
+    # true, this returned a taken name as free, and _promote then rewrote the
+    # suffix to .webp and copied straight over the existing outfit. Ask whether
+    # the NAME is taken, in any image extension and in any case — the same
+    # question a case-insensitive filesystem would ask when this folder is
+    # carried to another machine.
+    taken = {p.stem.lower() for p in WARDROBE.iterdir()
+             if p.is_file() and p.suffix.lower() in _IMAGE_EXT} if WARDROBE.exists() else set()
+    if safe.lower() not in taken:
         return WARDROBE / f"{safe}.png"
     n = 2
-    while (WARDROBE / f"{safe}-{n}.png").exists():
+    while f"{safe}-{n}".lower() in taken:
         n += 1
     return WARDROBE / f"{safe}-{n}.png"
 
@@ -2502,6 +2722,26 @@ def _infer_place(brief: str) -> tuple[Path | None, str]:
 # The eras a year of shots is drawn against. Deliberately thin: an era is a date
 # she changed visibly, and what changed. Everything else about a date (season,
 # manicure wear) is derived, so there is nothing here to keep in sync.
+@app.get("/api/characters/options")
+def character_options():
+    """The axes a NEW character can be specified along, for the drawer to render.
+
+    Served rather than duplicated in the frontend so the vocabularies have one
+    home: an option the backend cannot map is one the UI must not offer, and a
+    stale copy in JS would silently fall back to "Claude decides" while looking
+    like a choice.
+    """
+    return {
+        "face_shapes": FACE_SHAPES,
+        "builds": BUILDS,
+        "skin_tones": list(SKIN_TONES),
+        "skin_undertones": list(SKIN_UNDERTONES),
+        # {axis: [option, ...]} — the label IS the value; the noun phrase it maps
+        # to is the backend's business.
+        "pickers": {k: list(v) for k, v in PICKERS.items()},
+    }
+
+
 @app.get("/api/shot/options")
 def shot_options():
     """The axes a shot can be varied along, for the UI to render as pickers.

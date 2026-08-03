@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, charView, STAGE } from "@/api/throughline";
-import { ShieldCheck, ShieldAlert, Plus, X, Sparkles, Upload, Ruler, Trash2, Loader2, Pencil, Home } from "lucide-react";
+import { ShieldCheck, ShieldAlert, Plus, X, Sparkles, Upload, Ruler, Trash2, Loader2, Pencil, Home, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import FacePicker from "@/components/studio/FacePicker";
 
@@ -83,6 +83,13 @@ export default function Landing() {
       fd.append("face_shape", form.face_shape || "");
       fd.append("build", form.build || "");
       fd.append("height_cm", form.height_cm || "");
+      // Every identity picker, blank when unset — the backend reads blank as
+      // "Claude decides" rather than as a value.
+      for (const k of ["age", "cheekbones", "jawline", "chin", "eyes", "brows",
+                       "nose", "lips", "skin_tone", "skin_undertone",
+                       "hair_colour", "hair_length", "hair_texture"]) {
+        fd.append(k, form[k] || "");
+      }
       fd.append("home_style", form.home_style || "");
       fd.append("home_surroundings", form.home_surroundings || "");
       fd.append("reference_mode", form.file ? "inspiration" : "none");
@@ -254,17 +261,67 @@ function labelFor(stage) {
   return STAGE[stage] || "Building her…";
 }
 
+// One collapsible group of pickers. Collapsed by default and showing how many of
+// its axes are set, so the drawer stays a short form for anyone who just wants a
+// name and a sentence — which is still the fast path.
+function Section({ title, count, total, open, onToggle, children }) {
+  return (
+    <div className="rounded-lg ring-1 ring-white/8">
+      <button onClick={onToggle}
+        className="w-full flex items-center justify-between px-3 py-2.5 text-left">
+        <span className="text-[12px] font-medium text-zinc-300">{title}</span>
+        <span className="flex items-center gap-2">
+          <span className={cn("text-[10px]", count ? "text-emerald-300" : "text-zinc-600")}>
+            {count ? `${count} of ${total} set` : "Claude decides"}
+          </span>
+          <ChevronDown className={cn("h-3.5 w-3.5 text-zinc-500 transition-transform",
+                                     open && "rotate-180")} />
+        </span>
+      </button>
+      {open && <div className="px-3 pb-3 space-y-3">{children}</div>}
+    </div>
+  );
+}
+
+// A row of mutually exclusive chips. Clicking the selected one clears it, which
+// is how you get back to "Claude decides" without a separate control.
+function Chips({ label, options, value, onChange }) {
+  return (
+    <div>
+      <label className="text-[11px] text-zinc-400">{label}</label>
+      <div className="mt-1 flex flex-wrap gap-1.5">
+        {(options || []).map((o) => (
+          <button key={o} onClick={() => onChange(value === o ? null : o)}
+            className={cn("rounded-full px-2.5 py-1 text-[11px] ring-1 transition-colors",
+              value === o ? "bg-white text-black ring-white"
+                          : "ring-white/10 text-zinc-400 hover:text-white")}>{o}</button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function CreateDrawer({ onClose, onCreate, building }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [faceShape, setFaceShape] = useState(null);
   const [bodyType, setBodyType] = useState(null);
   const [height, setHeight] = useState(168);
+  const [age, setAge] = useState(null);
   const [homeStyle, setHomeStyle] = useState("");
   const [homeSurroundings, setHomeSurroundings] = useState("");
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
   const ftIn = `${Math.floor(height / 30.48)}′${Math.round((height / 2.54) % 12)}″`;
+
+  // Vocabularies come from the backend so there is one copy of them. An option
+  // the server cannot map must not be offered here.
+  const [opts, setOpts] = useState(null);
+  useEffect(() => { api.get("/api/characters/options").then(setOpts).catch(() => {}); }, []);
+  const [picks, setPicks] = useState({});
+  const [open, setOpen] = useState(null);
+  const set = (k) => (v) => setPicks((p) => ({ ...p, [k]: v }));
+  const nSet = (keys) => keys.filter((k) => picks[k]).length;
 
   const pickFile = (e) => {
     const f = e.target.files?.[0]; e.target.value = "";
@@ -275,7 +332,8 @@ function CreateDrawer({ onClose, onCreate, building }) {
   const submit = () => {
     if (!name.trim() || building) return;
     onCreate({ name: name.trim(), description, face_shape: faceShape, build: bodyType,
-               height_cm: height, home_style: homeStyle, home_surroundings: homeSurroundings, file });
+               height_cm: height, age: age || "", ...picks,
+               home_style: homeStyle, home_surroundings: homeSurroundings, file });
   };
 
   return (
@@ -304,31 +362,59 @@ function CreateDrawer({ onClose, onCreate, building }) {
               className="w-full rounded-lg bg-white/5 ring-1 ring-white/10 px-3 py-2 text-[13px] focus:ring-white/30 outline-none resize-none" placeholder="Who is she?" />
           </div>
 
-          <div>
-            <label className="text-[12px] font-medium text-zinc-300">Face shape</label>
-            <div className="mt-1.5 flex flex-wrap gap-1.5">
-              {FACE_SHAPES.map((f) => (
-                <button key={f} onClick={() => setFaceShape(faceShape === f ? null : f)} className={cn("rounded-full px-3 py-1 text-[11px] ring-1 transition-colors", faceShape === f ? "bg-white text-black ring-white" : "ring-white/10 text-zinc-400 hover:text-white")}>{f}</button>
-              ))}
-            </div>
-          </div>
+          {/* Everything below is OPTIONAL. Left alone, Claude writes all 28
+              identity fields from the description — which is the diverse
+              default and the fast path. Set a picker and two things happen:
+              Claude is briefed with it before writing (so the neighbouring
+              fields agree with it) and the field is then overridden, because
+              the pick wins. */}
+          <Section title="Face" total={8}
+            count={nSet(["cheekbones","jawline","chin","eyes","brows","nose","lips"]) + (faceShape ? 1 : 0)}
+            open={open === "face"} onToggle={() => setOpen(open === "face" ? null : "face")}>
+            <Chips label="Face shape" options={opts?.face_shapes || FACE_SHAPES}
+                   value={faceShape} onChange={setFaceShape} />
+            {/* The skull first — it is what makes a face recognisable, and what a
+                drifted generation loses before it loses eye colour. */}
+            <Chips label="Cheekbones" options={opts?.pickers?.cheekbones} value={picks.cheekbones} onChange={set("cheekbones")} />
+            <Chips label="Jawline"    options={opts?.pickers?.jawline}    value={picks.jawline}    onChange={set("jawline")} />
+            <Chips label="Chin"       options={opts?.pickers?.chin}       value={picks.chin}       onChange={set("chin")} />
+            <Chips label="Eyes"       options={opts?.pickers?.eyes}       value={picks.eyes}       onChange={set("eyes")} />
+            <Chips label="Brows"      options={opts?.pickers?.brows}      value={picks.brows}      onChange={set("brows")} />
+            <Chips label="Nose"       options={opts?.pickers?.nose}       value={picks.nose}       onChange={set("nose")} />
+            <Chips label="Lips"       options={opts?.pickers?.lips}       value={picks.lips}       onChange={set("lips")} />
+          </Section>
 
-          <div>
-            <label className="text-[12px] font-medium text-zinc-300">Body type</label>
-            <div className="mt-1.5 flex flex-wrap gap-1.5">
-              {BODY_TYPES.map((b) => (
-                <button key={b} onClick={() => setBodyType(bodyType === b ? null : b)} className={cn("rounded-full px-3 py-1 text-[11px] ring-1 transition-colors", bodyType === b ? "bg-white text-black ring-white" : "ring-white/10 text-zinc-400 hover:text-white")}>{b}</button>
-              ))}
-            </div>
-          </div>
+          <Section title="Skin & hair" total={5}
+            count={nSet(["skin_tone","skin_undertone","hair_colour","hair_length","hair_texture"])}
+            open={open === "skin"} onToggle={() => setOpen(open === "skin" ? null : "skin")}>
+            <Chips label="Skin tone"      options={opts?.skin_tones}      value={picks.skin_tone}      onChange={set("skin_tone")} />
+            <Chips label="Undertone"      options={opts?.skin_undertones} value={picks.skin_undertone} onChange={set("skin_undertone")} />
+            <Chips label="Hair colour"    options={opts?.pickers?.hair_colour}  value={picks.hair_colour}  onChange={set("hair_colour")} />
+            <Chips label="Hair length"    options={opts?.pickers?.hair_length}  value={picks.hair_length}  onChange={set("hair_length")} />
+            <Chips label="Hair texture"   options={opts?.pickers?.hair_texture} value={picks.hair_texture} onChange={set("hair_texture")} />
+          </Section>
 
-          <div>
-            <div className="flex items-center justify-between">
-              <label className="text-[12px] font-medium text-zinc-300 flex items-center gap-1.5"><Ruler className="h-3.5 w-3.5" /> Height</label>
-              <span className="text-[12px] text-zinc-300 tabular-nums">{height} cm · {ftIn}</span>
+          <Section title="Body & age" total={3} count={(bodyType ? 1 : 0) + 1 + (age ? 1 : 0)}
+            open={open === "body"} onToggle={() => setOpen(open === "body" ? null : "body")}>
+            <Chips label="Body type" options={opts?.builds || BODY_TYPES}
+                   value={bodyType} onChange={setBodyType} />
+            <div>
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] text-zinc-400 flex items-center gap-1.5"><Ruler className="h-3 w-3" /> Height</label>
+                <span className="text-[11px] text-zinc-300 tabular-nums">{height} cm · {ftIn}</span>
+              </div>
+              <input type="range" min={148} max={190} value={height} onChange={(e) => setHeight(+e.target.value)} className="w-full mt-1.5 accent-rose-400" />
             </div>
-            <input type="range" min={148} max={190} value={height} onChange={(e) => setHeight(+e.target.value)} className="w-full mt-2 accent-rose-400" />
-          </div>
+            <div>
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] text-zinc-400">Age</label>
+                <span className="text-[11px] text-zinc-300 tabular-nums">{age ? `${age}` : "Claude decides"}</span>
+              </div>
+              <input type="range" min={18} max={60} value={age || 26}
+                onChange={(e) => setAge(+e.target.value)} className="w-full mt-1.5 accent-rose-400" />
+              {age && <button onClick={() => setAge(null)} className="mt-1 text-[10px] text-zinc-500 hover:text-zinc-300">clear</button>}
+            </div>
+          </Section>
 
           <div>
             <label className="text-[12px] font-medium text-zinc-300">Style reference <span className="text-zinc-500 font-normal">(optional)</span></label>
