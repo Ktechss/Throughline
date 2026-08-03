@@ -1,16 +1,24 @@
 // Throughline API layer — talks to the FastAPI backend under /api (proxied to
 // :8000 in dev). Ported from the legacy frontend's lib.
 
+// Which character this tab is looking at. Sent on every request as X-Character
+// so the SERVER never has to guess from a global that another tab, another
+// window or a script may have moved underneath it — that is how an outfit
+// generated for one character ended up filed under a different one.
+let _character = null
+export const setApiCharacter = (id) => { _character = id || null }
+const _headers = (base = {}) => (_character ? { ...base, "X-Character": _character } : base)
+
 export const api = {
   async get(u) {
-    const r = await fetch(u)
+    const r = await fetch(u, { headers: _headers() })
     if (!r.ok) throw new Error(await r.text())
     return r.json()
   },
   async send(u, method, body) {
     const r = await fetch(u, {
       method,
-      headers: { "Content-Type": "application/json" },
+      headers: _headers({ "Content-Type": "application/json" }),
       body: JSON.stringify(body),
     })
     if (!r.ok) throw new Error((await r.text()).slice(0, 300))
@@ -19,7 +27,7 @@ export const api = {
   async upload(u, file) {
     const fd = new FormData()
     fd.append("file", file)
-    const r = await fetch(u, { method: "POST", body: fd })
+    const r = await fetch(u, { method: "POST", body: fd, headers: _headers() })
     if (!r.ok) throw new Error((await r.text()).slice(0, 300))
     return r.json()
   },

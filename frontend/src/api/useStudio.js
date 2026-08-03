@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, genView, groupPoses, outfitView, nailView, runView, ep, mergeOutfit, STAGE } from "@/api/throughline";
+import { api, setApiCharacter, genView, groupPoses, outfitView, nailView, runView, ep, mergeOutfit, STAGE } from "@/api/throughline";
 
 // The studio orchestration hub — ported from the legacy App.jsx. Loads all of the
 // active character's data and exposes every action the tabs call. Polling is
@@ -88,6 +88,9 @@ export function useStudio(charParam) {
     try {
       const chars = await api.get("/api/characters");
       const id = charParam || chars.active;
+      // Every subsequent call names this character explicitly, so nothing that
+      // moves the server's default can redirect this tab's work.
+      setApiCharacter(id);
       const entry = (chars.characters || []).find((c) => c.id === id);
       if (charParam && charParam !== chars.active) {
         await api.send("/api/characters/active", "PUT", { id: charParam });

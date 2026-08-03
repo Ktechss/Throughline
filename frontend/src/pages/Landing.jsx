@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, charView, STAGE } from "@/api/throughline";
+import { api, setApiCharacter, charView, STAGE } from "@/api/throughline";
 import { ShieldCheck, ShieldAlert, Plus, X, Sparkles, Upload, Ruler, Trash2, Loader2, Pencil, Home, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import FacePicker from "@/components/studio/FacePicker";
@@ -27,7 +27,9 @@ export default function Landing() {
       setActive(r.active);
     } catch (e) { setErr(String(e)); }
   };
-  useEffect(() => { load(); }, []);
+  // The roster is not "inside" a character — clear any pin a studio left so
+  // these listings answer for the real default rather than the last tab.
+  useEffect(() => { setApiCharacter(null); load(); }, []);
 
   // Enter a studio — but only if she HAS a face. A character with no master
   // reference cannot be photographed (shot() refuses), so letting anyone in

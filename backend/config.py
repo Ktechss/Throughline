@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import sys
+from contextvars import ContextVar
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -31,8 +32,30 @@ CHARACTERS.mkdir(parents=True, exist_ok=True)
 # so it survives a restart. set_active() is the ONLY writer.
 _active_id: str | None = None
 
+# A per-request override of the active character.
+#
+# The process global below is the LAST RESORT, not the source of truth. It is one
+# mutable value shared by every caller, so anything that switched it — a second
+# tab, a script, another window — silently redirected work that was already in
+# flight somewhere else. Observed: a wardrobe generated while the browser showed
+# one character was filed under a different one, because a switch had happened
+# between the page loading and the button being pressed.
+#
+# A ContextVar makes the answer per-request: the browser states which character
+# it is looking at on every call (the X-Character header), the middleware sets it
+# here for the life of that request, and concurrent requests for different
+# characters cannot overwrite each other the way a global does.
+#
+# ⚠ Background threads do NOT inherit this. A job that outlives its request must
+# take an explicit character id — see generate(character=...) — which is why that
+# parameter exists and why every long build passes it.
+_active_ctx: ContextVar[str | None] = ContextVar("active_character", default=None)
+
 
 def get_active() -> str:
+    scoped = _active_ctx.get()
+    if scoped:
+        return scoped
     global _active_id
     if _active_id is None:
         try:
@@ -42,7 +65,20 @@ def get_active() -> str:
     return _active_id
 
 
+def scope_active(cid: str | None):
+    """Pin the active character for the current request. Returns the token to
+    reset with, or None if nothing was pinned."""
+    return _active_ctx.set(cid) if cid else None
+
+
+def unscope_active(token) -> None:
+    if token is not None:
+        _active_ctx.reset(token)
+
+
 def set_active(cid: str) -> None:
+    """Change the PERSISTENT default — the character a fresh page or a background
+    job gets. Deliberately separate from the per-request scope above."""
     global _active_id
     _active_id = cid
     _ACTIVE_FILE.write_text(json.dumps({"id": cid}))

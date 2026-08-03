@@ -42,6 +42,27 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def scope_character(request, call_next):
+    """Let the caller state which character it means, per request.
+
+    The active character was one process-global that anything could change, so a
+    second tab, another window or a script could redirect work already in flight
+    elsewhere. It happened: an outfit generated while the browser showed one
+    character was filed under another, because the global had moved in between.
+
+    The browser now sends X-Character on every call and it wins for the life of
+    that request. Absent or unknown, nothing is pinned and the persistent default
+    applies — so curl, the docs page and any older client behave exactly as before.
+    """
+    cid = request.headers.get("x-character")
+    token = config.scope_active(cid if cid and db.chars_get(cid) else None)
+    try:
+        return await call_next(request)
+    finally:
+        config.unscope_active(token)
+
+
 # ------------------------------------------------------------ characters
 # Phase 4: Throughline is a multi-character studio. The landing page lists these; each
 # has its own folder, gallery (identity), bio, wardrobe and generations. All the
@@ -1126,7 +1147,7 @@ def do_generate(req: GenReq):
         row = generate.generate(
             prompt=text, system=promptlib.SYSTEM, refs=refs,
             aspect=req.aspect, seed=req.seed, pose_file=pose_file,
-            session=session,
+            session=session, character=config.get_active(),
             meta={"note": req.note, "pose": req.pose_name,
                   "pose_as_image": req.use_pose_image},
         )
@@ -1352,6 +1373,7 @@ def calibrate_faces(req: CalibFacesReq):
     uploaded seed drives calibration without ever becoming the default identity.
     """
     cfg = _bio_cfg()
+    owner = config.get_active()          # pin now; the jobs outlive the request
     seed_name = cfg.get("calib_seed") or cfg.get("reference")
     face = REFS / Path(seed_name).name if seed_name else None
     if not face or not face.exists():
@@ -1364,10 +1386,11 @@ def calibrate_faces(req: CalibFacesReq):
                   f"{IDENTITY_LOCK_LINE} Photorealistic, real skin texture, sharp "
                   f"focus on the face.")
 
-        def run(job: dict, prompt=prompt, angle=angle) -> dict:
+        def run(job: dict, prompt=prompt, angle=angle, cid=owner) -> dict:
             row = generate.generate(
                 prompt=prompt, system="", refs=[face], aspect="3:4",
                 session=generate.new_session(f"calib face: {angle}"), progress=job,
+                character=cid,
                 meta={"calibrate": "face", "angle": angle})
             # Keep EVERY generated calibration face in the reference library
             # (advanced · face) so nothing is ever lost — the candidate copy in
@@ -1867,10 +1890,12 @@ def body_ref_create(req: BodyRefCreateReq):
             "texture, natural anatomy.")
         aspect, extra = "3:4", None
 
+    owner = config.get_active()          # pin now; the job outlives the request
     def run(job: dict) -> dict:
         return generate.generate(
             prompt=prompt, system="", refs=refs, aspect=aspect,
             session=generate.new_session("body reference"), progress=job,
+            character=owner,
             meta={"body_ref_create": True, "shape": shape_clean,
                   "shape_ref": req.shape_ref, "turnaround": req.turnaround},
             fallback_endpoint=SCENE_EDIT, extra=extra)
@@ -2386,13 +2411,14 @@ def wardrobe_create(req: OutfitCreateReq):
         "to this outfit.\n\nPhotorealistic RAW photograph quality, real skin "
         "texture, ultra-sharp detail.")
 
+    owner = config.get_active()          # pin now; the job outlives the request
     def run(job: dict) -> dict:
         # Generate only — no save. The image lands in data/images like any run;
         # the user saves it into the wardrobe via /api/wardrobe/from-run after
         # they see and approve the preview.
         return generate.generate(prompt=prompt, system="", refs=refs, aspect="16:9",
                                  session=generate.new_session(f"create outfit: {label}"),
-                                 progress=job,
+                                 progress=job, character=owner,
                                  # A turnaround is a garment swatch, not a photo of
                                  # her — /api/wardrobe/from-run uses only its clothing.
                                  # Gating it scores whichever of its four panels
@@ -3350,10 +3376,11 @@ def shot(req: ShotReq):
     # No face to gate, so the 4K-for-face-pixels rationale (config) doesn't apply — 2K is fine.
     aspect = ("4:5" if req.pov and req.aspect in (None, "", "3:4") else req.aspect)
 
+    owner = config.get_active()          # pin now; the job outlives the request
     def run(job: dict) -> dict:
         return generate.generate(
             prompt=text, system="", refs=refs, aspect=aspect,
-            seed=req.seed, session=session, progress=job,
+            seed=req.seed, session=session, progress=job, character=owner,
             # If gpt-image-2 refuses a revealing outfit on content_policy, render
             # it on the scene model instead (weaker identity, recorded) rather
             # than dead-spinning to a failure.
