@@ -424,6 +424,13 @@ REFERENCE_MODES = ("none", "inspiration")
 # Enough to see real variation without turning creation into a spending
 # decision. Four faces from one spec differ in exactly the way that matters
 # here — same brief, different person — which is the choice being made.
+# The most faces one build will ever generate. Four is where the choice stops
+# improving: enough to see genuinely different people from one spec, few enough
+# that a build is still ~one image's wall-clock now they run in parallel.
+#
+# The COUNT is per-build and the caller's, because it is the one place in
+# creation where the user is spending. Someone who knows what they want can take
+# one; someone exploring takes four.
 MASTER_FACE_CANDIDATES = 4
 
 _INSPIRATION_CLAUSE = (
@@ -521,6 +528,7 @@ async def create_character_guided(
     build: str = Form(""),
     height_cm: str = Form(""),
     age: str = Form(""),
+    faces: str = Form(""),          # how many candidates to generate (1..MASTER_FACE_CANDIDATES)
     # The rest of the identity pickers (see PICKERS). All optional; blank means
     # Claude decides, which is what keeps characters from converging on one face.
     cheekbones: str = Form(""),
@@ -574,6 +582,10 @@ async def create_character_guided(
             years = 0
     except (ValueError, TypeError):
         years = 0
+    try:
+        want_faces = min(MASTER_FACE_CANDIDATES, max(1, int(float(faces))))
+    except (ValueError, TypeError):
+        want_faces = MASTER_FACE_CANDIDATES
     if reference_mode not in REFERENCE_MODES:
         raise HTTPException(400, f"reference_mode must be one of {REFERENCE_MODES}")
 
@@ -706,12 +718,12 @@ async def create_character_guided(
                       "from_upload": bool(seed_upload)})
 
         candidates, errors = _parallel(
-            list(range(MASTER_FACE_CANDIDATES)), one_face, job, "faces")
+            list(range(want_faces)), one_face, job, "faces")
         if not candidates:
             raise RuntimeError("no face candidates could be generated: "
                                + "; ".join(errors[:2]))
         if errors:
-            job["note"] = f"{len(errors)} of {MASTER_FACE_CANDIDATES} faces failed"
+            job["note"] = f"{len(errors)} of {want_faces} faces failed"
 
         # 5) HOME — the third of her three defining pieces. Ten corners from one
         #    shared house style, so "her kitchen" means one specific kitchen from
@@ -2793,6 +2805,7 @@ def character_options():
     like a choice.
     """
     return {
+        "max_faces": MASTER_FACE_CANDIDATES,
         "face_shapes": FACE_SHAPES,
         "builds": BUILDS,
         "skin_tones": list(SKIN_TONES),

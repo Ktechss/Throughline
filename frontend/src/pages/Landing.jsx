@@ -85,6 +85,7 @@ export default function Landing() {
       fd.append("height_cm", form.height_cm || "");
       // Every identity picker, blank when unset — the backend reads blank as
       // "Claude decides" rather than as a value.
+      fd.append("faces", String(form.faces ?? 4));
       for (const k of ["age", "cheekbones", "jawline", "chin", "eyes", "brows",
                        "nose", "lips", "skin_tone", "skin_undertone",
                        "hair_colour", "hair_length", "hair_texture"]) {
@@ -308,6 +309,7 @@ function CreateDrawer({ onClose, onCreate, building }) {
   const [bodyType, setBodyType] = useState(null);
   const [height, setHeight] = useState(168);
   const [age, setAge] = useState(null);
+  const [faces, setFaces] = useState(4);
   const [homeStyle, setHomeStyle] = useState("");
   const [homeSurroundings, setHomeSurroundings] = useState("");
   const [file, setFile] = useState(null);
@@ -338,7 +340,7 @@ function CreateDrawer({ onClose, onCreate, building }) {
   const submit = () => {
     if (!name.trim() || building) return;
     onCreate({ name: name.trim(), description, face_shape: faceShape, build: bodyType,
-               height_cm: height, age: age || "", ...picks,
+               height_cm: height, age: age || "", faces, ...picks,
                home_style: homeStyle, home_surroundings: homeSurroundings, file });
   };
 
@@ -377,6 +379,26 @@ function CreateDrawer({ onClose, onCreate, building }) {
             <p className="text-[10px] text-zinc-500 mb-1.5">Optional — left blank, Claude invents a coherent person.</p>
             <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3}
               className="w-full rounded-lg bg-white/5 ring-1 ring-white/10 px-3 py-2 text-[13px] focus:ring-white/30 outline-none resize-none" placeholder="Who is she?" />
+          </div>
+
+          {/* The only control here that spends. Each face is one generation, and
+              four is the ceiling because that is where the choice stops
+              improving — so this is a dial between "I know what I want" and
+              "show me options", not a quality setting. */}
+          <div>
+            <div className="flex items-center justify-between">
+              <label className="text-[12px] font-medium text-zinc-300">Faces to generate</label>
+              <span className="text-[11px] text-zinc-500">{faces} generation{faces > 1 ? "s" : ""}</span>
+            </div>
+            <div className="mt-1.5 flex gap-1.5">
+              {Array.from({ length: opts?.max_faces || 4 }, (_, i) => i + 1).map((n) => (
+                <button key={n} onClick={() => setFaces(n)}
+                  className={cn("flex-1 rounded-lg py-1.5 text-[12px] ring-1 transition-colors",
+                    faces === n ? "bg-white text-black ring-white"
+                                : "ring-white/10 text-zinc-400 hover:text-white")}>{n}</button>
+              ))}
+            </div>
+            <p className="text-[10px] text-zinc-500 mt-1.5">You pick one as her master face; the rest are discarded.</p>
           </div>
 
           <div>
@@ -477,7 +499,7 @@ function CreateDrawer({ onClose, onCreate, building }) {
         <div className="border-t border-white/5 px-6 py-4 flex items-center gap-3">
           <p className="hidden sm:flex flex-1 items-start gap-2 text-[11px] text-zinc-500 leading-relaxed">
             <Sparkles className="h-3.5 w-3.5 text-amber-300 flex-shrink-0 mt-0.5" />
-            bio → 4 face candidates{homeStyle.trim() ? " → home" : ""}. You pick her face, then her body is generated from it.
+            bio → {faces} face{faces > 1 ? "s" : ""}{homeStyle.trim() ? " → home" : ""}. You pick her face, then her body is generated from it.
           </p>
           <button onClick={onClose} disabled={!!building} className="rounded-lg ring-1 ring-white/10 px-5 py-2.5 text-[13px] text-zinc-300 hover:bg-white/5 disabled:opacity-40">Cancel</button>
           <button onClick={submit} disabled={!name.trim() || !!building} className="rounded-lg bg-white text-black px-6 py-2.5 text-[13px] font-medium hover:bg-zinc-200 disabled:opacity-40 flex items-center justify-center gap-2">
