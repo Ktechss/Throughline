@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { api, charView, STAGE } from "@/api/throughline";
 import { ShieldCheck, ShieldAlert, Plus, X, Sparkles, Upload, Ruler, Trash2, Loader2, Pencil, Home } from "lucide-react";
 import { cn } from "@/lib/utils";
+import FacePicker from "@/components/studio/FacePicker";
 
 const FACE_SHAPES = ["oval", "round", "square", "heart", "diamond", "oblong"];
 const BODY_TYPES = ["slim", "athletic", "curvy", "voluptuous", "full-figured"];
@@ -28,9 +29,27 @@ export default function Landing() {
   };
   useEffect(() => { load(); }, []);
 
-  // Enter a studio: set the active character on the backend, then navigate.
-  const enter = async (id) => {
+  // Enter a studio — but only if she HAS a face. A character with no master
+  // reference cannot be photographed (shot() refuses), so letting anyone in
+  // would hand them a studio where nothing works. If candidates are waiting,
+  // the choice is offered here instead; the studio gates on the same condition
+  // for anyone arriving by URL.
+  const enter = async (c) => {
+    const id = typeof c === "string" ? c : c.id;
+    // Still building: there is nothing to enter yet and nothing to choose from.
+    // Say so instead of opening a studio where every action fails.
+    if (c?.status === "building") {
+      setErr(`${c.name} is still being built — ${c.job?.stage || "generating"}.`);
+      return;
+    }
     try { await api.send("/api/characters/active", "PUT", { id }); } catch { /* studio re-sets it too */ }
+    if (typeof c === "object" && c && !c.has_reference) {
+      try {
+        const r = await api.get("/api/calibrate/candidates");
+        const cands = (r.candidates || []).filter((x) => x.kind === "master");
+        if (cands.length) { setPicking({ character: c, candidates: cands }); return; }
+      } catch { /* fall through — better a studio than a dead click */ }
+    }
     navigate(`/studio?char=${id}`);
   };
 
@@ -48,12 +67,12 @@ export default function Landing() {
     catch (er) { setErr(String(er)); }
   };
 
-  // Guided creation, in two acts. Act one writes her bio, generates several
-  // master-face candidates and builds her home; it commits NOTHING. Act two is
-  // `choose` below — the human picks the face, and only then does she get a
-  // reference, a calibration seed and a body. Splitting it is the whole point:
-  // the master face is the image every future picture descends from, so it
-  // should not be whatever the first seed happened to return.
+  // Creation is a DRAFT, not a modal you sit through. Submitting starts a build
+  // that takes minutes and then returns immediately: the character row already
+  // exists, so she appears in the roster as a card that fills itself in while
+  // you carry on working on someone else. The poll below just keeps the cards
+  // honest; nothing depends on this tab staying open, and the backend stores the
+  // job id on the character so a reload finds it again.
   const create = async (form) => {
     setErr(null);
     setBuilding("Starting…");
@@ -70,29 +89,23 @@ export default function Landing() {
       if (form.file) fd.append("reference", form.file);
       const r = await fetch("/api/characters/guided", { method: "POST", body: fd });
       if (!r.ok) throw new Error((await r.text()).slice(0, 300));
-      const { character, job } = await r.json();
-      for (;;) {
-        await new Promise((res) => setTimeout(res, 1200));
-        const st = await api.get(`/api/jobs/${job}`);
-        // `step` outranks `stage`: during the faces and the ten home corners,
-        // `stage` is whatever the current generation is doing, and the useful
-        // thing to show is which face or which room we are on.
-        setBuilding(st.step ? `${st.step}…` : labelFor(st.stage));
-        if (st.done) {
-          if (st.error) { setErr(st.error); break; }
-          const cands = st.run?.candidates || [];
-          if (!cands.length) { setErr("no face candidates were generated"); break; }
-          setShowCreate(false);
-          setPicking({ character, candidates: cands });
-          break;
-        }
-      }
+      await r.json();
+      setShowCreate(false);      // out of the way — she builds in the background
+      await load();
     } catch (e) { setErr(String(e)); }
     finally { setBuilding(null); }
   };
 
-  // Act two: commit the chosen face. The backend validates it holds a detectable
-  // face before making it her reference, then generates the body from it.
+  // Keep the roster live while anything is still building. Cheap (one request),
+  // and it stops as soon as nothing is in flight.
+  const anyBuilding = characters.some((c) => c.status === "building");
+  useEffect(() => {
+    if (!anyBuilding) return;
+    const t = setInterval(load, 4000);
+    return () => clearInterval(t);
+  }, [anyBuilding]);
+
+  // Picking her face: validated server-side, then her body is generated from it.
   const choose = async (character, runId) => {
     setErr(null);
     setBuilding("Locking her face…");
@@ -168,7 +181,7 @@ export default function Landing() {
           {characters.map((c) => (
             <button
               key={c.id}
-              onClick={() => enter(c.id)}
+              onClick={() => enter(c)}
               className="group relative block text-left rounded-2xl overflow-hidden ring-1 ring-white/8 hover:ring-white/20 transition-all"
             >
               <div className="aspect-[4/5] relative overflow-hidden bg-zinc-900">
@@ -181,7 +194,15 @@ export default function Landing() {
                 )}
                 <div className="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-transparent" />
                 <div className="absolute top-3 left-3 flex items-center gap-1.5 rounded-full bg-black/50 backdrop-blur px-2.5 py-1 text-[10px] font-medium ring-1 ring-white/10">
-                  {c.identityStatus === "identity_set" ? (
+                  {/* No face is a harder state than "not calibrated": she cannot be
+                      photographed at all until one is chosen, so it outranks. */}
+                  {c.status === "building" ? (
+                    <><Loader2 className="h-3 w-3 animate-spin text-sky-400" /> {c.job?.stage || "building"}</>
+                  ) : c.status === "stalled" ? (
+                    <><ShieldAlert className="h-3 w-3 text-rose-400" /> build failed</>
+                  ) : !c.has_reference ? (
+                    <><ShieldAlert className="h-3 w-3 text-rose-400" /> choose her face</>
+                  ) : c.identityStatus === "identity_set" ? (
                     <><ShieldCheck className="h-3 w-3 text-emerald-400" /> identity set</>
                   ) : (
                     <><ShieldAlert className="h-3 w-3 text-amber-400" /> needs calibration</>
@@ -218,7 +239,8 @@ export default function Landing() {
       </section>
 
       {showCreate && <CreateDrawer onClose={() => !building && setShowCreate(false)} onCreate={create} building={building} />}
-      {picking && <FacePicker {...picking} onChoose={choose} building={building} />}
+      {picking && <FacePicker {...picking} onChoose={choose} busy={building}
+                        onCancel={() => setPicking(null)} />}
     </div>
   );
 }
@@ -231,59 +253,6 @@ function labelFor(stage) {
   if (/retry/i.test(stage || "")) return "Retrying (moderation)…";
   return STAGE[stage] || "Building her…";
 }
-
-// The one judgement call this project deliberately leaves to a human. Everything
-// else about identity is a number — "is this still her?" is measured, never
-// eyeballed — but WHO SHE IS in the first place is a choice, and it is made once.
-// Deciding it from four faces beats inheriting whatever the first seed returned.
-function FacePicker({ character, candidates, onChoose, building }) {
-  const [sel, setSel] = useState(candidates[0]?.run_id || null);
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
-      <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" />
-      <div className="relative w-full max-w-3xl rounded-2xl bg-[#0d0d0f] ring-1 ring-white/10 overflow-hidden">
-        <div className="px-6 py-5 border-b border-white/5">
-          <h3 className="text-[15px] font-semibold">Choose {character.name}&rsquo;s face</h3>
-          <p className="text-[11px] text-zinc-500 mt-1 leading-relaxed">
-            Every future image of her descends from the one you pick — it becomes her
-            identity reference and her calibration seed. Nothing is locked in until you choose.
-          </p>
-        </div>
-
-        <div className="p-6 grid grid-cols-2 sm:grid-cols-4 gap-3">
-          {candidates.map((c) => (
-            <button
-              key={c.run_id}
-              onClick={() => !building && setSel(c.run_id)}
-              className={cn(
-                "relative rounded-xl overflow-hidden ring-1 transition-all aspect-[3/4]",
-                sel === c.run_id
-                  ? "ring-2 ring-emerald-400 scale-[1.02]"
-                  : "ring-white/10 hover:ring-white/30 opacity-80 hover:opacity-100"
-              )}
-            >
-              <img src={`/api/images/${c.file}/thumb`} alt="" className="h-full w-full object-cover" />
-            </button>
-          ))}
-        </div>
-
-        <div className="px-6 py-4 border-t border-white/5 flex items-center gap-3">
-          <p className="flex-1 text-[11px] text-zinc-500">
-            Her body reference is generated from this face, so the two agree.
-          </p>
-          <button
-            onClick={() => sel && onChoose(character, sel)}
-            disabled={!sel || !!building}
-            className="rounded-lg bg-white text-black px-5 py-2.5 text-[13px] font-medium hover:bg-zinc-200 disabled:opacity-40 flex items-center gap-2"
-          >
-            {building ? <><Loader2 className="h-4 w-4 animate-spin" /> {building}</> : "Lock this face"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 
 function CreateDrawer({ onClose, onCreate, building }) {
   const [name, setName] = useState("");

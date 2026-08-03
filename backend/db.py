@@ -168,9 +168,13 @@ def _seed_characters() -> None:
 
 
 # =================================================================== runs
-def runs_all(newest_first: bool = False) -> list[dict]:
+def runs_all(newest_first: bool = False, character_id: str | None = None) -> list[dict]:
+    """Every run for a character. `character_id` names one explicitly — the
+    roster asks about characters that are not the active one, and a listing that
+    silently answered for whoever happened to be active would be worse than an
+    error."""
     order = "DESC" if newest_first else "ASC"
-    cid = config.get_active()
+    cid = character_id or config.get_active()
     with _conn() as con:
         rows = con.execute(f"SELECT doc FROM runs WHERE character_id=? ORDER BY seq {order}",
                            (cid,)).fetchall()
@@ -254,6 +258,33 @@ def chars_create(cid: str, name: str) -> dict:
         con.execute("INSERT INTO characters (id, name, created, doc) VALUES (?, ?, ?, ?)",
                     (cid, name, now, "{}"))
     return {"id": cid, "name": name, "created": now}
+
+
+def chars_doc(cid: str) -> dict:
+    with _conn() as con:
+        r = con.execute("SELECT doc FROM characters WHERE id=?", (cid,)).fetchone()
+    try:
+        return json.loads(r[0]) if r and r[0] else {}
+    except ValueError:
+        return {}
+
+
+def chars_set_doc(cid: str, **fields) -> dict:
+    """Merge fields into a character's doc.
+
+    The doc is where a character's own bookkeeping lives — currently the id of
+    the build job that created her. That has to be DURABLE: the job registry is
+    in memory, so a page reload (or a backend restart) used to lose all track of
+    a creation in flight, leaving a half-built character with no way to tell
+    whether anything was still working on her.
+    """
+    doc = chars_doc(cid) | {k: v for k, v in fields.items() if v is not None}
+    for k, v in fields.items():
+        if v is None:
+            doc.pop(k, None)
+    with _conn() as con:
+        con.execute("UPDATE characters SET doc=? WHERE id=?", (json.dumps(doc), cid))
+    return doc
 
 
 def chars_update(cid: str, name: str) -> bool:

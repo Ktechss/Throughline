@@ -99,6 +99,10 @@ export function useStudio(charParam) {
         if (mine !== epoch.current) return;
         const items = (cc.candidates || []).map((c) => ({
           jid: c.id, id: c.id, angle: c.angle, url: `/api/images/${c.file}`,
+          // `kind` separates calibration angles from MASTER-FACE candidates, and
+          // `file` is what the thumbnail endpoint keys on — the studio's
+          // no-face gate needs both.
+          kind: c.kind, file: c.file,
           running: false, sel: false,
           yaw: c.verdict?.yaw, facePx: c.verdict?.face_px,
         }));

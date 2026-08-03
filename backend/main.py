@@ -89,9 +89,74 @@ def _char_has_identity(cid: str) -> bool:
     return (config.char_base(cid) / "state" / "gallery.npz").exists()
 
 
+def _char_reference(cid: str) -> str | None:
+    """Her MASTER FACE filename, or None if one has never been chosen.
+
+    Not the same question as `has_identity` (which asks whether she has been
+    calibrated). A character with no reference cannot be photographed at all —
+    `shot()` refuses — so this is the difference between a usable character and
+    an unfinished one, and the UI gates entry on it.
+    """
+    bio = config.char_base(cid) / "state" / "bio.json"
+    try:
+        ref = (json.loads(bio.read_text()) or {}).get("reference")
+    except (OSError, ValueError):
+        return None
+    return ref if ref and (config.char_base(cid) / "refs" / ref).exists() else None
+
+
+def _pending_faces(cid: str) -> int:
+    """Master-face candidates she is waiting on a choice between."""
+    if _char_reference(cid):
+        return 0
+    imgs = config.char_base(cid) / "images"
+    return sum(1 for r in db.runs_all(character_id=cid)
+               if (r.get("meta") or {}).get("guided_seed")
+               and (imgs / r["file"]).exists())
+
+
+def _char_status(cid: str, pending: int, has_ref: bool) -> tuple[str, dict | None]:
+    """Where this character is in her life, and the job still working on her.
+
+    Creation is a DRAFT, not a modal you have to sit through. It takes minutes,
+    and there is no reason to hold the browser hostage for them: the character
+    row exists from the first instant, so she can appear in the roster as a card
+    that fills itself in while you carry on working on someone else.
+
+    Every state below is derived from durable facts — a file on disk, a row in
+    the db — except `building`, which asks the in-memory job registry. That is
+    the honest answer: if the backend restarted mid-build, nothing IS working on
+    her any more, and `stalled` is exactly what the user needs to be told rather
+    than a spinner that never resolves.
+    """
+    if has_ref:
+        return "ready", None
+    # A LIVE job outranks whatever candidates exist so far. Checking `pending`
+    # first said "awaiting_face" the moment the first of four faces landed, so a
+    # build three minutes from finishing looked finished — and picking then would
+    # have chosen from a partial set.
+    jid = db.chars_doc(cid).get("creation_job")
+    job = generate.job_status(jid) if jid else None
+    if job and not job["done"]:
+        return "building", {"id": job["id"], "stage": job.get("step") or job["stage"],
+                            "elapsed": job.get("elapsed"), "have": pending}
+    if pending:
+        return "awaiting_face", None          # candidates waiting on a human
+    return "stalled", ({"error": job["error"]} if job and job.get("error") else None)
+
+
 def _char_view(c: dict) -> dict:
+    # A character is USABLE once she has a face. Until then the studio is a dead
+    # end: every shot 400s on the missing reference.
+    has_ref = _char_reference(c["id"]) is not None
+    pending = _pending_faces(c["id"])
+    status, job = _char_status(c["id"], pending, has_ref)
     return {**c, "has_identity": _char_has_identity(c["id"]),
             "has_avatar": _char_avatar_src(c["id"]) is not None,
+            "has_reference": has_ref,
+            "pending_faces": pending,
+            "status": status,          # ready | awaiting_face | building | stalled
+            "job": job,
             "active": c["id"] == config.get_active()}
 
 
@@ -453,6 +518,10 @@ async def create_character_guided(
                                for c in candidates]}
 
     jid = generate.start_job(f"create {name}", run)
+    # Durable, so the roster can still find this build after a page reload — the
+    # job registry is in memory and the browser holding the only reference to it
+    # was how a creation got orphaned.
+    db.chars_set_doc(cid, creation_job=jid)
     return {"character": _char_view(char), "job": jid}
 
 
@@ -951,16 +1020,32 @@ def calibrate_faces(req: CalibFacesReq):
 
 @app.get("/api/calibrate/candidates")
 def calibrate_candidates():
-    """Generated calibration faces awaiting selection, newest first.
+    """Generated faces awaiting selection, newest first.
+
+    Two kinds land here. Calibration faces (`calibrate: face`) are the angles a
+    calibrated character is scored on. MASTER-FACE candidates (`guided_seed`) are
+    the four a brand-new character is offered at creation — and they are listed
+    ONLY while she still has no reference.
+
+    That condition is the point. Creation hands its candidates to a picker in the
+    browser, and a picker that lives in page state dies with the tab: close it at
+    the wrong moment and the character is left unshootable, holding four perfectly
+    good faces with no way to choose one. Surfacing them here means the choice
+    always has a home, and once it is made they stop cluttering the list.
 
     Skip any whose image file is gone — a deleted image must not resurface as an
     empty ghost card. The ledger row is the record; the file is the picture.
     """
+    unclaimed = not (REFS / _bio_cfg()["reference"]).exists()
     out = []
     for r in generate.all_runs():
-        if r.get("meta", {}).get("calibrate") == "face" and (IMAGES / r["file"]).exists():
-            out.append({"id": r["id"], "file": r["file"],
-                        "angle": r.get("meta", {}).get("angle"),
+        meta = r.get("meta") or {}
+        kind = ("face" if meta.get("calibrate") == "face"
+                else "master" if (meta.get("guided_seed") and unclaimed)
+                else None)
+        if kind and (IMAGES / r["file"]).exists():
+            out.append({"id": r["id"], "file": r["file"], "kind": kind,
+                        "angle": meta.get("angle"),
                         "verdict": r.get("verdict", {})})
     return {"candidates": out[:60]}
 

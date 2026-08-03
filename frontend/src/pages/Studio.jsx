@@ -4,6 +4,7 @@ import { ShieldCheck, ShieldAlert, Lock, ChevronLeft, Camera, IdCard, Sliders, G
 import { cn } from "@/lib/utils";
 import { api } from "@/api/throughline";
 import { useStudio } from "@/api/useStudio";
+import FacePicker from "@/components/studio/FacePicker";
 import ShootTab from "@/components/studio/ShootTab";
 import BioTab from "@/components/studio/BioTab";
 import CalibrateTab from "@/components/studio/CalibrateTab";
@@ -23,6 +24,7 @@ export default function Studio() {
   const tab = params.get("tab") || "shoot";
   const charParam = params.get("char");
   const [detail, setDetail] = useState(null);
+  const [gateBusy, setGateBusy] = useState(null);
 
   const s = useStudio(charParam);
   const setTab = (id) => { const n = new URLSearchParams(params); n.set("tab", id); setParams(n); };
@@ -66,6 +68,38 @@ export default function Studio() {
     setTab("shoot");
   };
   const markDetail = (id, decision) => { s.mark(id, decision); setDetail((d) => (d && d.id === id ? { ...d, mark: decision } : d)); };
+
+  // GATE: a character with no master face has no working studio — every shot
+  // 400s on the missing reference — so choosing one is not optional here. This
+  // catches the two ways round the roster: arriving by URL, and closing the tab
+  // mid-creation. There is deliberately no "Later": nothing on any tab works
+  // until she has a face.
+  const needsFace = !s.loading && s.bio && !s.bio.reference;
+  const masterCands = (s.calibCands || []).filter((c) => c.kind === "master");
+  const lockFace = async (_char, runId) => {
+    setGateBusy("Locking her face…");
+    try {
+      const res = await api.send(`/api/characters/${charParam}/master-face`, "POST", { run_id: runId });
+      setGateBusy("Generating her body…");
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 1200));
+        const st = await api.get(`/api/jobs/${res.job}`);
+        if (st.done) break;      // a body failure is not fatal — she is usable
+      }
+      await s.refresh();
+    } catch (e) { s.setErr(String(e)); }
+    finally { setGateBusy(null); }
+  };
+  if (needsFace && masterCands.length) {
+    return (
+      <FacePicker
+        character={{ id: charParam, name: s.charName || "her" }}
+        candidates={masterCands}
+        onChoose={lockFace}
+        busy={gateBusy}
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen">

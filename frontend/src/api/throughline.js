@@ -118,6 +118,15 @@ export function charView(c) {
     avatar: c.has_avatar ? `/api/characters/${c.id}/avatar` : null,
     initials: (c.name || c.id).slice(0, 2).toUpperCase(),
     identityStatus: c.has_identity ? "identity_set" : "needs_calibration",
+    // Distinct from identityStatus, and stricter: a character with no master
+    // face cannot be photographed at all, so the roster gates entry on this
+    // rather than merely badging it.
+    has_reference: !!c.has_reference,
+    pending_faces: c.pending_faces || 0,
+    // ready | awaiting_face | building | stalled — derived server-side so the
+    // roster never has to infer a draft's state from a job id it may not have.
+    status: c.status || "ready",
+    job: c.job || null,
     bio: c.bio || "",
   }
 }
