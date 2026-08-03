@@ -322,7 +322,7 @@ function CreateDrawer({ onClose, onCreate, building }) {
   // A set, not a single value: in a modal there is room to have Face and
   // Skin & hair open together and compare, which the narrow drawer could not
   // afford. Closing one no longer collapses another.
-  const [open, setOpen] = useState(() => new Set());
+  const [open, setOpen] = useState(() => new Set(["face", "skin", "body"]));
   const toggle = (k) => () => setOpen((s) => {
     const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n;
   });
@@ -349,7 +349,7 @@ function CreateDrawer({ onClose, onCreate, building }) {
     // shell so both steps of creation look like the same flow.
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6">
       <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => !building && onClose()} />
-      <div className="relative w-full max-w-2xl max-h-[90vh] flex flex-col rounded-2xl bg-[#0d0d0f] ring-1 ring-white/10 overflow-hidden">
+      <div className="relative w-full max-w-5xl max-h-[92vh] flex flex-col rounded-2xl bg-[#0d0d0f] ring-1 ring-white/10 overflow-hidden">
         <div className="border-b border-white/5 px-6 py-4 flex items-center justify-between">
           <div>
             <h3 className="text-[15px] font-semibold">New character</h3>
@@ -358,7 +358,14 @@ function CreateDrawer({ onClose, onCreate, building }) {
           <button onClick={onClose} className="text-zinc-400 hover:text-white"><X className="h-5 w-5" /></button>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-6 py-6 space-y-5">
+        {/* Two columns once there is room for them. LEFT is the whole fast
+            path — a name and a sentence is a complete character, and putting it
+            alone in its own column says so. RIGHT is every optional picker,
+            visible rather than hidden behind an accordion, because the screen
+            can now show all sixteen at once and a control you have to go
+            looking for may as well not exist. */}
+        <div className="flex-1 overflow-y-auto grid lg:grid-cols-[340px_1fr] divide-y lg:divide-y-0 lg:divide-x divide-white/5">
+          <div className="px-6 py-6 space-y-5">
           <div>
             <label className="text-[12px] font-medium text-zinc-300">Name <span className="text-rose-400">*</span></label>
             <input value={name} onChange={(e) => setName(e.target.value)} autoFocus
@@ -372,12 +379,50 @@ function CreateDrawer({ onClose, onCreate, building }) {
               className="w-full rounded-lg bg-white/5 ring-1 ring-white/10 px-3 py-2 text-[13px] focus:ring-white/30 outline-none resize-none" placeholder="Who is she?" />
           </div>
 
-          {/* Everything below is OPTIONAL. Left alone, Claude writes all 28
-              identity fields from the description — which is the diverse
-              default and the fast path. Set a picker and two things happen:
-              Claude is briefed with it before writing (so the neighbouring
-              fields agree with it) and the field is then overridden, because
-              the pick wins. */}
+          <div>
+            <label className="text-[12px] font-medium text-zinc-300">Style reference <span className="text-zinc-500 font-normal">(optional)</span></label>
+            {preview ? (
+              <div className="mt-1.5 flex items-center gap-3">
+                <img src={preview} alt="reference" className="h-20 w-16 rounded-md object-cover ring-1 ring-white/15" />
+                <button onClick={() => { setFile(null); setPreview(null); }} className="text-[12px] text-zinc-400 hover:text-rose-300 flex items-center gap-1"><X className="h-3.5 w-3.5" /> remove</button>
+              </div>
+            ) : (
+              <label className="mt-1.5 rounded-lg border border-dashed border-white/15 px-4 py-6 flex flex-col items-center gap-2 text-center hover:border-white/30 cursor-pointer">
+                <Upload className="h-5 w-5 text-zinc-500" />
+                <p className="text-[11px] text-zinc-500">Upload a reference face image</p>
+                <p className="text-[10px] text-zinc-600">Used only for hair, mood and lighting — never her face. She will be a different person.</p>
+                <input type="file" accept="image/*" hidden onChange={pickFile} />
+              </label>
+            )}
+          </div>
+
+          {/* HOME — the third defining piece, alongside her bio and her body.
+              Filling it in builds all ten corners now, so "her kitchen" means one
+              specific kitchen from the first shot. Left blank it is skipped
+              entirely rather than spending ten generations on generic rooms. */}
+          <div className="pt-1 border-t border-white/5">
+            <label className="text-[12px] font-medium text-zinc-300 flex items-center gap-1.5"><Home className="h-3.5 w-3.5" /> Her home</label>
+            <p className="text-[10px] text-zinc-500 mb-1.5 mt-0.5">
+              Filled in, all {HOME_CORNER_COUNT} corners generate now from this one style — her flat becomes a real place. Left blank, it's skipped and you build it later from the Home tab.
+            </p>
+            <textarea value={homeStyle} onChange={(e) => setHomeStyle(e.target.value)} rows={2}
+              className="w-full rounded-lg bg-white/5 ring-1 ring-white/10 px-3 py-2 text-[13px] focus:ring-white/30 outline-none resize-none"
+              placeholder="Style and materials — e.g. a modern Bangalore flat, 12th floor, tile and marble floors, warm materials" />
+            <input value={homeSurroundings} onChange={(e) => setHomeSurroundings(e.target.value)}
+              className="mt-2 w-full rounded-lg bg-white/5 ring-1 ring-white/10 px-3 py-2 text-[13px] focus:ring-white/30 outline-none"
+              placeholder="What's visible outside (balcony/terrace/living room only)" />
+            {homeStyle.trim() && (
+              <p className="text-[10px] text-amber-300/80 mt-1.5">+{HOME_CORNER_COUNT} generations on submit — this takes a few minutes.</p>
+            )}
+          </div>
+
+          </div>
+
+          <div className="px-6 py-6 space-y-5">
+            <div className="flex items-baseline justify-between">
+              <h4 className="text-[12px] font-medium text-zinc-300">Refine her</h4>
+              <span className="text-[10px] text-zinc-500">optional — Claude decides anything left blank</span>
+            </div>
           <Section title="Face" total={8}
             count={nSet(["cheekbones","jawline","chin","eyes","brows","nose","lips"]) + (faceShape ? 1 : 0)}
             open={open.has("face")} onToggle={toggle("face")}>
@@ -426,54 +471,16 @@ function CreateDrawer({ onClose, onCreate, building }) {
             </div>
           </Section>
 
-          <div>
-            <label className="text-[12px] font-medium text-zinc-300">Style reference <span className="text-zinc-500 font-normal">(optional)</span></label>
-            {preview ? (
-              <div className="mt-1.5 flex items-center gap-3">
-                <img src={preview} alt="reference" className="h-20 w-16 rounded-md object-cover ring-1 ring-white/15" />
-                <button onClick={() => { setFile(null); setPreview(null); }} className="text-[12px] text-zinc-400 hover:text-rose-300 flex items-center gap-1"><X className="h-3.5 w-3.5" /> remove</button>
-              </div>
-            ) : (
-              <label className="mt-1.5 rounded-lg border border-dashed border-white/15 px-4 py-6 flex flex-col items-center gap-2 text-center hover:border-white/30 cursor-pointer">
-                <Upload className="h-5 w-5 text-zinc-500" />
-                <p className="text-[11px] text-zinc-500">Upload a reference face image</p>
-                <p className="text-[10px] text-zinc-600">Used only for hair, mood and lighting — never her face. She will be a different person.</p>
-                <input type="file" accept="image/*" hidden onChange={pickFile} />
-              </label>
-            )}
-          </div>
-
-          {/* HOME — the third defining piece, alongside her bio and her body.
-              Filling it in builds all ten corners now, so "her kitchen" means one
-              specific kitchen from the first shot. Left blank it is skipped
-              entirely rather than spending ten generations on generic rooms. */}
-          <div className="pt-1 border-t border-white/5">
-            <label className="text-[12px] font-medium text-zinc-300 flex items-center gap-1.5"><Home className="h-3.5 w-3.5" /> Her home</label>
-            <p className="text-[10px] text-zinc-500 mb-1.5 mt-0.5">
-              Filled in, all {HOME_CORNER_COUNT} corners generate now from this one style — her flat becomes a real place. Left blank, it's skipped and you build it later from the Home tab.
-            </p>
-            <textarea value={homeStyle} onChange={(e) => setHomeStyle(e.target.value)} rows={2}
-              className="w-full rounded-lg bg-white/5 ring-1 ring-white/10 px-3 py-2 text-[13px] focus:ring-white/30 outline-none resize-none"
-              placeholder="Style and materials — e.g. a modern Bangalore flat, 12th floor, tile and marble floors, warm materials" />
-            <input value={homeSurroundings} onChange={(e) => setHomeSurroundings(e.target.value)}
-              className="mt-2 w-full rounded-lg bg-white/5 ring-1 ring-white/10 px-3 py-2 text-[13px] focus:ring-white/30 outline-none"
-              placeholder="What's visible outside (balcony/terrace/living room only)" />
-            {homeStyle.trim() && (
-              <p className="text-[10px] text-amber-300/80 mt-1.5">+{HOME_CORNER_COUNT} generations on submit — this takes a few minutes.</p>
-            )}
-          </div>
-
-          <div className="rounded-lg bg-white/[0.03] ring-1 ring-white/5 p-3 flex gap-2.5">
-            <Sparkles className="h-4 w-4 text-amber-300 flex-shrink-0 mt-0.5" />
-            <p className="text-[11px] text-zinc-400 leading-relaxed">
-              On submit: bio → 4 face candidates{homeStyle.trim() ? " → home" : ""}. You pick her face, then her body is generated from it and she lands on the calibrate tab.
-            </p>
           </div>
         </div>
 
-        <div className="border-t border-white/5 px-6 py-4 flex gap-3">
-          <button onClick={onClose} disabled={!!building} className="flex-1 rounded-lg ring-1 ring-white/10 py-2.5 text-[13px] text-zinc-300 hover:bg-white/5 disabled:opacity-40">Cancel</button>
-          <button onClick={submit} disabled={!name.trim() || !!building} className="flex-1 rounded-lg bg-white text-black py-2.5 text-[13px] font-medium hover:bg-zinc-200 disabled:opacity-40 flex items-center justify-center gap-2">
+        <div className="border-t border-white/5 px-6 py-4 flex items-center gap-3">
+          <p className="hidden sm:flex flex-1 items-start gap-2 text-[11px] text-zinc-500 leading-relaxed">
+            <Sparkles className="h-3.5 w-3.5 text-amber-300 flex-shrink-0 mt-0.5" />
+            bio → 4 face candidates{homeStyle.trim() ? " → home" : ""}. You pick her face, then her body is generated from it.
+          </p>
+          <button onClick={onClose} disabled={!!building} className="rounded-lg ring-1 ring-white/10 px-5 py-2.5 text-[13px] text-zinc-300 hover:bg-white/5 disabled:opacity-40">Cancel</button>
+          <button onClick={submit} disabled={!name.trim() || !!building} className="rounded-lg bg-white text-black px-6 py-2.5 text-[13px] font-medium hover:bg-zinc-200 disabled:opacity-40 flex items-center justify-center gap-2">
             {building ? <><Loader2 className="h-4 w-4 animate-spin" /> {building}</> : "Create character"}
           </button>
         </div>
