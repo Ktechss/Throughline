@@ -86,6 +86,7 @@ export default function Landing() {
       // Every identity picker, blank when unset — the backend reads blank as
       // "Claude decides" rather than as a value.
       fd.append("faces", String(form.faces ?? 4));
+      fd.append("look", form.look || "");
       for (const k of ["age", "cheekbones", "jawline", "chin", "eyes", "brows",
                        "nose", "lips", "skin_tone", "skin_undertone",
                        "hair_colour", "hair_length", "hair_texture"]) {
@@ -310,6 +311,7 @@ function CreateDrawer({ onClose, onCreate, building }) {
   const [height, setHeight] = useState(168);
   const [age, setAge] = useState(null);
   const [faces, setFaces] = useState(4);
+  const [look, setLook] = useState(null);
   const [homeStyle, setHomeStyle] = useState("");
   const [homeSurroundings, setHomeSurroundings] = useState("");
   const [file, setFile] = useState(null);
@@ -340,7 +342,7 @@ function CreateDrawer({ onClose, onCreate, building }) {
   const submit = () => {
     if (!name.trim() || building) return;
     onCreate({ name: name.trim(), description, face_shape: faceShape, build: bodyType,
-               height_cm: height, age: age || "", faces, ...picks,
+               height_cm: height, age: age || "", faces, look: look || "", ...picks,
                home_style: homeStyle, home_surroundings: homeSurroundings, file });
   };
 
@@ -379,6 +381,24 @@ function CreateDrawer({ onClose, onCreate, building }) {
             <p className="text-[10px] text-zinc-500 mb-1.5">Optional — left blank, Claude invents a coherent person.</p>
             <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3}
               className="w-full rounded-lg bg-white/5 ring-1 ring-white/10 px-3 py-2 text-[13px] focus:ring-white/30 outline-none resize-none" placeholder="Who is she?" />
+          </div>
+
+          {/* The register every other field is chosen under, so it sits at the
+              top with the description rather than among the pickers. It writes
+              no part: an "attractiveness" field would put an adjective into
+              every shot prompt, which is what makes an image model fall back on
+              its generic beauty template. */}
+          <div>
+            <label className="text-[12px] font-medium text-zinc-300">Look</label>
+            <p className="text-[10px] text-zinc-500 mb-1.5">How flattering her proportions should be. Steers the whole bio.</p>
+            <div className="flex flex-wrap gap-1.5">
+              {(opts?.looks || []).map((l) => (
+                <button key={l} onClick={() => setLook(look === l ? null : l)}
+                  className={cn("rounded-full px-3 py-1 text-[11px] ring-1 transition-colors",
+                    (look || opts?.default_look) === l ? "bg-white text-black ring-white"
+                                                       : "ring-white/10 text-zinc-400 hover:text-white")}>{l}</button>
+              ))}
+            </div>
           </div>
 
           {/* The only control here that spends. Each face is one generation, and

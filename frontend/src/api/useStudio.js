@@ -67,6 +67,14 @@ export function useStudio(charParam) {
     if (mine !== epoch.current) return;
     setParts(p.parts); setRuns(r.runs); setGallery(g); setRefs(rf.refs);
     setBio(b); setWardrobe((wd.wardrobe || []).map(outfitView));
+    // Restore the most recent body candidate from the ledger. It used to live
+    // only here in page state, so switching tabs or reloading threw away a body
+    // you had just generated — the run was always on disk, nothing was showing
+    // it. Only restore when nothing is in flight, so a refresh mid-generation
+    // cannot yank a newer preview out from under you.
+    setBodyPreview((cur) => cur || (b.body_candidates?.[0]
+      ? { id: b.body_candidates[0].run_id, file: b.body_candidates[0].file }
+      : null));
     setPoseGroups(groupPoses(pl.poses, pl.categories));
     setStats(st); setBodies(bd);
     setNails((nl.nails || []).map(nailView));

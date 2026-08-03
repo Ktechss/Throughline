@@ -336,6 +336,37 @@ PICKERS: dict[str, dict[str, str]] = {
     },
 }
 
+# The REGISTER a face is written in — how flattering the proportions should be.
+#
+# This exists because the bio writer had two instructions steering it away from
+# attractive ("prefer real, lived-in features over a generic 'attractive'
+# template", and a ban on beauty adjectives) and none steering it toward one. It
+# obeyed: characters came back with "a short, rounded chin that recedes very
+# slightly". Kiara predates both rules, which is the whole reason she looks
+# different from everyone made since.
+#
+# It is NOT a part and never becomes one. An "attractiveness" field would put an
+# adjective into every shot prompt, which is precisely what makes an image model
+# fall back on its generic beauty template. This steers WHICH PROPORTIONS get
+# chosen while the bio is written, and then it is gone.
+LOOKS = {
+    "striking": "She should be memorable and photograph well — strong, editorial "
+                "features: definite cheekbones, a clean jawline, a face that holds "
+                "attention. Distinctive rather than merely pretty.",
+    "attractive": "She should be naturally attractive — balanced, flattering "
+                  "proportions: well-spaced eyes, a proportionate nose, a clean "
+                  "jawline, good cheekbone placement. Pretty in an ordinary, "
+                  "believable way, not a beauty-campaign way.",
+    "natural": "She should look like an ordinary real person seen in good light — "
+               "pleasant and unremarkable, neither striking nor plain.",
+    "characterful": "She should be interesting rather than pretty — a face with "
+                    "something specific about it. Let a feature be unusual: a "
+                    "strong nose, wide-set eyes, a heavy brow. Memorable because "
+                    "it is particular, not because it is flattering.",
+}
+DEFAULT_LOOK = "attractive"
+
+
 # Which part each picker writes. Split out rather than folded into PICKERS so the
 # vocabularies stay readable as plain option lists.
 _PICKER_PART = {
@@ -444,7 +475,8 @@ _INSPIRATION_CLAUSE = (
 )
 
 
-def _master_face_prompt(parts: list[promptlib.Part], inspired: bool) -> str:
+def _master_face_prompt(parts: list[promptlib.Part], inspired: bool,
+                        look: str = DEFAULT_LOOK) -> str:
     """The prompt one master-face candidate is generated from.
 
     The face itself comes from `compose(has_reference=False)` — the one place in
@@ -461,6 +493,10 @@ def _master_face_prompt(parts: list[promptlib.Part], inspired: bool) -> str:
         "photographed individual with a memorable, original face, never a CGI "
         "character, illustration or generic AI beauty model.",
         face,
+        # The register, restated here. The bio above already carries it as
+        # proportions; this keeps the image model from averaging back toward its
+        # own default when it renders them.
+        LOOKS.get(look, LOOKS[DEFAULT_LOOK]),
         MASTER_FACE_REALISM,
         MASTER_FACE_NEGATIVE,
     ]
@@ -529,6 +565,7 @@ async def create_character_guided(
     height_cm: str = Form(""),
     age: str = Form(""),
     faces: str = Form(""),          # how many candidates to generate (1..MASTER_FACE_CANDIDATES)
+    look: str = Form(""),           # register: see LOOKS
     # The rest of the identity pickers (see PICKERS). All optional; blank means
     # Claude decides, which is what keeps characters from converging on one face.
     cheekbones: str = Form(""),
@@ -586,6 +623,9 @@ async def create_character_guided(
         want_faces = min(MASTER_FACE_CANDIDATES, max(1, int(float(faces))))
     except (ValueError, TypeError):
         want_faces = MASTER_FACE_CANDIDATES
+    look = look.strip().lower()
+    if look not in LOOKS:
+        look = DEFAULT_LOOK
     if reference_mode not in REFERENCE_MODES:
         raise HTTPException(400, f"reference_mode must be one of {REFERENCE_MODES}")
 
@@ -638,6 +678,13 @@ async def create_character_guided(
         # fields get written to agree with the choice. Tell it the jaw is square
         # and it will not hand back soft rounded cheeks to sit above it.
         desc = description
+        # The register leads: every field below is chosen under it, so it has to
+        # be read before the specifics rather than after.
+        desc += (f"\nThe look to write her in: {LOOKS[look]} "
+                 "This line describes the TARGET, not the wording: express it by "
+                 "choosing proportions, and never quote it back into a field. In "
+                 "particular subject.age carries her age and descent only — never "
+                 "how attractive she is.")
         if years:
             desc += f"\nShe is {years} years old."
         if shape:
@@ -695,7 +742,7 @@ async def create_character_guided(
         # Nothing is committed here. No reference, no calib seed, no body. The
         # candidates are just rows; the pick endpoint does the committing.
         job["stage"] = "generating faces"
-        prompt = _master_face_prompt(parts, inspired=bool(seed_upload))
+        prompt = _master_face_prompt(parts, inspired=bool(seed_upload), look=look)
         refs = [seed_upload] if seed_upload else None
         session = generate.new_session(f"master face: {name}")
         # In parallel: four independent ~100s waits on fal have no reason to
@@ -1107,6 +1154,73 @@ def mark(run_id: str, req: MarkReq):
         raise HTTPException(404, run_id) from None
 
 
+class RefetchReq(BaseModel):
+    run_id: str
+
+
+@app.post("/api/runs/refetch")
+def refetch_run(req: RefetchReq):
+    """Re-download a run's image when the file has gone missing.
+
+    A run row is the record; the file is only the picture. An interrupted
+    download, a half-finished sync or a disk tidy can take the file while the row
+    stays — and until now the only way back was to regenerate, paying again for
+    an image that already exists on fal's CDN.
+
+    Only re-downloads. It never regenerates, because a regeneration is a
+    DIFFERENT image with the same row, and silently swapping one for the other is
+    worse than saying no. Runs made before source_url was recorded have nothing
+    to fetch, and are told so plainly.
+    """
+    row, cid = _run_and_owner(req.run_id)
+    dest = config.char_base(cid) / "images" / row["file"]
+    if dest.exists():
+        return {"ok": True, "file": row["file"], "action": "already-on-disk"}
+    url = row.get("source_url")
+    if not url:
+        raise HTTPException(
+            409, "this run predates source-url recording, so there is nothing to "
+                 "re-download — regenerate it from the Shoot tab if you want it back")
+    import urllib.error, urllib.request
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_suffix(dest.suffix + ".part")
+    try:
+        with urllib.request.urlopen(url, timeout=generate.DOWNLOAD_TIMEOUT) as r, \
+                open(tmp, "wb") as fh:
+            shutil.copyfileobj(r, fh)
+        if tmp.stat().st_size < 10_000:      # same floor generate() uses
+            raise ValueError("re-downloaded file is implausibly small")
+        # fal serves the ORIGINAL png, but the row names the archived file. Land
+        # it in the format the name promises, or the row points at a .webp full
+        # of PNG bytes — readable, since PIL sniffs content, but a lie on disk
+        # and 10x the size the archive was chosen for.
+        if dest.suffix.lower() == f".{ARCHIVE_FORMAT}":
+            from PIL import Image
+            with Image.open(tmp) as im:
+                im.convert("RGB").save(dest, ARCHIVE_FORMAT.upper(),
+                                       quality=ARCHIVE_QUALITY or 90, method=4)
+            tmp.unlink(missing_ok=True)
+        else:
+            tmp.replace(dest)
+    except Exception as exc:  # noqa: BLE001
+        tmp.unlink(missing_ok=True)
+        raise HTTPException(502, f"could not re-download: {str(exc)[:160]}") from None
+    return {"ok": True, "file": row["file"], "action": "refetched",
+            "bytes": dest.stat().st_size}
+
+
+@app.get("/api/runs/missing")
+def runs_missing():
+    """Runs whose image is not on disk, and whether each can be re-fetched."""
+    out = []
+    for r in generate.all_runs():
+        if r.get("file") and not (IMAGES / r["file"]).exists():
+            out.append({"run_id": r["id"], "file": r["file"],
+                        "created": r.get("created"),
+                        "refetchable": bool(r.get("source_url"))})
+    return {"missing": out}
+
+
 @app.get("/api/images/{name}")
 def image(name: str):
     p = IMAGES / Path(name).name
@@ -1350,7 +1464,20 @@ def calibrate_gallery_add(req: CalibAddReq):
         face = gate.add_to_gallery(IMAGES / row["file"], name)
     except gate.NoFaceFound as exc:
         raise HTTPException(400, str(exc)) from None
-    return {"view": name, "yaw": round(face.yaw, 1), "face_px": face.width,
+    # Re-derive the threshold, exactly as /api/gallery/remove already does. Only
+    # ADD was missing it, so a character calibrated by adding faces ended up with
+    # a full gallery and NO threshold.json — silently judged against
+    # DEFAULT_THRESHOLD instead of her own measured stranger floor, which makes
+    # her "kept" mean something different from everyone else's. Best-effort:
+    # under three entries there is nothing to derive yet, and that must not block
+    # the add that gets you to three.
+    threshold = None
+    try:
+        threshold = gate.calibrate_from_gallery()["threshold"]
+    except Exception:  # noqa: BLE001 — too few faces yet, or an unreadable gallery
+        pass
+    return {"view": name, "threshold": threshold,
+            "yaw": round(face.yaw, 1), "face_px": face.width,
             "pose_class": face.pose_class}
 
 
@@ -1589,6 +1716,17 @@ def get_bio():
     g = gate.load_gallery()
     out["gallery"] = {"entries": sorted(g), "meta": gate.load_meta(),
                       "threshold": gate.load_threshold()}
+
+    # BODY CANDIDATES, restored from the ledger rather than remembered by the tab.
+    # A generated body preview used to live only in page state: it was filtered
+    # out of `shots` and surfaced nowhere else, so switching to Review — or
+    # reloading — silently discarded a body you had just paid to generate, with
+    # no way back to it. The runs were never lost; nothing was showing them.
+    out["body_candidates"] = [
+        {"run_id": r["id"], "file": r["file"], "created": r.get("created")}
+        for r in generate.all_runs()
+        if (r.get("meta") or {}).get("body_ref_create") and (IMAGES / r["file"]).exists()
+    ][:8]
     return out
 
 
@@ -2806,6 +2944,8 @@ def character_options():
     """
     return {
         "max_faces": MASTER_FACE_CANDIDATES,
+        "looks": list(LOOKS),
+        "default_look": DEFAULT_LOOK,
         "face_shapes": FACE_SHAPES,
         "builds": BUILDS,
         "skin_tones": list(SKIN_TONES),

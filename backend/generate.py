@@ -287,7 +287,8 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
     # 120s timeout). Enforce a TOTAL wall-clock budget on the read loop so a slow
     # or stalled transfer fails cleanly and the shot can be retried.
     deadline = time.monotonic() + DOWNLOAD_TIMEOUT
-    with urllib.request.urlopen(r["images"][0]["url"], timeout=DOWNLOAD_TIMEOUT) as resp, \
+    source_url = r["images"][0]["url"]
+    with urllib.request.urlopen(source_url, timeout=DOWNLOAD_TIMEOUT) as resp, \
             open(dest, "wb") as fh:
         while True:
             if time.monotonic() > deadline:
@@ -317,6 +318,12 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
         # someone else's run.
         "session": session or new_session("ad-hoc"),
         "file": dest.name,
+        # Where the bytes came from. Kept so a file that goes missing — an
+        # interrupted download, a disk tidy, a half-finished sync — can be
+        # RE-FETCHED for free instead of regenerated for money. fal serves these
+        # from public v3b.fal.media URLs; if one has expired the refetch fails
+        # honestly rather than silently costing a generation.
+        "source_url": source_url,
         "endpoint": used_ep,
         # True = the primary endpoint refused on content_policy and this image
         # came from the fallback (scene) model instead. Identity is weaker there

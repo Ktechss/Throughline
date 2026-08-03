@@ -194,20 +194,27 @@ _BIO_SYSTEM = (
     "structure from character to character — eye shape and spacing, brow "
     "character, nose bridge and tip, lip proportion, face shape and jawline, "
     "cheekbones, hairline, skin texture and undertone — so no two characters "
-    "look alike. Prefer real, natural, lived-in features over a generic "
-    "'attractive' template. Where the description is silent, invent specific, "
-    "believable features that genuinely fit her.\n"
+    "look alike. Never reach for the generic 'attractive' template every image "
+    "model defaults to; give her features that belong to HER. Where the "
+    "description is silent, invent specific, believable features that genuinely "
+    "fit her.\n"
     "3. A LOCATION IS BIOGRAPHY, NOT ANATOMY. 'from Pune', 'Australian', "
     "'Assamese' says where she is from; it does not define a face. Any nation or "
     "city contains every kind of face, so never resolve a place name into a "
     "single stereotyped look. Decide her facial structure field by field on its "
     "own terms and let her origin stay part of her story.\n"
     "4. Beauty comes from SPECIFIC PROPORTIONS, not from adjectives. Never write "
-    "'perfect', 'flawless', 'stunning', 'gorgeous' or 'model-like' — those give "
-    "an image model nothing to render and it falls back on its generic beauty "
-    "template, which is how every character ends up the same woman. Write the "
-    "proportion instead ('a medium-width forehead of average height'), and give "
-    "her the ordinary asymmetry a real face has rather than an even one.\n"
+    "'perfect', 'flawless', 'stunning', 'gorgeous' or 'model-like' INTO A FIELD — "
+    "those give an image model nothing to render and it falls back on its generic "
+    "beauty template, which is how every character ends up the same woman. This "
+    "is a rule about HOW you write, not about how she should look: when the "
+    "requested look asks for an attractive woman, deliver it by CHOOSING "
+    "flattering proportions — balanced eye spacing, a clean jawline, well-placed "
+    "cheekbones, a proportionate nose — and then describing those plainly ('a "
+    "smooth, cleanly defined jawline'). Never by writing that she is beautiful "
+    "and hoping. Give her the ordinary asymmetry a real face has either way; "
+    "asymmetry is what separates a photograph from a render, and it is not the "
+    "opposite of attractive.\n"
     "5. Distinguishing marks (moles, beauty spots, freckles, scars) are OFF BY "
     "DEFAULT. For 'face.marks' write exactly 'clear even skin, no prominent "
     "marks' UNLESS the description EXPLICITLY names a mark — and then include "
@@ -246,6 +253,10 @@ def write_bio(name: str, description: str, fields: list[dict]) -> dict:
 
     field_lines = "\n".join(f'- {f["id"]} ({f["label"]}) — example style: "{f["hint"]}"'
                             for f in fields)
+    # The caller appends a LOOK line to the description (see main.LOOKS). It is
+    # deliberately not a field: an "attractiveness" part would put an adjective
+    # into every shot prompt, which is exactly what rule 4 forbids. It steers
+    # which proportions get chosen and then goes away.
     desc = description.strip() or "(no description given — invent a coherent, natural, distinctive woman)"
     user = (f"Character name: {name}\nDescription: {desc}\n\n"
             f"Write a value for each field (id, label, example style):\n{field_lines}\n\n"
