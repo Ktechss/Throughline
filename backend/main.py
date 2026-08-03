@@ -1610,15 +1610,13 @@ def bio_reference_from_run(payload: dict = Body(...)):
     the same 'look'.
     """
     run_id = payload["run_id"]
-    row = next((r for r in generate.all_runs() if r["id"] == run_id), None)
-    if not row:
-        raise HTTPException(404, run_id)
+    row, cid = _run_and_owner(run_id)
     # Name the identity per-character (e.g. robin-identity.png). A shared name
     # ('kiara-identity.png' for everyone) made the thumbnail URL identical across
     # profiles, so the browser served a CACHED face from another character even
     # though the file on disk was correct. Per-character names keep URLs distinct.
-    cid = config.get_active()
-    dest = _promote(IMAGES / row["file"], REFS / f"{cid}-identity.png")
+    base = config.char_base(cid)
+    dest = _promote(base / "images" / row["file"], base / "refs" / f"{cid}-identity.png")
     try:
         gate.analyze(dest)   # must contain a detectable face
     except (gate.NoFaceFound, ValueError):
@@ -1734,10 +1732,9 @@ def body_ref_create(req: BodyRefCreateReq):
 def body_ref_save(payload: dict = Body(...)):
     """Lock a generated body image in as the BODY reference (@image2 everywhere)."""
     run_id = payload["run_id"]
-    row = next((r for r in generate.all_runs() if r["id"] == run_id), None)
-    if not row:
-        raise HTTPException(404, run_id)
-    dest = _promote(IMAGES / row["file"], REFS / "body-canonical.png")
+    row, cid = _run_and_owner(run_id)
+    base = config.char_base(cid)
+    dest = _promote(base / "images" / row["file"], base / "refs" / "body-canonical.png")
     cfg = _bio_cfg_raw()
     cfg["body_reference"] = dest.name
     BIO_REF_PATH.write_text(json.dumps(cfg, indent=2) + "\n")
@@ -1782,11 +1779,10 @@ def list_bodies():
 def body_save(payload: dict = Body(...)):
     """Save a generated body image as a named body type (image + current build)."""
     run_id, name = payload["run_id"], payload["name"]
-    row = next((r for r in generate.all_runs() if r["id"] == run_id), None)
-    if not row:
-        raise HTTPException(404, run_id)
+    row, cid = _run_and_owner(run_id)
+    base = config.char_base(cid)
     safe = "".join(c for c in name if c.isalnum() or c in "-_ ").strip() or run_id
-    _promote(IMAGES / row["file"], BODIES / f"{safe}.png")
+    _promote(base / "images" / row["file"], base / "bodies" / f"{safe}.png")
     data = _bodies()
     data["bodies"] = [b for b in data["bodies"] if b["id"] != safe]
     data["bodies"].append({"id": safe, "build": _bust_text(),
@@ -1896,6 +1892,26 @@ def level_ref_head(path: Path) -> float:
 _IMAGE_EXT = (".png", ".jpg", ".jpeg", ".webp")
 
 
+def _run_and_owner(run_id: str) -> tuple[dict, str]:
+    """Resolve a run for an action that PROMOTES it — to a reference, a body, an
+    outfit, a pose ref.
+
+    These all used to look the run up in the ACTIVE character's ledger, which
+    quietly made every one of them a race. Generating an outfit and saving it are
+    separate clicks minutes apart; switch character in between and the save
+    returned 404 for an image sitting right there on screen, with the generation
+    stranded. Observed exactly that on a wardrobe save.
+
+    Resolving globally also fixes the subtler half: the promotion now lands in the
+    folder of the character the run BELONGS to, so it can never file one
+    character's outfit under another's name.
+    """
+    hit = db.runs_owner(run_id)
+    if not hit:
+        raise HTTPException(404, run_id)
+    return hit
+
+
 def _promote(src: Path, dest: Path) -> Path:
     """Copy a generated image into a saved slot, KEEPING the source's format.
 
@@ -1943,12 +1959,12 @@ def _find_by_id(directory: Path, ident: str) -> Path | None:
     return hits[0] if len(hits) == 1 else None
 
 
-def _wardrobe_meta() -> dict:
-    return db.wardrobe_meta()
+def _wardrobe_meta(cid: str | None = None) -> dict:
+    return db.wardrobe_meta(cid)
 
 
-def _save_wardrobe_meta(d: dict) -> None:
-    db.wardrobe_save_all(d)
+def _save_wardrobe_meta(d: dict, cid: str | None = None) -> None:
+    db.wardrobe_save_all(d, cid)
 
 
 def _wardrobe() -> list[dict]:
@@ -1964,7 +1980,7 @@ def _wardrobe() -> list[dict]:
     return out
 
 
-def _unique_wardrobe_path(name: str) -> Path:
+def _unique_wardrobe_path(name: str, cid: str | None = None) -> Path:
     """No-clobber outfit filename: never overwrite an existing outfit (that is how
     an image and a different outfit's description desync). Suffixes -2, -3, … ."""
     safe = "".join(c for c in name if c.isalnum() or c in "-_ ").strip() or "outfit"
@@ -1977,14 +1993,15 @@ def _unique_wardrobe_path(name: str) -> Path:
     # the NAME is taken, in any image extension and in any case — the same
     # question a case-insensitive filesystem would ask when this folder is
     # carried to another machine.
-    taken = {p.stem.lower() for p in WARDROBE.iterdir()
-             if p.is_file() and p.suffix.lower() in _IMAGE_EXT} if WARDROBE.exists() else set()
+    wd = config.char_base(cid) / "wardrobe"
+    taken = {p.stem.lower() for p in wd.iterdir()
+             if p.is_file() and p.suffix.lower() in _IMAGE_EXT} if wd.exists() else set()
     if safe.lower() not in taken:
-        return WARDROBE / f"{safe}.png"
+        return wd / f"{safe}.png"
     n = 2
     while f"{safe}-{n}".lower() in taken:
         n += 1
-    return WARDROBE / f"{safe}-{n}.png"
+    return wd / f"{safe}-{n}.png"
 
 
 def _canon_category(category: str) -> str:
@@ -1994,13 +2011,14 @@ def _canon_category(category: str) -> str:
     return (c[0].upper() + c[1:]) if c else "Outfit"
 
 
-def _next_wardrobe_name(category: str) -> str:
+def _next_wardrobe_name(category: str, cid: str | None = None) -> str:
     """Auto-name an outfit as <Category><next number> — the number continues that
     category's existing sequence (Dayout1..9 -> Dayout10)."""
     import re
     cat = _canon_category(category)
+    wd = config.char_base(cid) / "wardrobe"
     mx = 0
-    for p in (WARDROBE.iterdir() if WARDROBE.exists() else []):
+    for p in (wd.iterdir() if wd.exists() else []):
         if p.suffix.lower() not in (".png", ".jpg", ".jpeg", ".webp"):
             continue
         m = re.match(rf"^{re.escape(cat)}(\d+)$", p.stem, re.IGNORECASE)
@@ -2252,17 +2270,16 @@ def wardrobe_from_run(payload: dict = Body(...)):
     category = _canon_category(payload.get("category") or payload.get("name") or "")
     if not (payload.get("category") or payload.get("name")):
         raise HTTPException(400, "category required")
-    row = next((r for r in generate.all_runs() if r["id"] == run_id), None)
-    if not row:
-        raise HTTPException(404, run_id)
+    row, cid = _run_and_owner(run_id)
     # Auto-name <Category><next#>; no-clobber as a final safety net.
-    dest = _promote(IMAGES / row["file"], _unique_wardrobe_path(_next_wardrobe_name(category)))
+    dest = _promote(config.char_base(cid) / "images" / row["file"],
+                    _unique_wardrobe_path(_next_wardrobe_name(category, cid), cid))
     # Persist the description it was made with + its category, keyed to THIS file's
     # stem, so image and description can never belong to different outfits.
-    meta = _wardrobe_meta()
+    meta = _wardrobe_meta(cid)
     meta[dest.stem] = {"description": row.get("meta", {}).get("outfit_create"),
                        "category": category, "created": row.get("created")}
-    _save_wardrobe_meta(meta)
+    _save_wardrobe_meta(meta, cid)
     return {"id": dest.stem, "file": dest.name, "category": category}
 
 
@@ -2350,11 +2367,10 @@ async def pose_ref_upload(file: UploadFile = File(...)):
 @app.post("/api/pose-refs/from-run")
 def pose_ref_from_run(payload: dict = Body(...)):
     run_id, name = payload["run_id"], payload["name"]
-    row = next((r for r in generate.all_runs() if r["id"] == run_id), None)
-    if not row:
-        raise HTTPException(404, run_id)
+    row, cid = _run_and_owner(run_id)
+    base = config.char_base(cid)
     safe = "".join(c for c in name if c.isalnum() or c in "-_") or run_id
-    dest = _promote(IMAGES / row["file"], POSE_REFS / f"{safe}.png")
+    dest = _promote(base / "images" / row["file"], base / "pose-refs" / f"{safe}.png")
     return {"id": dest.stem, "file": dest.name}   # saved as-is, never rotated
 
 

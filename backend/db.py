@@ -192,6 +192,21 @@ def runs_insert(row: dict, character_id: str | None = None) -> dict:
     return row
 
 
+def runs_owner(run_id: str) -> tuple[dict, str] | None:
+    """One run by id, ACROSS characters, with the character that owns it.
+
+    Every other read here is scoped to the active character, which is right for
+    listing but wrong for acting on a specific run. "Save this outfit" arrives
+    minutes after the image was generated, and if the active character moved in
+    between — another tab, another window — the lookup found nothing and the
+    endpoint returned 404 for a run that plainly exists. A run id is globally
+    unique, so resolve it globally and let the caller act on its real owner.
+    """
+    with _conn() as con:
+        r = con.execute("SELECT doc, character_id FROM runs WHERE id=?", (run_id,)).fetchone()
+    return (json.loads(r[0]), r[1]) if r else None
+
+
 def runs_update(run_id: str, row: dict) -> dict:
     with _conn() as con:
         cur = con.execute("UPDATE runs SET doc=? WHERE id=?", (json.dumps(row), run_id))
@@ -219,18 +234,20 @@ def runs_delete(ids: set[str]) -> list[dict]:
 
 
 # ================================================================ wardrobe
-def wardrobe_meta() -> dict:
-    """{stem: {description, created}} for the active character."""
-    cid = config.get_active()
+def wardrobe_meta(character_id: str | None = None) -> dict:
+    """{stem: {description, created}} for a character — the active one unless
+    named. Promoting a run must write to the character that OWNS the run, which
+    is not always the one on screen."""
+    cid = character_id or config.get_active()
     with _conn() as con:
         rows = con.execute("SELECT key, doc FROM wardrobe WHERE character_id=?",
                            (cid,)).fetchall()
     return {k: json.loads(d) for k, d in rows}
 
 
-def wardrobe_save_all(meta: dict) -> None:
-    """Replace the active character's wardrobe meta (writes are serial + user-driven)."""
-    cid = config.get_active()
+def wardrobe_save_all(meta: dict, character_id: str | None = None) -> None:
+    """Replace one character's wardrobe meta (writes are serial + user-driven)."""
+    cid = character_id or config.get_active()
     with _conn() as con:
         con.execute("BEGIN")
         con.execute("DELETE FROM wardrobe WHERE character_id=?", (cid,))
