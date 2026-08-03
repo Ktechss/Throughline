@@ -319,7 +319,13 @@ function CreateDrawer({ onClose, onCreate, building }) {
   const [opts, setOpts] = useState(null);
   useEffect(() => { api.get("/api/characters/options").then(setOpts).catch(() => {}); }, []);
   const [picks, setPicks] = useState({});
-  const [open, setOpen] = useState(null);
+  // A set, not a single value: in a modal there is room to have Face and
+  // Skin & hair open together and compare, which the narrow drawer could not
+  // afford. Closing one no longer collapses another.
+  const [open, setOpen] = useState(() => new Set());
+  const toggle = (k) => () => setOpen((s) => {
+    const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n;
+  });
   const set = (k) => (v) => setPicks((p) => ({ ...p, [k]: v }));
   const nSet = (keys) => keys.filter((k) => picks[k]).length;
 
@@ -337,10 +343,14 @@ function CreateDrawer({ onClose, onCreate, building }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end">
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-full max-w-md bg-[#0d0d0f] border-l border-white/5 overflow-y-auto">
-        <div className="sticky top-0 bg-[#0d0d0f]/95 backdrop-blur border-b border-white/5 px-6 py-4 flex items-center justify-between z-10">
+    // A centred modal rather than a side drawer: the form grew from three
+    // controls to sixteen, and a 28rem column made a two-column layout
+    // impossible while pushing the sections below the fold. Matches FacePicker's
+    // shell so both steps of creation look like the same flow.
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6">
+      <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => !building && onClose()} />
+      <div className="relative w-full max-w-2xl max-h-[90vh] flex flex-col rounded-2xl bg-[#0d0d0f] ring-1 ring-white/10 overflow-hidden">
+        <div className="border-b border-white/5 px-6 py-4 flex items-center justify-between">
           <div>
             <h3 className="text-[15px] font-semibold">New character</h3>
             <p className="text-[11px] text-zinc-500 mt-0.5">Claude writes the bio, then generates faces for you to choose from.</p>
@@ -348,7 +358,7 @@ function CreateDrawer({ onClose, onCreate, building }) {
           <button onClick={onClose} className="text-zinc-400 hover:text-white"><X className="h-5 w-5" /></button>
         </div>
 
-        <div className="px-6 py-6 space-y-6">
+        <div className="flex-1 overflow-y-auto px-6 py-6 space-y-5">
           <div>
             <label className="text-[12px] font-medium text-zinc-300">Name <span className="text-rose-400">*</span></label>
             <input value={name} onChange={(e) => setName(e.target.value)} autoFocus
@@ -370,7 +380,7 @@ function CreateDrawer({ onClose, onCreate, building }) {
               the pick wins. */}
           <Section title="Face" total={8}
             count={nSet(["cheekbones","jawline","chin","eyes","brows","nose","lips"]) + (faceShape ? 1 : 0)}
-            open={open === "face"} onToggle={() => setOpen(open === "face" ? null : "face")}>
+            open={open.has("face")} onToggle={toggle("face")}>
             <Chips label="Face shape" options={opts?.face_shapes || FACE_SHAPES}
                    value={faceShape} onChange={setFaceShape} />
             {/* The skull first — it is what makes a face recognisable, and what a
@@ -386,7 +396,7 @@ function CreateDrawer({ onClose, onCreate, building }) {
 
           <Section title="Skin & hair" total={5}
             count={nSet(["skin_tone","skin_undertone","hair_colour","hair_length","hair_texture"])}
-            open={open === "skin"} onToggle={() => setOpen(open === "skin" ? null : "skin")}>
+            open={open.has("skin")} onToggle={toggle("skin")}>
             <Chips label="Skin tone"      options={opts?.skin_tones}      value={picks.skin_tone}      onChange={set("skin_tone")} />
             <Chips label="Undertone"      options={opts?.skin_undertones} value={picks.skin_undertone} onChange={set("skin_undertone")} />
             <Chips label="Hair colour"    options={opts?.pickers?.hair_colour}  value={picks.hair_colour}  onChange={set("hair_colour")} />
@@ -395,7 +405,7 @@ function CreateDrawer({ onClose, onCreate, building }) {
           </Section>
 
           <Section title="Body & age" total={3} count={(bodyType ? 1 : 0) + 1 + (age ? 1 : 0)}
-            open={open === "body"} onToggle={() => setOpen(open === "body" ? null : "body")}>
+            open={open.has("body")} onToggle={toggle("body")}>
             <Chips label="Body type" options={opts?.builds || BODY_TYPES}
                    value={bodyType} onChange={setBodyType} />
             <div>
@@ -461,7 +471,7 @@ function CreateDrawer({ onClose, onCreate, building }) {
           </div>
         </div>
 
-        <div className="sticky bottom-0 bg-[#0d0d0f] border-t border-white/5 px-6 py-4 flex gap-3">
+        <div className="border-t border-white/5 px-6 py-4 flex gap-3">
           <button onClick={onClose} disabled={!!building} className="flex-1 rounded-lg ring-1 ring-white/10 py-2.5 text-[13px] text-zinc-300 hover:bg-white/5 disabled:opacity-40">Cancel</button>
           <button onClick={submit} disabled={!name.trim() || !!building} className="flex-1 rounded-lg bg-white text-black py-2.5 text-[13px] font-medium hover:bg-zinc-200 disabled:opacity-40 flex items-center justify-center gap-2">
             {building ? <><Loader2 className="h-4 w-4 animate-spin" /> {building}</> : "Create character"}
