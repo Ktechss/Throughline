@@ -1175,6 +1175,38 @@ def mark(run_id: str, req: MarkReq):
         raise HTTPException(404, run_id) from None
 
 
+def _resolve_body_candidate(run_id: str, how: str) -> None:
+    """Mark a body candidate as dealt with, so it stops being offered.
+
+    Body previews are restored from the ledger now (they used to die with the
+    tab), which made the opposite bug: a body you had just SAVED came straight
+    back as an unsaved candidate on the next refresh, asking to be saved or
+    discarded again. The ledger has no idea a choice was made unless we record
+    one — so both exits, save and discard, stamp the run.
+    """
+    try:
+        row, _cid = _run_and_owner(run_id)
+    except HTTPException:
+        return
+    row.setdefault("meta", {})["body_resolved"] = how
+    try:
+        db.runs_update(run_id, row)
+    except KeyError:
+        pass
+
+
+class BodyDismissReq(BaseModel):
+    run_id: str
+
+
+@app.post("/api/bio/body-ref/dismiss")
+def body_ref_dismiss(req: BodyDismissReq):
+    """Discard a body candidate without saving it. The image stays in the ledger
+    like any other run; it just stops being offered as a pending choice."""
+    _resolve_body_candidate(req.run_id, "discarded")
+    return {"ok": True}
+
+
 class RefetchReq(BaseModel):
     run_id: str
 
@@ -1748,7 +1780,9 @@ def get_bio():
     out["body_candidates"] = [
         {"run_id": r["id"], "file": r["file"], "created": r.get("created")}
         for r in generate.all_runs()
-        if (r.get("meta") or {}).get("body_ref_create") and (IMAGES / r["file"]).exists()
+        if (r.get("meta") or {}).get("body_ref_create")
+        and not (r.get("meta") or {}).get("body_resolved")
+        and (IMAGES / r["file"]).exists()
     ][:8]
     return out
 
@@ -1910,6 +1944,7 @@ def body_ref_save(payload: dict = Body(...)):
     row, cid = _run_and_owner(run_id)
     base = config.char_base(cid)
     dest = _promote(base / "images" / row["file"], base / "refs" / "body-canonical.png")
+    _resolve_body_candidate(run_id, "saved")
     cfg = _bio_cfg_raw()
     cfg["body_reference"] = dest.name
     BIO_REF_PATH.write_text(json.dumps(cfg, indent=2) + "\n")
@@ -1958,6 +1993,7 @@ def body_save(payload: dict = Body(...)):
     base = config.char_base(cid)
     safe = "".join(c for c in name if c.isalnum() or c in "-_ ").strip() or run_id
     _promote(base / "images" / row["file"], base / "bodies" / f"{safe}.png")
+    _resolve_body_candidate(run_id, "saved")
     data = _bodies()
     data["bodies"] = [b for b in data["bodies"] if b["id"] != safe]
     data["bodies"].append({"id": safe, "build": _bust_text(),

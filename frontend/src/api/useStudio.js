@@ -406,7 +406,13 @@ export function useStudio(charParam) {
       setBodyPreview(null); await refresh();
     } catch (e) { fail(e); }
   };
-  const discardBody = () => setBodyPreview(null);
+  // Tell the server too, or the next refresh restores it from the ledger and
+  // asks you to save-or-discard the same body again.
+  const discardBody = async () => {
+    const id = bodyPreview?.id;
+    setBodyPreview(null);
+    if (id) { try { await api.send("/api/bio/body-ref/dismiss", "POST", { run_id: id }); } catch { /* local clear is enough */ } }
+  };
   const selectBody = async (id) => { try { await api.send("/api/bodies/select", "POST", { id }); await refresh(); } catch (e) { fail(e); } };
   const deleteBody = async (id) => { try { await fetch(`/api/bodies/${id}`, { method: "DELETE" }); await refresh(); } catch (e) { fail(e); } };
 
