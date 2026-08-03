@@ -460,6 +460,54 @@ def _master_face_prompt(parts: list[promptlib.Part], inspired: bool) -> str:
     return "\n\n".join(blocks)
 
 
+# How many generations a build runs at once. Every call here is a ~100s wait on
+# fal, so running them one after another spent the whole time idle: four faces
+# took eight minutes of which almost none was ours, and the ten home corners took
+# closer to twenty. In parallel a character is ready in about the time ONE image
+# takes.
+#
+# Capped rather than unbounded. Ten simultaneous requests is impolite to the
+# endpoint and buys little over four, and a cap keeps a failure mode
+# (rate-limiting, a stalled connection) from arriving ten at a time.
+BUILD_CONCURRENCY = 4
+
+
+def _parallel(items, work, job: dict | None = None, label: str = "") -> tuple[list, list]:
+    """Run `work(item)` over `items` concurrently. Returns (results, errors).
+
+    Results keep the INPUT order, not the completion order — the face candidates
+    are shown in a picker and a grid that reshuffles itself between page loads
+    would be its own small bug.
+
+    A failure is collected, never raised: one bad face is not a failed character,
+    and one bad room is not a bad home. The caller decides whether what came back
+    is enough.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    results: list = [None] * len(items)
+    errors: list[str] = []
+    done = 0
+
+    def run_one(i_item):
+        i, item = i_item
+        return i, work(item)
+
+    with ThreadPoolExecutor(max_workers=min(BUILD_CONCURRENCY, len(items) or 1)) as pool:
+        for fut in [pool.submit(run_one, p) for p in enumerate(items)]:
+            try:
+                i, out = fut.result()
+                results[i] = out
+            except Exception as exc:  # noqa: BLE001 — collected, not fatal
+                errors.append(str(exc)[:120])
+            done += 1
+            if job is not None:
+                job["step"] = f"{done}/{len(items)} {label}".strip()
+    if job is not None:
+        job["step"] = None
+    return [r for r in results if r is not None], errors
+
+
 def _height_text(cm: int) -> str:
     total_in = round(cm / 2.54)
     return f"{cm}cm ({total_in // 12}'{total_in % 12}\")"
@@ -638,27 +686,27 @@ async def create_character_guided(
         prompt = _master_face_prompt(parts, inspired=bool(seed_upload))
         refs = [seed_upload] if seed_upload else None
         session = generate.new_session(f"master face: {name}")
-        candidates, errors = [], []
-        for i in range(MASTER_FACE_CANDIDATES):
-            job["step"] = f"face {i + 1}/{MASTER_FACE_CANDIDATES}"
-            try:
-                cand = generate.generate(
-                    prompt=prompt, refs=refs, aspect="3:4",
-                    # gpt-image-2 for the one image that compounds forever:
-                    # measured 0.813 against nano-banana's 0.678 on exactly this
-                    # shot (a frontal studio close-up). Shots stay on nano.
-                    endpoint=(EDIT if refs else TEXT2IMG),
-                    fallback_endpoint=SCENE_EDIT,
-                    session=session, progress=job, character=cid,
-                    # No gallery exists yet by definition — this IS the seed
-                    # hunt. Gating would only ever record "gallery is empty".
-                    gated=False,
-                    meta={"guided_seed": True, "candidate": i + 1,
-                          "from_upload": bool(seed_upload)})
-                candidates.append(cand)
-            except Exception as exc:  # noqa: BLE001 — one bad candidate is not a failed character
-                errors.append(str(exc)[:120])
-        job["step"] = None
+        # In parallel: four independent ~100s waits on fal have no reason to
+        # queue behind each other. `progress` is deliberately NOT passed —
+        # generate() would have four threads overwriting one another's stage
+        # string; _parallel owns the counter instead and reports "2/4 faces".
+        def one_face(i: int) -> dict:
+            return generate.generate(
+                prompt=prompt, refs=refs, aspect="3:4",
+                # gpt-image-2 for the one image that compounds forever:
+                # measured 0.813 against nano-banana's 0.678 on exactly this
+                # shot (a frontal studio close-up). Shots stay on nano.
+                endpoint=(EDIT if refs else TEXT2IMG),
+                fallback_endpoint=SCENE_EDIT,
+                session=session, character=cid,
+                # No gallery exists yet by definition — this IS the seed hunt.
+                # Gating would only ever record "gallery is empty".
+                gated=False,
+                meta={"guided_seed": True, "candidate": i + 1,
+                      "from_upload": bool(seed_upload)})
+
+        candidates, errors = _parallel(
+            list(range(MASTER_FACE_CANDIDATES)), one_face, job, "faces")
         if not candidates:
             raise RuntimeError("no face candidates could be generated: "
                                + "; ".join(errors[:2]))
@@ -681,17 +729,14 @@ async def create_character_guided(
                 {"style": style, "surroundings": home_surroundings.strip()},
                 indent=2) + "\n")
         if style:
-            failed = []
-            for i, corner in enumerate(HOME_CORNERS, 1):
-                job["step"] = f"{corner['label']} ({i}/{len(HOME_CORNERS)})"
-                try:
-                    _render_corner(corner["key"], job, cid)
-                    corners_done += 1
-                except Exception as exc:  # noqa: BLE001 — one bad room is not a bad character
-                    failed.append(f"{corner['key']} ({exc})")
-            job["step"] = None
+            # Same argument as the faces, and a bigger win: ten rooms one after
+            # another was the longest part of a build by far.
+            rooms, failed = _parallel(
+                HOME_CORNERS, lambda c: _render_corner(c["key"], None, cid),
+                job, "rooms")
+            corners_done = len(rooms)
             if failed:
-                job["note"] = f"home corners skipped: {', '.join(failed)}"
+                job["note"] = f"{len(failed)} home corners failed: {failed[0]}"
         else:
             job["note"] = ("home skipped — no house style given; "
                            "generate corners from the Home tab")
