@@ -14,24 +14,45 @@ photographic register, which is where `_build_scene` now places it, and where th
 shot path already places the camera holder for exactly the same stated reason:
 it decides the distance everything after it is written against.
 
-Whether that is enough is an open question with a cheap answer. Generate the same
-cast twice, `head_shoulders` against `full_body`, and read back `face_px`. If the
-number does not move, framing-by-prompt does not work and this library is a lie
-that needs a real crop step behind it.
+MEASURED 2026-08-04, and the answer is "partly".
+
+Same cast of three, same seed, same everything but the framing key:
+
+    head_shoulders -> 690 / 595 / 569 px, mean 618
+    full_body      -> 318 / 318 / 286 px, mean 307
+
+So framing is real: it moves the face size by 2x and the loose end is accurate to
+within 3% of what the geometry predicts. What it does NOT do is crop as tight as
+it is asked to. `head_shoulders` predicted 1163 and delivered 618, and the
+picture that came back is a waist-up three-shot — the same crop `waist_up`
+produces. Given three faces to fit across a frame, the model will not go tighter
+than about waist-up no matter how the instruction is worded.
+
+That is a saturation, not a failure, and `_TIGHT_CAP` below encodes it rather
+than pretending otherwise. The honest consequence: on a cast of three or more,
+asking for a close-up buys nothing, and the way to get a big face is a smaller
+cast or a taller aspect, not a tighter word.
 
 THE FACE-SIZE ESTIMATE
 
 `face_frac` is the face box height as a fraction of the IMAGE height. It is
 derived from how many head-heights the crop contains — a head is roughly 1/7.5 of
-a standing body — and calibrated against the one measurement we have:
+a standing body — and calibrated against three real measurements, all at a cast
+of three, 4K, 3:4:
 
-    waist-up, cast of 3, 4K, 3:4  ->  536 / 641 / 539 px, mean 572
-    predicted: 0.17 * 0.70 * 4800 = 571
+    waist_up        mean 572 px   predicted 565    (0.17)
+    full_body       mean 307 px   predicted 299    (0.09)
+    head_shoulders  mean 618 px   predicted 637    (capped, see _TIGHT_CAP)
 
-That is one point. Every other row is geometry hanging off it, which is why
-`estimate_face_px` returns a band and the UI says "estimate". It exists to stop
-someone spending a generation on a wide environmental shot of four people and
-discovering afterwards that every face landed under the gate's 160px floor.
+The middle and loose end are geometry and they hold. The tight end is a measured
+ceiling rather than geometry, and it is measured at ONE cast size — there is no
+data for a tight crop of one or two people, so no cap is applied there. If a solo
+close-up ever comes back at half what this predicts, that is the same saturation
+appearing earlier and the cap should grow a cast term.
+
+`estimate_face_px` is labelled an estimate everywhere it is shown. It exists to
+stop someone spending a generation on a wide environmental shot of four people
+and discovering afterwards that every face landed under the gate's 160px floor.
 """
 
 # --------------------------------------------------------------------------
@@ -158,6 +179,20 @@ def cast_scale(cast: int) -> float:
     return 1.0 / (1.0 + 0.22 * max(0, cast - 1))
 
 
+# The tight-crop ceiling for a CROWDED frame, measured rather than derived.
+#
+# Asked for head-and-shoulders on three people, nano-banana returned a waist-up
+# three-shot: 618px where the geometry says 1163. It will not crop tighter than
+# roughly waist-up once it has three faces to fit across the frame, and no
+# wording changed that. 0.19 is the effective face_frac that reproduces the
+# measurement (0.19 * 0.70 * 4788 = 637 against 618 observed).
+#
+# Applied only at a cast of three or more, because that is the only place it has
+# been observed. Guessing a cap for a solo close-up would be inventing data.
+_TIGHT_CAP = 0.19
+_TIGHT_CAP_MIN_CAST = 3
+
+
 def estimate_face_px(framing: str, cast: int, aspect: str, resolution: str) -> int:
     """Rough face-box height in pixels. An ESTIMATE, and labelled one everywhere.
 
@@ -165,6 +200,8 @@ def estimate_face_px(framing: str, cast: int, aspect: str, resolution: str) -> i
     Measured similarity by band, over 207 shots: <250px 0.472, 250-400 0.548,
     400-600 0.612, 600+ 0.608 — steep below the plateau, flat above it.
     """
-    f = FRAMING.get(framing) or FRAMING[""]
-    return int(f["face_frac"] * cast_scale(max(1, cast))
-               * frame_height_px(aspect, resolution))
+    cast = max(1, cast)
+    frac = (FRAMING.get(framing) or FRAMING[""])["face_frac"]
+    if cast >= _TIGHT_CAP_MIN_CAST:
+        frac = min(frac, _TIGHT_CAP)
+    return int(frac * cast_scale(cast) * frame_height_px(aspect, resolution))
