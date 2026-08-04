@@ -275,7 +275,11 @@ export default function SceneComposer({ characters, onDone }) {
 
       {result && (
         <div className="mt-4 flex gap-4">
-          <img src={`/api/images/${result.file}`} alt="" className="w-48 rounded-lg ring-1 ring-white/10" />
+          {/* The scene is owned by the first character mentioned, and this is an
+              <img> — so the owner travels in the URL or the wrong character's
+              images/ is searched. */}
+          <img src={`/api/images/${result.file}?character=${cast[0]?.id || ""}`} alt=""
+               className="w-48 rounded-lg ring-1 ring-white/10" />
           <div className="text-[11px] space-y-1">
             <div className={cn("font-medium", v?.status === "kept" ? "text-emerald-300" : "text-amber-300")}>{v?.status}</div>
             {(v?.cast || []).map((m) => (

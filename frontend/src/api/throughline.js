@@ -105,8 +105,16 @@ const prettyPoseId = (id) =>
 
 // Wardrobe row -> OutfitPicker item. Immutable filenames, so NO cache-buster
 // on the thumbnail (that was the wasteful re-download the legacy UI had).
-export function outfitView(w) {
-  return { id: w.id, name: w.id, category: w.category || "Uncategorized", file: w.file, url: `/api/wardrobe/${w.file}/thumb` }
+//
+// `cid` names whose wardrobe when it is NOT the active character — the scene
+// composer shows several closets at once. An <img> cannot send the X-Character
+// header, so the character has to travel in the URL; without it every thumbnail
+// falls back to the active character and you see one woman's dress in another's
+// picker. Omitted for the Shoot tab, where the active character IS the subject.
+export function outfitView(w, cid) {
+  const q = cid ? `?character=${encodeURIComponent(cid)}` : ""
+  return { id: w.id, name: w.id, category: w.category || "Uncategorized", file: w.file,
+           description: w.description || "", url: `/api/wardrobe/${w.file}/thumb${q}` }
 }
 
 // Nail-style row -> picker item. Immutable filename, so no cache-buster.

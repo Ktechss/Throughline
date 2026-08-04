@@ -56,8 +56,17 @@ async def scope_character(request, call_next):
     The browser now sends X-Character on every call and it wins for the life of
     that request. Absent or unknown, nothing is pinned and the persistent default
     applies — so curl, the docs page and any older client behave exactly as before.
+
+    ⚠ A HEADER CANNOT REACH AN <img>. That gap shipped, and it showed up as the
+    worst-looking bug of the lot: the scene composer requested Alexa's
+    "Casual1.webp" thumbnail, the browser sent no header because it is an image
+    tag, the server fell back to the active character, and Kiara's dress appeared
+    in Alexa's picker. The data was never wrong — only the picture of it.
+    So a `?character=` query parameter is honoured too, which is the only form an
+    <img> src can carry.
     """
-    cid = request.headers.get("x-character")
+    cid = (request.headers.get("x-character")
+           or request.query_params.get("character"))
     token = config.scope_active(cid if cid and db.chars_get(cid) else None)
     try:
         return await call_next(request)

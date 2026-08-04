@@ -17,7 +17,7 @@ export default function CastWardrobe({ character, selected, onSelect, mode, onMo
     let alive = true;
     fetch("/api/wardrobe", { headers: { "X-Character": character.id } })
       .then((r) => r.json())
-      .then((d) => { if (alive) setOutfits((d.wardrobe || []).map(outfitView)); })
+      .then((d) => { if (alive) setOutfits((d.wardrobe || []).map((o) => outfitView(o, character.id))); })
       .catch(() => {});
     return () => { alive = false; };
   }, [character.id]);
