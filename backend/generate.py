@@ -350,7 +350,13 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
                           "reason": "not a photo of her — only its clothing is used"}
     else:
         try:
-            row["verdict"] = gate.check(dest).dict()
+            # A collaboration is judged as a CAST: every named character scored
+            # against her own gallery, plus how alike the faces are to each
+            # other. One branch, so a solo shot takes exactly the path it always
+            # did.
+            cast = (meta or {}).get("cast")
+            row["verdict"] = (gate.check_cast(dest, cast) if cast
+                              else gate.check(dest)).dict()
         except FileNotFoundError:
             row["verdict"] = {"status": "ungated", "reason": "gallery is empty"}
         except gate.NoFaceFound as exc:
@@ -427,7 +433,13 @@ def _generate_local(rid, dest, *, prompt, system, refs, seed, session,
                           "reason": "not a photo of her — only its clothing is used"}
     else:
         try:
-            row["verdict"] = gate.check(dest).dict()
+            # A collaboration is judged as a CAST: every named character scored
+            # against her own gallery, plus how alike the faces are to each
+            # other. One branch, so a solo shot takes exactly the path it always
+            # did.
+            cast = (meta or {}).get("cast")
+            row["verdict"] = (gate.check_cast(dest, cast) if cast
+                              else gate.check(dest)).dict()
         except FileNotFoundError:
             row["verdict"] = {"status": "ungated", "reason": "gallery is empty"}
         except gate.NoFaceFound as exc:

@@ -183,6 +183,7 @@ export default function Studio() {
                 resolution={s.resolution} setResolution={s.setResolution}
                 faceAcc={s.faceAcc} setFaceAcc={s.setFaceAcc}
                 pov={s.pov} setPov={s.setPov}
+                withChar={s.withChar} setWithChar={s.setWithChar} castable={s.castable}
                 selectedOutfit={s.selectedOutfit} setSelectedOutfit={s.setSelectedOutfit}
                 selectedPose={s.selectedPose} setSelectedPose={s.setSelectedPose}
                 onGenerate={s.onGenerate} hasIdentity={!!s.bio?.reference}

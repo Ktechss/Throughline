@@ -1160,7 +1160,26 @@ def do_generate(req: GenReq):
 
 @app.get("/api/runs")
 def runs():
-    return {"runs": generate.all_runs()}
+    """This character's runs, plus the collaborations she appears IN.
+
+    A collaboration is owned by whoever started it (`character_id`) and records
+    everyone in it (`meta.cast`). Without the second query a shot of Kiara and
+    Sonam would exist only in Kiara's review, and Sonam would have no way to see
+    a photograph she is standing in. `guest_of` marks those so the UI can group
+    them rather than mixing them into her own work — and the owner never sees a
+    run twice, because her own list already has it.
+    """
+    cid = config.get_active()
+    mine = generate.all_runs()
+    seen = {r["id"] for r in mine}
+    guest = []
+    for other in (c["id"] for c in db.chars_all() if c["id"] != cid):
+        for r in db.runs_all(newest_first=True, character_id=other):
+            if r["id"] in seen:
+                continue
+            if cid in ((r.get("meta") or {}).get("cast") or []):
+                guest.append({**r, "guest_of": other})
+    return {"runs": mine + guest}
 
 
 class MarkReq(BaseModel):
@@ -3067,6 +3086,8 @@ class ShotReq(BaseModel):
     use_pose_image: bool = False
     aspect: str = "3:4"
     seed: int | None = None
+    with_character: str | None = None   # a COLLABORATION: her face rides as @image2
+                                        # and the run records both in meta.cast
     wardrobe_id: str | None = None   # attach this saved outfit as @image2
     pose_id: str | None = None       # a pose from the text library
     pose_text: str | None = None     # raw pose text, overrides the library lookup —
@@ -3107,6 +3128,8 @@ class AiPromptReq(BaseModel):
     pose_text: str | None = None     # raw pose text override (reused orphaned pose)
     pose_ref_id: str | None = None
     shot_type: str = "candid"
+    with_character: str | None = None   # writing for a COLLABORATION: Claude must
+                                        # put BOTH subjects in the scene
 
 
 @app.post("/api/shot/ai-prompt")
@@ -3124,7 +3147,7 @@ def ai_prompt(req: AiPromptReq):
         raw = prompter.rewrite(
             req.brief, shot_type=req.shot_type,
             has_wardrobe=bool(req.wardrobe_id), pose_ref_tag=pose_ref_tag,
-            pose_text=pose_text)
+            pose_text=pose_text, cast=2 if req.with_character else 1)
     except prompter.PrompterError as exc:
         raise HTTPException(400, str(exc)) from exc
     clean, sanitised = promptlib.sanitise(raw)
@@ -3144,21 +3167,66 @@ def shot(req: ShotReq):
     reference is a photo of a stranger, and that should not be one forgotten
     checkbox away.
     """
+    # Pin the character for the whole request AND the job it starts. Everything
+    # below — the guest lookup, the refs, the cast, the row — must agree on whose
+    # shot this is, and the active character can move underneath a long job.
+    owner_cid = config.get_active()
+
+    # Whatever loses a reference slot is recorded here and returned to the
+    # caller — never dropped silently.
+    demoted: list[str] = []
+
     # Reference order defines the @image tags: @image1 = face (always).
     face = REFS / _bio_ref()
     if not face.exists():
         raise HTTPException(400, "no BIO reference set — import one on the face tab")
     refs = [face]
 
+    # A COLLABORATION. @image2 is the guest's face, which spends the entire
+    # measured reference budget (2 refs 0.622 against 3 refs 0.579), so an outfit
+    # cannot also have a slot — it rides as text from the description already
+    # stored on its wardrobe row, and says so in `ref_demoted` rather than going
+    # quietly missing.
+    cast: list[str] = []
+    guest_name = ""
+    if req.with_character:
+        guest = req.with_character
+        if guest == owner_cid:
+            raise HTTPException(400, "a collaboration needs two different characters")
+        grow = db.chars_get(guest)
+        if not grow:
+            raise HTTPException(404, guest)
+        gref = _char_reference(guest)
+        if not gref:
+            raise HTTPException(400, f"{grow['name']} has no master face yet — "
+                                     "choose one before shooting with her")
+        refs.append(config.char_base(guest) / "refs" / gref)
+        cast = [owner_cid, guest]
+        guest_name = grow["name"]
+
     has_wardrobe = False
     if req.wardrobe_id:
         w = _find_by_id(WARDROBE, req.wardrobe_id)
         if not w:
             raise HTTPException(400, f"no such wardrobe: {req.wardrobe_id}")
-        refs.append(_outfit_ref(w))   # @image2 = outfit, head cropped off (no competing face)
-        has_wardrobe = True
-    else:
+        if cast:
+            # @image2 is the guest. A third reference is measurably worse than
+            # two (0.579 vs 0.622), and on a shot already asking the model to
+            # hold two identities apart it is the wrong thing to spend on. The
+            # outfit still reaches the prompt as text below.
+            demoted.append("outfit (collaboration — @image2 is the second face)")
+        else:
+            refs.append(_outfit_ref(w))   # @image2 = outfit, head cropped off (no competing face)
+            has_wardrobe = True
+    elif not cast:
         # No outfit chosen: fall back to the body reference for build (@image2).
+        #
+        # NOT on a collaboration. There @image2 is the guest's face, so this would
+        # append a THIRD reference — measured worse than two (0.579 vs 0.622) — to
+        # the one kind of shot already asking the model to hold two identities
+        # apart. Her build still reaches the prompt through build_clause(), which
+        # is text and costs no slot. Caught on the first real collab: it shipped
+        # calib-front + calib-front + body-canonical.
         cfg = _bio_cfg()
         body = REFS / cfg["body_reference"]
         if body.exists():
@@ -3200,7 +3268,6 @@ def shot(req: ShotReq):
     # demoted is recorded in meta and returned to the caller, and `ref_budget=false`
     # turns the whole thing off for a shot that genuinely needs the image.
     budget_left = max(0, REF_BUDGET - len(refs)) if req.ref_budget else 99
-    demoted: list[str] = []
 
     # An AI prompt is used VERBATIM and was written against the tags that existed
     # when Claude wrote it — /api/shot/ai-prompt hands it "@image3" for a pose ref.
@@ -3281,6 +3348,19 @@ def shot(req: ShotReq):
     # POV is a specific faceless first-person framing that a generic AI prompt (which
     # references @image1 and describes her posing) would fight — so POV always uses
     # the template's POV branch and ignores any AI prompt.
+    # A collaboration inverts the pipeline's most load-bearing assumption: that
+    # exactly one person is in frame and she is @image1. Say the second woman is
+    # a second woman, explicitly, or the model averages the two references into
+    # one face — the failure `check_cast` measures as `blended`.
+    collab_clause = ""
+    if cast:
+        collab_clause = (
+            f"TWO DIFFERENT WOMEN are in this photograph: @image1 and @image2. "
+            f"@image1 is one person and @image2 is another — render them as two "
+            f"distinct individuals who do not resemble each other. Keep each "
+            f"face exactly as its own reference shows it. Do NOT blend, merge or "
+            f"average their features, and do not give them the same face.")
+
     if req.prompt and req.prompt.strip() and not req.pov:
         # AI-written (and user-edited) prompt: use it verbatim, only running the
         # moderation sanitiser so a trigger can't slip through. The reference
@@ -3312,6 +3392,8 @@ def shot(req: ShotReq):
         flaw = (promptlib.SNAPSHOT_FLAWS.get(req.flaws) or {}).get("text", "")
         if flaw:
             base = f"{base} {flaw}"
+        if collab_clause:
+            base = f"{collab_clause} {base}"
         text, sanitised = promptlib.sanitise(base)
     else:
         pose_text = req.pose_text or promptlib.POSES_LIBRARY.get(req.pose_id or "", "")
@@ -3320,20 +3402,32 @@ def shot(req: ShotReq):
             pose_ref_tag=pose_ref_tag, build_text=build_text, shot_type=req.shot_type,
             camera_holder=req.camera_holder, flaws=req.flaws,
             carry_text=carry_text, pov=req.pov)
+        if collab_clause:
+            text = f"{collab_clause} {text}"
 
     # Carry the outfit's FULL styling into the shot. The turnaround (@image2) has
     # her head cropped and may not show every accessory, so the saved outfit
     # description supplies the lip colour, nail colours, jewellery, bag and
     # accessories the image alone would drop. These are STYLING, not identity —
     # her face still comes only from @image1.
-    if has_wardrobe:
+    #
+    # Keyed on the outfit being CHOSEN, not on it winning a reference slot. On a
+    # collaboration the guest owns @image2 and the outfit is demoted to text —
+    # which is only a demotion if the text actually goes; otherwise "demoted"
+    # would quietly mean "dropped".
+    if req.wardrobe_id:
         desc = (_wardrobe_meta().get(req.wardrobe_id, {}) or {}).get("description")
+        # Only point at @image2 when @image2 IS the outfit. On a collaboration
+        # that tag holds the guest's FACE, and telling the model to take garments
+        # from it is worse than saying nothing — the description alone carries
+        # the look in that case.
+        from_ref = "from @image2 " if has_wardrobe else ""
         if desc and desc.strip():
             if req.face_accessories:
                 styling, _ = promptlib.sanitise(
                     "She is WEARING this complete look in the shot — show every "
                     "element on her, not only the clothing: reproduce the garments "
-                    "from @image2, and also render her hairstyle and hair colour, "
+                    f"{from_ref}and also render her hairstyle and hair colour, "
                     "lip colour, nail colours, jewellery, bag, belt, watch, and any "
                     "eyewear/sunglasses, hat or hair accessory from the "
                     "description (if a hairstyle/colour is given, style her hair "
@@ -3347,7 +3441,7 @@ def shot(req: ShotReq):
                 # Face clear — apply everything EXCEPT items that cover the face,
                 # so identity stays fully readable (the gate can score it).
                 styling, _ = promptlib.sanitise(
-                    "She is wearing this look — reproduce the garments from @image2 "
+                    f"She is wearing this look — reproduce the garments {from_ref}"
                     "and apply its hairstyle and hair colour, lip colour, nail "
                     "colours, jewellery, bag, belt and watch. But do NOT add any "
                     "sunglasses, glasses, eyewear, "
@@ -3412,17 +3506,19 @@ def shot(req: ShotReq):
     # No face to gate, so the 4K-for-face-pixels rationale (config) doesn't apply — 2K is fine.
     aspect = ("4:5" if req.pov and req.aspect in (None, "", "3:4") else req.aspect)
 
-    owner = config.get_active()          # pin now; the job outlives the request
     def run(job: dict) -> dict:
         return generate.generate(
             prompt=text, system="", refs=refs, aspect=aspect,
-            seed=req.seed, session=session, progress=job, character=owner,
+            seed=req.seed, session=session, progress=job, character=owner_cid,
             # If gpt-image-2 refuses a revealing outfit on content_policy, render
             # it on the scene model instead (weaker identity, recorded) rather
             # than dead-spinning to a failure.
             fallback_endpoint=SCENE_EDIT,
             resolution=req.resolution,
             meta={"brief": req.brief, "bio_references": [p.name for p in refs],
+                  # Present ONLY on a collaboration. generate() branches the gate
+                  # on it, and the guest's review finds her shots by it.
+                  **({"cast": cast, "guest": guest_name} if cast else {}),
                   "wardrobe": req.wardrobe_id, "pose_id": req.pose_id,
                   "pose_text": pose_text_used,
                   "pose_ref": req.pose_ref_id, "nail_id": nail_id,

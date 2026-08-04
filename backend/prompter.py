@@ -101,7 +101,7 @@ class PrompterError(RuntimeError):
 
 
 def rewrite(brief: str, *, shot_type: str = "candid", has_wardrobe: bool = False,
-            pose_ref_tag: str = "", pose_text: str = "") -> str:
+            pose_ref_tag: str = "", pose_text: str = "", cast: int = 1) -> str:
     """Expand a brief into a full fal prompt via Claude. Raises PrompterError."""
     if not brief.strip():
         raise PrompterError("write a scene brief first — the prompter needs "
@@ -119,6 +119,21 @@ def rewrite(brief: str, *, shot_type: str = "candid", has_wardrobe: bool = False
     directives = ["Make @image1 the subject of the opening line, and choose the "
                   "shot type (studio, editorial, candid phone, street, …) to "
                   "match the brief."]
+    if cast > 1:
+        # Rule 1 says she is ONLY ever @image1 and that naming anyone else makes
+        # the model draw a different person. That rule is right for every solo
+        # shot and precisely backwards here: a second person IS a second person,
+        # and the failure to prevent is the model averaging two references into
+        # one face. So the rule is not weakened — it is told there are two
+        # subjects, each still carried entirely by her own reference.
+        directives.append(
+            "This photograph has TWO subjects: @image1 and @image2, two DIFFERENT "
+            "women. Write them BOTH into the scene and say plainly that they are "
+            "two distinct individuals who do not resemble each other. Each face "
+            "comes only from its own reference — never take one woman's face, "
+            "skin or hair from the other's image, and never merge or average "
+            "them. Still describe NEITHER of them: no faces, hair, skin, age or "
+            "build for either. They are '@image1' and '@image2'.")
     if pose_ref_tag:
         # A pose reference image is attached — defer to it, and make clear it is
         # POSE-ONLY so it can't drift her face/identity (that stays with @image1).

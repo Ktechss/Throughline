@@ -29,6 +29,9 @@ export function useStudio(charParam) {
   const [resolution, setResolution] = useState("4K");
   const [faceAcc, setFaceAcc] = useState(true);
   const [pov, setPov] = useState(false);   // faceless first-person POV product/lifestyle shot
+  // A COLLABORATION: the other character whose face rides as @image2.
+  const [withChar, setWithChar] = useState(null);
+  const [castable, setCastable] = useState([]);   // others who have a master face
   const [selectedOutfit, setSelectedOutfit] = useState(null);
   const [selectedPose, setSelectedPose] = useState(null);
   const [selectedNail, setSelectedNail] = useState(null);
@@ -101,6 +104,12 @@ export function useStudio(charParam) {
       setGenerations([]);
       setSelectedNail(null); setSelectedOutfit(null); setSelectedPose(null);
       setCalibCands([]);
+      setWithChar(null);
+      // Anyone else with a master face can be shot with. has_reference is the
+      // same flag the roster gates entry on — a character without one cannot be
+      // photographed at all, alone or otherwise.
+      setCastable((chars.characters || []).filter((c) => c.id !== id && c.has_reference)
+                                          .map((c) => ({ id: c.id, name: c.name })));
       await refresh();
       // Restore existing calibration candidates for this character so they survive
       // a page reload / character switch (they live on the backend; the UI used to
@@ -155,6 +164,7 @@ export function useStudio(charParam) {
         nail_id: selectedNail?.id || null,
         resolution, face_accessories: faceAcc,
         pov, shot_type: pov ? "pov" : "candid",   // faceless first-person product/lifestyle
+        with_character: withChar?.id || null,
       });
       setGenerations((gs) => gs.map((g) => (g.jid === tmp ? { ...g, jid: job } : g)));
       pollGen(job);
@@ -498,6 +508,7 @@ export function useStudio(charParam) {
     setBioRef, deleteRef, toGallery, importRef, uploadRef, savePart, resetParts, bulkDeleteRefs,
     uploadShape, createBody, saveBody, discardBody, selectBody, deleteBody, renameBody, bodyPreview, bodyBusy,
     // calibrate
+    withChar, setWithChar, castable,
     calibCands, generateFaces, toggleCalib, addCalibToGallery, setCalibIdentity, recalibrate, resetGallery, uploadSeed, removeGalleryEntry,
     ep,
   };

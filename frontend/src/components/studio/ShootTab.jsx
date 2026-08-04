@@ -13,6 +13,7 @@ export default function ShootTab({
   gens, outfits, poseGroups,
   brief, setBrief, aiPrompt, setAiPrompt, aiBusy, onAiPrompt,
   resolution, setResolution, faceAcc, setFaceAcc, pov, setPov,
+  withChar, setWithChar, castable = [],
   selectedOutfit, setSelectedOutfit, selectedPose, setSelectedPose,
   onGenerate, hasIdentity, onOpenDetail, onUploadOutfit, onOpenDesigner, onDeleteOutfit,
   creating, outfitPreview, onSaveOutfit, onDiscardOutfit, outfitCategories = [],
@@ -126,6 +127,36 @@ export default function ShootTab({
 
       {/* Right: outfit + pose pickers */}
       <div className="space-y-6 xl:sticky xl:top-6 xl:self-start">
+        {/* WITH — a collaboration. Her face takes @image2, which is the entire
+            measured reference budget (2 refs 0.622 vs 3 refs 0.579), so a chosen
+            outfit stops being an image and rides as text instead. Said out loud
+            here rather than discovered in ref_demoted afterwards. */}
+        {castable.length > 0 && (
+          <section>
+            <div className="flex items-center justify-between">
+              <h3 className="text-[12px] font-medium text-zinc-300">With</h3>
+              {withChar && (
+                <button onClick={() => setWithChar(null)}
+                  className="text-[10px] text-zinc-500 hover:text-zinc-300">shoot alone</button>
+              )}
+            </div>
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              {castable.map((c) => (
+                <button key={c.id} onClick={() => setWithChar(withChar?.id === c.id ? null : c)}
+                  className={cn("rounded-full px-3 py-1 text-[11px] ring-1 transition-colors",
+                    withChar?.id === c.id ? "bg-white text-black ring-white"
+                                          : "ring-white/10 text-zinc-400 hover:text-white")}>{c.name}</button>
+              ))}
+            </div>
+            {withChar && (
+              <p className="mt-1.5 text-[10px] text-amber-300/80 leading-relaxed">
+                Two faces is the whole reference budget — a chosen outfit will be described
+                in words rather than shown, so expect weaker garment detail.
+              </p>
+            )}
+          </section>
+        )}
+
         <OutfitPicker outfits={outfits} selected={selectedOutfit} onSelect={setSelectedOutfit} onClear={() => setSelectedOutfit(null)} onUpload={onUploadOutfit} onOpenDesigner={onOpenDesigner} onDelete={onDeleteOutfit} />
         <PosePicker poses={poseGroups} selected={selectedPose} onSelect={setSelectedPose} onClear={() => setSelectedPose(null)} />
         <NailPicker nails={nails} selected={selectedNail} onSelect={setSelectedNail} onClear={() => setSelectedNail(null)} onSave={onSaveNail} onDelete={onDeleteNail} />
