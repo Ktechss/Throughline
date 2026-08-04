@@ -4,6 +4,7 @@ import { api, setApiCharacter, charView, STAGE } from "@/api/throughline";
 import { ShieldCheck, ShieldAlert, Plus, X, Sparkles, Upload, Ruler, Trash2, Loader2, Pencil, Home, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import FacePicker from "@/components/studio/FacePicker";
+import SceneComposer from "@/components/SceneComposer";
 
 const FACE_SHAPES = ["oval", "round", "square", "heart", "diamond", "oblong"];
 const BODY_TYPES = ["slim", "athletic", "curvy", "voluptuous", "full-figured"];
@@ -171,6 +172,12 @@ export default function Landing() {
           </div>
         </div>
       </header>
+
+      {/* The composer sits ABOVE the roster: a scene is a cast, not something
+          one character does from inside her own studio. */}
+      <div className="px-6 md:px-12 pt-10 max-w-6xl">
+        <SceneComposer characters={characters} onDone={load} />
+      </div>
 
       {/* Character picker */}
       <section className="px-6 md:px-12 py-10 max-w-6xl">

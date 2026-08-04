@@ -2270,16 +2270,26 @@ OUTFIT_CROPS = CharPath("wardrobe", ".outfitcrops")   # per-character crop cache
 
 def _outfit_ref(path: Path) -> Path:
     """Clothing-only version of a wardrobe image: head cropped off. Falls back to
-    the original if no face is found or the face already fills the frame."""
+    the original if no face is found or the face already fills the frame.
+
+    The cache sits BESIDE the outfit it came from, derived from the file's own
+    path rather than from OUTFIT_CROPS. That constant is a CharPath onto whoever
+    is active, which was fine while every outfit belonged to the character on
+    screen and is wrong the moment a scene dresses two women: cropping a guest's
+    outfit would file the crop under the owner. Locating the cache from the
+    source needs no character threaded through it and cannot be pointed at the
+    wrong one — the same failure already fixed three times elsewhere today.
+    """
     from PIL import Image
-    OUTFIT_CROPS.mkdir(exist_ok=True)
+    crops = Path(path).parent / ".outfitcrops"
+    crops.mkdir(exist_ok=True)
     # Archive format, not PNG: these are crops of 4K turnarounds, and as PNG the
     # cache grew to 1.4 GB — larger than the wardrobe it was derived from, for
     # files that are rebuilt on demand and never shown to anyone.
-    cache = OUTFIT_CROPS / f"{path.stem}.{ARCHIVE_FORMAT}"
+    cache = crops / f"{path.stem}.{ARCHIVE_FORMAT}"
     if cache.exists() and cache.stat().st_mtime >= path.stat().st_mtime:
         return cache
-    (OUTFIT_CROPS / f"{path.stem}.png").unlink(missing_ok=True)   # pre-WebP crop
+    (crops / f"{path.stem}.png").unlink(missing_ok=True)   # pre-WebP crop
     try:
         box = gate.face_box(path)
     except ValueError:
@@ -3551,6 +3561,166 @@ def job(jid: str):
     if st is None:
         raise HTTPException(404, jid)
     return st
+
+
+# ============================================================== scene composer
+# A scene is written as prose with @mentions and the CAST falls out of the text:
+# "@kiara and @sonam on a rooftop" is a two-hander. That is the right shape for a
+# photograph of several people — a collaboration is not something one character
+# does to another, it is a cast — and it is why this lives on the landing page
+# rather than inside anybody's studio.
+
+# Ids contain hyphens (sakshi-singh), so the pattern must allow them. Trailing
+# punctuation is not part of a name: "@kiara," ends at the comma. The lookbehind
+# is what stops "email me at hi@kiara.com" casting Kiara in a scene — a mention
+# starts a word, it does not sit inside one.
+_MENTION = re.compile(r"(?<![\w.])@([A-Za-z0-9][A-Za-z0-9_-]*)")
+
+
+def _parse_cast(prompt: str) -> list[str]:
+    """The characters named in a scene, in order of first mention.
+
+    ONE implementation, used both by the endpoint that tells the UI which
+    wardrobe pickers to show and by the endpoint that actually builds the prompt.
+    A second copy in the client would be a copy that can disagree with the one
+    that matters, and the disagreement would show up as an outfit attached to the
+    wrong woman.
+
+    Unknown mentions are IGNORED rather than rejected: an email address or a
+    stray '@' in a brief is not a failed scene, and refusing one would make the
+    composer unusable on ordinary prose.
+    """
+    known = {c["id"].lower(): c["id"] for c in db.chars_all()}
+    out: list[str] = []
+    for raw in _MENTION.findall(prompt or ""):
+        cid = known.get(raw.lower())
+        if cid and cid not in out:
+            out.append(cid)
+    return out
+
+
+class SceneCastReq(BaseModel):
+    prompt: str = ""
+
+
+@app.post("/api/scene/cast")
+def scene_cast(req: SceneCastReq):
+    """Who is in this scene — resolved server-side so the composer and the
+    generator can never disagree about the cast."""
+    cast = _parse_cast(req.prompt)
+    rows = {c["id"]: c for c in db.chars_all()}
+    return {"cast": [{"id": cid, "name": rows[cid]["name"],
+                      "has_reference": _char_reference(cid) is not None}
+                     for cid in cast]}
+
+
+class SceneReq(BaseModel):
+    prompt: str = ""                       # prose with @mentions
+    wardrobe: dict[str, str] = {}          # {character_id: outfit_id}
+    aspect: str = "3:4"
+    resolution: str | None = None
+    seed: int | None = None
+
+
+def _build_scene(prompt: str, wardrobe: dict[str, str]) -> tuple[str, list[Path], list[str]]:
+    """(prompt, references, cast) for a scene.
+
+    References are attached per character in cast order — her face, then her
+    outfit if one was chosen — and the prompt then SAYS what each tag holds:
+
+        @image1  Kiara's face     @image3  Sonam's face
+        @image2  Kiara's outfit   @image4  Sonam's outfit
+
+    Stated, not implied. A positional convention the model has to infer is one
+    off-by-one away from dressing somebody in a face, and with four references
+    that mistake is invisible in the output — you would just get a worse picture
+    and no idea why.
+
+    Every @mention in the user's prose is replaced by that character's FACE tag,
+    because the model cannot resolve a name and can resolve @image1.
+    """
+    cast = _parse_cast(prompt)
+    if not cast:
+        raise HTTPException(400, "name at least one character with @, e.g. @kiara")
+
+    refs: list[Path] = []
+    roles: list[str] = []
+    face_tag: dict[str, str] = {}
+    rows = {c["id"]: c for c in db.chars_all()}
+
+    for cid in cast:
+        ref = _char_reference(cid)
+        if not ref:
+            raise HTTPException(400, f"{rows[cid]['name']} has no master face yet")
+        refs.append(config.char_base(cid) / "refs" / ref)
+        face_tag[cid] = f"@image{len(refs)}"
+        roles.append(f"{face_tag[cid]} is {rows[cid]['name']}'s face.")
+
+        oid = (wardrobe or {}).get(cid)
+        if oid:
+            w = _find_by_id(config.char_base(cid) / "wardrobe", oid)
+            if not w:
+                raise HTTPException(400, f"no such outfit for {rows[cid]['name']}: {oid}")
+            refs.append(_outfit_ref(w))
+            roles.append(f"@image{len(refs)} is the outfit {rows[cid]['name']} is "
+                         f"wearing — reproduce those garments on her, and take "
+                         f"NOTHING about her face from it.")
+            desc = (_wardrobe_meta(cid).get(oid, {}) or {}).get("description")
+            if desc and desc.strip():
+                roles.append(f"{rows[cid]['name']}'s look in full: {desc.strip()}")
+
+    # The user's prose, with every name turned into the tag it means.
+    scene = prompt
+    for cid, tag in face_tag.items():
+        scene = re.sub(rf"(?<![\w.])@{re.escape(cid)}\b", tag, scene, flags=re.I)
+
+    head = " ".join(roles)
+    if len(cast) > 1:
+        names = ", ".join(rows[c]["name"] for c in cast)
+        head += (f" There are {len(cast)} DIFFERENT women in this photograph "
+                 f"({names}). Render them as distinct individuals who do not "
+                 f"resemble each other. Keep each face exactly as its own "
+                 f"reference shows it — do NOT blend, merge or average their "
+                 f"features, and never give two of them the same face.")
+
+    text, _ = promptlib.sanitise(
+        f"{head} {scene.strip()} Photorealistic, real skin texture, natural "
+        f"light, sharp focus on every face.")
+    return text, refs, cast
+
+
+@app.post("/api/scene/preview")
+def scene_preview(req: SceneReq):
+    """The exact prompt and reference roles a scene would use, before spending."""
+    text, refs, cast = _build_scene(req.prompt, req.wardrobe)
+    return {"prompt": text, "cast": cast,
+            "references": [{"tag": f"@image{i+1}", "file": p.name}
+                           for i, p in enumerate(refs)]}
+
+
+@app.post("/api/scene")
+def scene(req: SceneReq):
+    """Generate a scene from prose with @mentions.
+
+    Owned by the FIRST character mentioned, with the whole cast on the row —
+    the shape check_cast and the review already understand, so a scene needs no
+    new review surface and the others still see themselves in it.
+    """
+    text, refs, cast = _build_scene(req.prompt, req.wardrobe)
+    owner = cast[0]
+    session = generate.new_session(req.prompt.strip()[:60] or "scene")
+
+    def run(job: dict) -> dict:
+        return generate.generate(
+            prompt=text, system="", refs=refs, aspect=req.aspect,
+            seed=req.seed, session=session, progress=job, character=owner,
+            fallback_endpoint=SCENE_EDIT, resolution=req.resolution,
+            meta={"brief": req.prompt, "scene": True, "cast": cast,
+                  "wardrobe_by": req.wardrobe,
+                  "bio_references": [p.name for p in refs]})
+
+    return {"job": generate.start_job(f"scene: {'+'.join(cast)}", run),
+            "cast": cast, "references": len(refs)}
 
 
 class ShotPreviewReq(BaseModel):
