@@ -199,6 +199,126 @@ INTERACTIONS: dict[str, dict[str, dict]] = {
             "min_cast": 3},
     },
 
+    # Disagreement, distance, and the moments that are not warm. A year of a
+    # life that contains only laughing and linked arms reads as an advertisement.
+    # These are the ones that make a set look like a record of people who
+    # actually know each other.
+    "Tension": {
+        "turned-away": {
+            "text": "A has turned away mid-conversation and B is still looking at "
+                    "her, the space between them wider than it was.",
+            "min_cast": 2},
+        "arms-folded-listening": {
+            "text": "B stands with her arms folded, listening to A without "
+                    "agreeing, weight settled back on one hip.",
+            "min_cast": 2},
+        "one-consoling": {
+            "text": "A has a hand on B's arm and is leaning in; B is looking down "
+                    "and away, not at the camera.",
+            "min_cast": 2},
+        "talking-past-each-other": {
+            "text": "Both talking at once and neither listening, hands moving, "
+                    "attention on their own point.",
+            "min_cast": 2},
+        "waiting-for-an-answer": {
+            "text": "A has said something and stopped; B has not replied yet, and "
+                    "the pause is visible in both of them.",
+            "min_cast": 2},
+        "goodbye-at-a-door": {
+            "text": "One half through a doorway, the other still inside, both "
+                    "mid-sentence in the last thing said before leaving.",
+            "min_cast": 2},
+    },
+
+    # Hands full, attention elsewhere. Objects are what stop a group shot looking
+    # like a group shot.
+    "Errands & tasks": {
+        "queueing-together": {
+            "text": "Standing in a queue one behind the other, one leaning "
+                    "sideways to see how far ahead it goes.",
+            "min_cast": 2},
+        "reading-the-same-thing": {
+            "text": "Both bent over the same piece of paper or menu held between "
+                    "them, heads close, reading rather than talking.",
+            "min_cast": 2},
+        "paying-at-a-counter": {
+            "text": "One paying at a counter while the other waits beside her "
+                    "holding what they bought.",
+            "min_cast": 2},
+        "choosing-between-two": {
+            "text": "A holds up two things, one in each hand, and B is looking "
+                    "between them deciding.",
+            "min_cast": 2},
+        "helping-with-a-strap": {
+            "text": "A is fixing something on B — a strap, a collar, a stray "
+                    "thread — and B is standing still for it, looking elsewhere.",
+            "min_cast": 2},
+        "loading-a-vehicle": {
+            "text": "Both handing things into a vehicle, one inside and one out, "
+                    "caught mid-pass.",
+            "min_cast": 2},
+    },
+
+    # Three, unposed and doing something. The Candid group covers three people
+    # who have not noticed the camera; these are three people with a task.
+    "Three together": {
+        "three-round-a-table": {
+            "text": "All three around a small table with things spread between "
+                    "them, two talking and one reaching across.",
+            "min_cast": 3},
+        "three-walking-abreast": {
+            "text": "All three walking abreast and in step, the middle one turned "
+                    "slightly toward one side, talking.",
+            "min_cast": 3},
+        "three-one-behind-two": {
+            "text": "Two of them close together in front with the third just "
+                    "behind and between, leaning in over their shoulders.",
+            "min_cast": 3},
+        "three-passing-something": {
+            "text": "Something is being handed along the three of them, caught at "
+                    "the moment it is between two pairs of hands.",
+            "min_cast": 3},
+        "three-two-talking-one-arriving": {
+            "text": "Two of them mid-conversation as the third arrives into the "
+                    "frame from one side, not yet part of it.",
+            "min_cast": 3},
+        "three-huddled-against-weather": {
+            "text": "All three pressed close under one cover against the weather, "
+                    "shoulders overlapping, faces turned in.",
+            "min_cast": 3},
+    },
+
+    # Four and up. A group photograph is a different problem from a two-hander:
+    # the failure is no longer blending, it is faces at the back landing under
+    # the gate's floor. min_cast keeps these away from smaller casts, and the
+    # framing library's face-size estimate is what says whether they are gateable.
+    "Group": {
+        "group-in-a-line": {
+            "text": "All of them in one row facing the camera, shoulders "
+                    "overlapping, arms behind each other's backs.",
+            "min_cast": 4},
+        "group-clustered-tight": {
+            "text": "All of them crowded into the frame at different heights, "
+                    "everyone looking at the lens, nobody quite centred.",
+            "min_cast": 4},
+        "group-round-a-table": {
+            "text": "All of them around one table, some turned to the camera and "
+                    "some still talking to each other.",
+            "min_cast": 4},
+        "group-mid-laugh": {
+            "text": "The whole group caught laughing at the same thing, nobody "
+                    "looking at the camera, several half-blurred.",
+            "min_cast": 4},
+        "group-walking-toward": {
+            "text": "All of them walking toward the camera in a loose line, mid-"
+                    "stride and unevenly spaced.",
+            "min_cast": 4},
+        "group-one-taking-it": {
+            "text": "One of them holds the phone out at arm's length and the rest "
+                    "crowd in behind her to fit in the frame.",
+            "min_cast": 4},
+    },
+
     # Deliberately for the camera — the posed group photograph.
     "Posed": {
         "both-to-camera": {
@@ -225,5 +345,18 @@ INTERACTIONS: dict[str, dict[str, dict]] = {
             "text": "All three clustered close with heads at slightly different "
                     "heights, everyone looking at the lens.",
             "min_cast": 3},
+        "three-stepped-depth": {
+            "text": "All three at different distances from the camera, staggered "
+                    "back one behind the other, all turned to the lens.",
+            "min_cast": 3},
+        "seated-row": {
+            "text": "All of them seated in a row, turned slightly inward toward "
+                    "the centre, hands in their laps.",
+            "min_cast": 3},
+        "one-front-rest-behind": {
+            "text": "One of them close to the camera and centred, the others "
+                    "arranged behind her shoulders, everyone facing the lens.",
+            "min_cast": 3},
     },
 }
+

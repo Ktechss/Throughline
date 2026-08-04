@@ -2871,6 +2871,44 @@ REGULAR_PLACES = [
 # Merged so upload / generate / file / thumb / delete work by key for both kinds.
 _CORNER = {c["key"]: c for c in [*HOME_CORNERS, *REGULAR_PLACES]}
 _REGULAR_KEYS = {c["key"] for c in REGULAR_PLACES}
+
+
+def _validate_moments() -> None:
+    """Every key a moment names must resolve. Checked at import, loudly.
+
+    The scenes_data docstring has claimed "Validated on import" since the file
+    was written and nothing validated anything. That was survivable at 26 moments
+    with one cross-referenced field; it is not at 66 with eight, because a typo in
+    a place, interaction, framing or lighting key does not raise — it silently
+    produces a moment that fills in nothing, which reads as "this preset does not
+    do much" rather than as a bug.
+
+    Deliberately an assert at import rather than a test: these libraries are
+    edited as data by whoever is authoring content, and the failure should arrive
+    when the server starts rather than when someone eventually runs the suite.
+    """
+    inter = {i for g in INTERACTIONS.values() for i in g}
+    light = {i for g in lighting_data.LIGHTING.values() for i in g}
+    allowed = {
+        "place": set(_CORNER) | {""},
+        "interaction": inter | {""},
+        "framing": set(framing_data.FRAMING),
+        "lighting": light | {""},
+        "time_of_day": set(lighting_data.TIME_OF_DAY) | {""},
+        "holder": set(promptlib.CAMERA_HOLDERS),
+        "flaws": set(promptlib.SNAPSHOT_FLAWS),
+        "shot_type": set(promptlib.SHOT_TYPES),
+    }
+    bad = [f"{grp}.{mid}: {field}={m.get(field, '')!r}"
+           for grp, items in MOMENTS.items()
+           for mid, m in items.items()
+           for field, ok in allowed.items()
+           if m.get(field, "") not in ok]
+    if bad:
+        raise ValueError("scenes_data has unresolvable keys: " + "; ".join(bad))
+
+
+_validate_moments()
 # Only these rooms open to the outside — the balcony/window VIEW (buildings, street,
 # skyline) belongs here and NOWHERE else. Every other corner is a fully interior room.
 _VIEW_ROOMS = {"balcony", "terrace", "living_room"}
