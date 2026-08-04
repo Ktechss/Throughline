@@ -21,6 +21,33 @@ Same shape and rules as the pose library:
   such a sentence with "One of them" instead.
 - `min_cast` is the gate. An interaction is offered only when the cast is at least
   that big, so a solo scene never sees a two-person pose.
+
+THE ARRANGEMENT IS AN IDENTITY LEVER, AND A BIG ONE. Measured 2026-08-04, same
+two characters, same brief, same getup, same light, same seed, one field changed:
+
+                        Kiara            Ridhi
+    cheek-to-cheek      0.118            0.228     both REJECTED
+    both-to-camera      0.572            0.588     Ridhi KEPT
+
+Five times the score for Kiara, from a dropdown. Nothing else moved — faces were
+840-1040px in both, well above the plateau, and distinctness ruled out blending
+either time. The cause is yaw: pressing two faces cheek to cheek turns both heads
+30-36 degrees off axis, and corr(|yaw|, sim) = -0.761.
+
+So the categories are not interchangeable, and it is worth knowing which way each
+one pushes before choosing it:
+
+    Posed        heads to the lens          best case for the gate
+    Close        heads together and turned  costly, sometimes very
+    Talking      turned toward each other   costly
+    Candid       nobody facing the camera   costly by definition
+    Walking      varies with the entry
+
+None of that is a reason to prefer Posed. A year of squared-up group photographs
+is not a record of a life, and the gate reporting `rejected` on a genuinely
+candid frame is the gate working. It is a reason to know what a choice costs, and
+to shoot a frontal frame of the same pairing when the point is to prove identity
+rather than to make a picture.
 """
 
 INTERACTIONS: dict[str, dict[str, dict]] = {
