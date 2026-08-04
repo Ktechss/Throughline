@@ -2908,7 +2908,56 @@ def _validate_moments() -> None:
         raise ValueError("scenes_data has unresolvable keys: " + "; ".join(bad))
 
 
+def _validate_interactions() -> None:
+    """The placeholder rules, enforced rather than documented.
+
+    Three checks on the DATA, each for a failure that has actually happened:
+
+    1. A duplicate id. Two groups can each define one and the later silently wins
+       in the flattened lookup.
+    2. C in an entry a cast of two can be offered. The third tag would never be
+       substituted and the letter C would reach the model as itself.
+    3. A standalone capital A used as the ENGLISH ARTICLE. The substitution cannot
+       tell it from the placeholder, so "A half-hug that neither..." goes out as
+       "@image1 half-hug". Caught by the invariant that placeholders come in
+       pairs: A names the FIRST of at least two people, so a text naming A without
+       naming B is either an article or a typo. That found three real instances in
+       this library, one of them written into the same commit as the rule.
+
+    Plus one check on the MECHANISM. The substitution was once a bare str.replace
+    and ate the A of "All", the B of "Both" and the C of "Caught" — 11 of the then
+    35 entries, reaching the model as "@image1ll three standing in a row". A data
+    check cannot catch that regression, because the word-boundary substitution
+    this validator would use to look for it is the very thing that would have been
+    reverted. So the mechanism is exercised directly on a string built to break
+    the old version.
+    """
+    canary = "All of them. Both of us. Caught mid-hug. A holds B and C waits."
+    probe = canary
+    for i, sentinel in enumerate(("\x00", "\x01", "\x02")):
+        probe = re.sub(rf"\b{'ABC'[i]}\b", sentinel, probe)
+    if "All" not in probe or "Both" not in probe or "Caught" not in probe:
+        raise ValueError("the A/B/C substitution is eating whole words again — "
+                         "it must match on a word boundary")
+
+    seen: set[str] = set()
+    bad: list[str] = []
+    for items in INTERACTIONS.values():
+        for iid, d in items.items():
+            txt, mc = d["text"], d["min_cast"]
+            if iid in seen:
+                bad.append(f"{iid}: duplicate id")
+            seen.add(iid)
+            if re.search(r"\bC\b", txt) and mc < 3:
+                bad.append(f"{iid}: names C at min_cast {mc}")
+            if re.search(r"\bA\b", txt) and not re.search(r"\bB\b", txt):
+                bad.append(f"{iid}: names A without B — article, or a typo")
+    if bad:
+        raise ValueError("interactions_data is malformed: " + "; ".join(bad))
+
+
 _validate_moments()
+_validate_interactions()
 # Only these rooms open to the outside — the balcony/window VIEW (buildings, street,
 # skyline) belongs here and NOWHERE else. Every other corner is a fully interior room.
 _VIEW_ROOMS = {"balcony", "terrace", "living_room"}
