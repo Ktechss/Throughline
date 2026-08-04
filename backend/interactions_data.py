@@ -11,9 +11,14 @@ Same shape and rules as the pose library:
 - The text describes ARRANGEMENT and ACTION, never anyone's face or body. Identity
   comes from the references; describing a person here would cost 0.86 -> 0.53, the
   measurement the whole pipeline is built around.
-- Written so it can be dropped into a prompt verbatim. "A" and "B" name the cast
-  in mention order and are substituted for the real image tags at build time —
-  the model cannot resolve a name but can resolve @image1.
+- Written so it can be dropped into a prompt verbatim. "A", "B" and "C" name the
+  cast in mention order and are substituted for the real image tags at build time
+  — the model cannot resolve a name but can resolve @image1.
+
+  They are matched on a WORD BOUNDARY, so "All", "Both" and "Caught" are safe to
+  write. The one thing that is not: a standalone capital A used as the English
+  article, which would be substituted as if it named the first character. Start
+  such a sentence with "One of them" instead.
 - `min_cast` is the gate. An interaction is offered only when the cast is at least
   that big, so a solo scene never sees a two-person pose.
 """
@@ -156,6 +161,42 @@ INTERACTIONS: dict[str, dict[str, dict]] = {
             "text": "Standing near each other waiting, one on her phone, the "
                     "other looking off down the road.",
             "min_cast": 2},
+
+        # Three, unposed. Until these existed a cast of three could only be
+        # offered `three-in-a-row` and `three-clustered` — both Posed, both
+        # looking down the lens — so there was no way to ask for three people
+        # who simply had not noticed the camera. The moment library is full of
+        # scenes that want exactly that.
+        #
+        # A, B and C are assigned in mention order, so whoever is named first in
+        # the brief is the one talking, laughing hardest or turned away. Where
+        # the roles are interchangeable the text says "one of them" instead and
+        # lets the model choose — naming a role that does not matter only
+        # invents a constraint the brief has to fight.
+        "three-mid-conversation": {
+            "text": "A is mid-sentence with one hand raised in a small gesture; "
+                    "B and C are both turned toward her, listening. None of them "
+                    "is looking at the camera.",
+            "min_cast": 3},
+        "three-one-laughing-hardest": {
+            "text": "All three are laughing at once — A hardest, her head tipped "
+                    "back — while B and C watch her rather than the lens.",
+            "min_cast": 3},
+        "three-eating-and-talking": {
+            "text": "The three of them eat and talk over one another, hands and "
+                    "food in the way, attention entirely on each other and not "
+                    "on the camera.",
+            "min_cast": 3},
+        "three-two-together-one-away": {
+            "text": "A and B are absorbed in something between them while C has "
+                    "turned to look at something out of frame; none of the three "
+                    "is aware of the camera.",
+            "min_cast": 3},
+        "three-heads-over-one-phone": {
+            "text": "All three crowd around a single phone held between them, "
+                    "heads at three different heights, faces lit from below by "
+                    "the screen.",
+            "min_cast": 3},
     },
 
     # Deliberately for the camera — the posed group photograph.

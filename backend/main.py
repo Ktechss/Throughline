@@ -3764,7 +3764,14 @@ def _build_scene(req: "SceneReq") -> dict:
     for cid, tag in face_tag.items():
         scene = re.sub(rf"(?<![\w.])@{re.escape(cid)}\b", tag, scene, flags=re.I)
 
-    parts = [" ".join(roles), scene.strip()]
+    # The photographic REGISTER, first — same placement and same reason as the
+    # shot path, where it is the opener everything after is written against.
+    # SceneReq has carried shot_type since scenes existed and the composer has
+    # always sent it; nothing read it, so every scene was built in whatever
+    # register the brief happened to imply. `editorial` and `candid` produced
+    # byte-identical prompts.
+    opener = promptlib.SHOT_TYPES.get(req.shot_type, promptlib.SHOT_TYPES["candid"])
+    parts = [f"{opener}.", " ".join(roles), scene.strip()]
 
     if req.activity.strip():
         parts.append(f"What is happening: {req.activity.strip()}.")
@@ -3775,8 +3782,13 @@ def _build_scene(req: "SceneReq") -> dict:
     if len(cast) > 1 and req.interaction:
         txt = _INTERACTIONS_FLAT.get(req.interaction, {}).get("text", "")
         if txt:
+            # WORD-BOUNDARY, not substring. A bare .replace("A", tag) also ate the
+            # A of "All", the B of "Both" and the C of "Caught" — 11 of the 35
+            # entries, including BOTH three-person ones, which came out as
+            # "@image1ll three standing in a row". The prompt still read as
+            # English to a human skimming it, which is why it survived.
             for i, cid in enumerate(cast[:3]):
-                txt = txt.replace("AB"[i] if i < 2 else "C", face_tag[cid])
+                txt = re.sub(rf"\b{'ABC'[i]}\b", face_tag[cid], txt)
             parts.append(txt)
     elif req.pose.strip():
         parts.append(req.pose.strip())
