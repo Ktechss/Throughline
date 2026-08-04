@@ -1,10 +1,9 @@
 import React, { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import { api, setApiCharacter, charView, STAGE } from "@/api/throughline";
-import { ShieldCheck, ShieldAlert, Plus, X, Sparkles, Upload, Ruler, Trash2, Loader2, Pencil, Home, ChevronDown } from "lucide-react";
+import { ShieldCheck, ShieldAlert, Plus, X, Sparkles, Upload, Ruler, Trash2, Loader2, Pencil, Home, ChevronDown, ArrowRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import FacePicker from "@/components/studio/FacePicker";
-import SceneComposer from "@/components/SceneComposer";
 
 const FACE_SHAPES = ["oval", "round", "square", "heart", "diamond", "oblong"];
 const BODY_TYPES = ["slim", "athletic", "curvy", "voluptuous", "full-figured"];
@@ -170,10 +169,21 @@ export default function Landing() {
         </div>
       </header>
 
-      {/* The composer sits ABOVE the roster: a scene is a cast, not something
-          one character does from inside her own studio. */}
+      {/* The composer used to live here as a card. It outgrew one: a scene has a
+          cast, and every member of that cast has an outfit, a manicure, a
+          hairstyle, makeup, accessories, shoes and a pose of her own, on top of a
+          dozen axes the photograph itself has. It is its own page now. */}
       <div className="px-6 md:px-12 pt-10 max-w-6xl">
-        <SceneComposer characters={characters} onDone={load} />
+        <Link to="/collaborate"
+          className="flex items-center justify-between rounded-2xl ring-1 ring-white/8 bg-white/[0.02] px-5 py-4 hover:ring-white/20 transition-colors group">
+          <span>
+            <span className="block text-[14px] font-medium">Collaborator Studio</span>
+            <span className="block text-[11px] text-zinc-500 mt-0.5">
+              Put two or more of them in one photograph — or compose a single shot with every axis available.
+            </span>
+          </span>
+          <ArrowRight className="h-4 w-4 text-zinc-500 group-hover:text-white transition-colors" />
+        </Link>
       </div>
 
       {/* Character picker */}

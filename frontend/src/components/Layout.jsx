@@ -1,11 +1,21 @@
 import { Link, useLocation, Outlet } from "react-router-dom";
-import { Users, Clapperboard, ChevronLeft, Settings } from "lucide-react";
+import { Users, Users2, Clapperboard, ChevronLeft, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const NAV = [
   { to: "/", label: "Characters", icon: Users },
   { to: "/studio", label: "Studio", icon: Clapperboard },
+  { to: "/collaborate", label: "Collaborator Studio", icon: Users2 },
 ];
+
+// Exact match, not a prefix and not a fallback.
+//
+// This used to read `item.to === "/" ? pathname === "/" : onStudio`, which works
+// for exactly two entries and silently breaks on the third: every non-root link
+// resolved to `onStudio`, so /collaborate would have lit up "Studio" and left
+// its own entry dark. A nav that lies about where you are is a small bug that
+// wastes real time.
+const isActive = (pathname, to) => pathname === to;
 
 export default function Layout() {
   const { pathname } = useLocation();
@@ -29,7 +39,7 @@ export default function Layout() {
         <nav className="px-3 flex-1 space-y-0.5">
           {NAV.map((item) => {
             const Icon = item.icon;
-            const active = item.to === "/" ? pathname === "/" : onStudio;
+            const active = isActive(pathname, item.to);
             return (
               <Link
                 key={item.to}
@@ -81,7 +91,7 @@ export default function Layout() {
         <div className="flex gap-3">
           {NAV.map((item) => {
             const Icon = item.icon;
-            const active = item.to === "/" ? pathname === "/" : onStudio;
+            const active = isActive(pathname, item.to);
             return (
               <Link key={item.to} to={item.to} className={active ? "text-white" : "text-zinc-400"}>
                 <Icon className="h-4 w-4" strokeWidth={1.5} />

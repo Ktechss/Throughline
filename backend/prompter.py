@@ -101,7 +101,9 @@ class PrompterError(RuntimeError):
 
 
 def rewrite(brief: str, *, shot_type: str = "candid", has_wardrobe: bool = False,
-            pose_ref_tag: str = "", pose_text: str = "", cast: int = 1) -> str:
+            pose_ref_tag: str = "", pose_text: str = "", cast: int = 1,
+            cast_tags: list[str] | None = None,
+            extra_directives: list[str] | None = None) -> str:
     """Expand a brief into a full fal prompt via Claude. Raises PrompterError."""
     if not brief.strip():
         raise PrompterError("write a scene brief first — the prompter needs "
@@ -126,14 +128,24 @@ def rewrite(brief: str, *, shot_type: str = "candid", has_wardrobe: bool = False
         # and the failure to prevent is the model averaging two references into
         # one face. So the rule is not weakened — it is told there are two
         # subjects, each still carried entirely by her own reference.
+        #
+        # `cast_tags` exists because @image1/@image2 is only true when faces are
+        # the ONLY references. A scene interleaves outfits and manicures, so
+        # Kiara's face can be @image1 while Alexa's is @image3 — and telling
+        # Claude the wrong tags is worse than telling it nothing, because it will
+        # write the wrong one confidently into the prompt.
+        tags = list(cast_tags or [])
+        if len(tags) < 2:
+            tags = ["@image1", "@image2"]
+        named = ", ".join(tags[:-1]) + " and " + tags[-1]
         directives.append(
-            "This photograph has TWO subjects: @image1 and @image2, two DIFFERENT "
-            "women. Write them BOTH into the scene and say plainly that they are "
-            "two distinct individuals who do not resemble each other. Each face "
-            "comes only from its own reference — never take one woman's face, "
-            "skin or hair from the other's image, and never merge or average "
-            "them. Still describe NEITHER of them: no faces, hair, skin, age or "
-            "build for either. They are '@image1' and '@image2'.")
+            f"This photograph has {len(tags)} subjects: {named} — "
+            f"{len(tags)} DIFFERENT women. Write them ALL into the scene and say "
+            "plainly that they are distinct individuals who do not resemble each "
+            "other. Each face comes only from its own reference — never take one "
+            "woman's face, skin or hair from another's image, and never merge or "
+            "average them. Still describe NONE of them: no faces, hair, skin, age "
+            f"or build for any. They are {named}.")
     if pose_ref_tag:
         # A pose reference image is attached — defer to it, and make clear it is
         # POSE-ONLY so it can't drift her face/identity (that stays with @image1).
@@ -163,6 +175,12 @@ def rewrite(brief: str, *, shot_type: str = "candid", has_wardrobe: bool = False
             "as shown. Take ONLY the clothing and accessories from @image2; her "
             "face, skin, hair, features and identity come only from @image1, "
             "never from @image2.'")
+
+    # Whatever the caller already knows to be true and Claude cannot infer — the
+    # scene path passes its framing, its per-character getup and its reference
+    # roles here, because those are already decided by the pickers and a prompt
+    # that contradicts them is a prompt that fights its own references.
+    directives += [d for d in (extra_directives or []) if d.strip()]
 
     user = (
         f"Scene brief: {brief.strip()}\n\n"

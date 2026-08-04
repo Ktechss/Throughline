@@ -7,6 +7,7 @@ import ScrollToTop from "./components/ScrollToTop"
 import Layout from "@/components/Layout"
 import Landing from "@/pages/Landing"
 import Studio from "@/pages/Studio"
+import Collaborate from "@/pages/Collaborate"
 
 // Single-user local tool — no auth. The app opens straight on the character
 // picker (Landing) and the Studio; both talk to the FastAPI backend.
@@ -19,6 +20,7 @@ function App() {
           <Route element={<Layout />}>
             <Route path="/" element={<Landing />} />
             <Route path="/studio" element={<Studio />} />
+            <Route path="/collaborate" element={<Collaborate />} />
           </Route>
           <Route path="*" element={<PageNotFound />} />
         </Routes>

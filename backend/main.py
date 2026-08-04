@@ -22,13 +22,14 @@ from pydantic import BaseModel
 
 from . import (config, db, describe, gate, generate, prompt as promptlib, prompter,
                skeleton, timeline)
+from . import framing_data, getup_data, lighting_data
 from .interactions_data import INTERACTIONS
 from .scenes_data import MOMENTS
 from .config import (ARCHIVE_FORMAT, ARCHIVE_QUALITY, BODIES, BODIES_META,
                      CHARACTERS, CharPath, EDIT, GOLD, HOME_PATH,
                      IMAGES, NAILS, NAILS_META, PARTS_PATH, PLACES, POSE_REFS,
-                     POSES, REF_BUDGET, REFS, ROOT, SCENE_EDIT, SCENE_TEXT2IMG,
-                     STATE, TEXT2IMG, TIMELINE_PATH, WARDROBE)
+                     POSES, REF_BUDGET, REFS, RESOLUTION, ROOT, SCENE_EDIT,
+                     SCENE_TEXT2IMG, STATE, TEXT2IMG, TIMELINE_PATH, WARDROBE)
 
 app = FastAPI(title="Throughline")
 
@@ -2665,23 +2666,47 @@ def pose_ref_delete(name: str):
 # an extra @image reference (exact nail match) — it costs a reference slot, which
 # measurably lowers identity, a trade the user opts into per shot.
 
-def _nails_meta() -> dict:
-    if NAILS_META.exists():
+# SCOPED BY CHARACTER, all of it. These used to resolve through the NAILS /
+# NAILS_META CharPath proxies onto whichever character happened to be ACTIVE,
+# with no cid anywhere — the identical shape of the bug that filed one
+# character's outfit under Kiara and then showed Kiara's dress in Alexa's picker.
+# It was invisible while nails were only ever reached from inside one open
+# Studio; a scene with a cast of three reaches three characters' nails at once,
+# which is exactly the condition that made the wardrobe version visible.
+#
+# Same fix as the precedents: take a cid and default it to the active character,
+# so existing single-character callers are unchanged. See _wardrobe_meta(cid),
+# _corner_file(key, cid) and gate.load_gallery(cid).
+
+def _nails_dir(cid: str | None = None) -> Path:
+    return config.char_base(cid) / "nails"
+
+
+def _nails_meta_path(cid: str | None = None) -> Path:
+    return config.char_base(cid) / "state" / "nails.json"
+
+
+def _nails_meta(cid: str | None = None) -> dict:
+    p = _nails_meta_path(cid)
+    if p.exists():
         try:
-            return json.loads(NAILS_META.read_text())
+            return json.loads(p.read_text())
         except Exception:  # noqa: BLE001
             return {}
     return {}
 
 
-def _save_nails_meta(d: dict) -> None:
-    NAILS_META.write_text(json.dumps(d, indent=2) + "\n")
+def _save_nails_meta(d: dict, cid: str | None = None) -> None:
+    p = _nails_meta_path(cid)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(d, indent=2) + "\n")
 
 
-def _nails() -> list[dict]:
-    meta = _nails_meta()
+def _nails(cid: str | None = None) -> list[dict]:
+    meta = _nails_meta(cid)
+    d = _nails_dir(cid)
     out = []
-    for p in sorted(NAILS.iterdir()) if NAILS.exists() else []:
+    for p in sorted(d.iterdir()) if d.exists() else []:
         if p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
             m = meta.get(p.stem, {}) or {}
             out.append({"id": p.stem, "file": p.name,
@@ -2692,15 +2717,15 @@ def _nails() -> list[dict]:
 
 
 @app.get("/api/nails")
-def list_nails():
-    return {"nails": _nails()}
+def list_nails(character: str = ""):
+    return {"nails": _nails(character or None)}
 
 
-def _next_nail_name(color: str) -> str:
+def _next_nail_name(color: str, cid: str | None = None) -> str:
     """<color><n> — n is one past the highest existing index for that colour."""
     color = (color or "other").strip().lower() or "other"
     nums = []
-    for m in _nails_meta().values():
+    for m in _nails_meta(cid).values():
         if (m.get("category") or "").strip().lower() == color:
             nm = (m.get("name") or "").strip().lower()
             if nm.startswith(color) and nm[len(color):].isdigit():
@@ -2709,25 +2734,28 @@ def _next_nail_name(color: str) -> str:
 
 
 @app.post("/api/nails/upload")
-async def nails_upload(file: UploadFile = File(...), color: str = Form("")):
+async def nails_upload(file: UploadFile = File(...), color: str = Form(""),
+                       character: str = Form("")):
     """Save a manicure reference image. Colour is the category; the name is
     auto-assigned as <colour><n>. Image-only — no description/Claude call (the
     image is used directly as the reference)."""
+    cid = character or None
     data = await file.read()
-    Path(NAILS).mkdir(parents=True, exist_ok=True)
+    d = _nails_dir(cid)
+    d.mkdir(parents=True, exist_ok=True)
     ext = Path(file.filename or "").suffix.lower()
     if ext not in (".png", ".jpg", ".jpeg", ".webp"):
         ext = ".png"
     i = 1
-    while _find_by_id(NAILS, f"nail{i}"):
+    while _find_by_id(d, f"nail{i}"):
         i += 1
-    dest = NAILS / f"nail{i}{ext}"
+    dest = d / f"nail{i}{ext}"
     dest.write_bytes(data)
     color = (color.strip().lower() or "other")
-    name = _next_nail_name(color)
-    meta = _nails_meta()
+    name = _next_nail_name(color, cid)
+    meta = _nails_meta(cid)
     meta[dest.stem] = {"name": name, "category": color, "description": ""}
-    _save_nails_meta(meta)
+    _save_nails_meta(meta, cid)
     return {"id": dest.stem, "file": dest.name, "name": name, "category": color, "description": ""}
 
 
@@ -2738,9 +2766,10 @@ class NailDescReq(BaseModel):
 
 
 @app.put("/api/nails/{name}")
-def nails_update(name: str, req: NailDescReq):
+def nails_update(name: str, req: NailDescReq, character: str = ""):
+    cid = character or None
     stem = Path(name).stem
-    meta = _nails_meta()
+    meta = _nails_meta(cid)
     cur = meta.get(stem, {}) or {}
     if req.name is not None:
         cur["name"] = req.name.strip() or stem
@@ -2749,31 +2778,38 @@ def nails_update(name: str, req: NailDescReq):
     if req.description is not None:
         cur["description"] = req.description
     meta[stem] = cur
-    _save_nails_meta(meta)
+    _save_nails_meta(meta, cid)
     return {"id": stem, **cur}
 
 
 @app.get("/api/nails/{name}/file")
-def nails_file(name: str):
-    p = NAILS / Path(name).name
+def nails_file(name: str, character: str = ""):
+    p = _nails_dir(character or None) / Path(name).name
     if not p.exists():
         raise HTTPException(404, name)
     return FileResponse(p)
 
 
 @app.get("/api/nails/{name}/thumb")
-def nails_thumb(name: str):
-    return _serve_thumb(NAILS, name, (256, 256))
+def nails_thumb(name: str, character: str = ""):
+    # `character` is a QUERY parameter and not only a header because an <img>
+    # cannot send X-Character. That is precisely how the wardrobe version of this
+    # bug reached the UI: the JSON list was correctly scoped, and then every
+    # thumbnail fell back to the active character and showed the wrong woman's
+    # things. The scope_character middleware honours ?character= for the same
+    # reason.
+    return _serve_thumb(_nails_dir(character or None), name, (256, 256))
 
 
 @app.delete("/api/nails/{name}")
-def nails_delete(name: str):
+def nails_delete(name: str, character: str = ""):
+    cid = character or None
     stem = Path(name).stem
-    (NAILS / Path(name).name).unlink(missing_ok=True)
-    meta = _nails_meta()
+    (_nails_dir(cid) / Path(name).name).unlink(missing_ok=True)
+    meta = _nails_meta(cid)
     if stem in meta:
         del meta[stem]
-        _save_nails_meta(meta)
+        _save_nails_meta(meta, cid)
     return {"ok": True}
 
 
@@ -3664,6 +3700,32 @@ class SceneReq(BaseModel):
     holder: str = ""                        # who held the camera
     flaws: str = ""                        # how imperfect the frame is
     shot_type: str = "candid"
+
+    # ---- per-character GETUP. {character_id: value} throughout, because a cast
+    # is a set of people and every one of them gets dressed separately. Outfits
+    # and nails name a saved ASSET; the rest are text, either a key from
+    # getup_data or free prose typed into the same box.
+    nails: dict[str, str] = {}             # {cid: nail_id} — an image reference
+    hair: dict[str, str] = {}              # {cid: HAIR_STYLING key or free text}
+    makeup: dict[str, str] = {}            # {cid: MAKEUP key or free text}
+    accessories: dict[str, list[str]] = {}  # {cid: [ACCESSORIES keys or text]}
+    footwear: dict[str, str] = {}          # {cid: FOOTWEAR key or free text}
+    poses: dict[str, str] = {}             # {cid: poses_data id} — how ONE body
+                                           # is arranged, alongside the group
+                                           # interaction rather than instead of it
+
+    # ---- scene-wide axes
+    framing: str = ""                      # FRAMING key. Placed EARLY, see below
+    lighting: str = ""                     # LIGHTING key
+    time_of_day: str = ""                  # TIME_OF_DAY key
+    weather: str = ""                      # WEATHER key
+    season: str = ""                       # SEASON key
+    face_accessories: bool = True          # render face-worn items (sunglasses,
+                                           # caps). Off keeps her eyes visible,
+                                           # which is where the gate reads hardest
+    prompt_override: str | None = None     # a written prompt used VERBATIM in
+                                           # place of everything assembled here —
+                                           # same contract as ShotReq.prompt
     # Which optional references spend an image SLOT rather than riding as text.
     # Every one of them has a text form, so this is a real choice and not a
     # degradation: outfits carry their saved description, corners carry their
@@ -3673,6 +3735,72 @@ class SceneReq(BaseModel):
     aspect: str = "3:4"
     resolution: str | None = None
     seed: int | None = None
+
+
+_FRAMING_ORDER = {k: v["order"] for k, v in framing_data.FRAMING.items()}
+_LIGHTING_FLAT = {k: v for g in lighting_data.LIGHTING.values() for k, v in g.items()}
+
+# Flattened once. Every getup vocabulary is {group: {id: text}}, and the composer
+# sends an id — or, when someone typed their own, the prose itself.
+_HAIR_FLAT = {k: v for g in getup_data.HAIR_STYLING.values() for k, v in g.items()}
+_MAKEUP_FLAT = {k: v for g in getup_data.MAKEUP.values() for k, v in g.items()}
+_FOOTWEAR_FLAT = {k: v for g in getup_data.FOOTWEAR.values() for k, v in g.items()}
+_ACCESSORY_FLAT = {k: v for g in getup_data.ACCESSORIES.values() for k, v in g.items()}
+_GETUP_FLAT = {id(getup_data.HAIR_STYLING): _HAIR_FLAT,
+               id(getup_data.MAKEUP): _MAKEUP_FLAT,
+               id(getup_data.FOOTWEAR): _FOOTWEAR_FLAT}
+
+
+def _getup_text(library: dict, value: str | None) -> str:
+    """A library id, or the free text somebody typed instead.
+
+    Free text is a first-class input, not a fallback: the vocabularies are a
+    starting point and no list of thirty hairstyles covers what a person can do
+    to their hair. An unrecognised value is therefore used verbatim rather than
+    dropped, which is also what keeps a stale UI from silently losing a field.
+    """
+    v = (value or "").strip()
+    if not v:
+        return ""
+    return _GETUP_FLAT[id(library)].get(v) or v
+
+
+def _accessory_texts(values: list[str], *, allow_face: bool) -> list[str]:
+    """Accessory texts, with the face-worn ones dropped when asked.
+
+    `allow_face=False` is a real identity lever and not a style preference.
+    ArcFace reads hardest on the eye region — the mirror-selfie clause in
+    prompt.py exists because forcing her eyes onto the reflection moved the same
+    shot from 0.334 to 0.628 — and dark lenses remove both eyes outright. A shot
+    that has to be gated should not be wearing sunglasses.
+    """
+    out = []
+    for v in values:
+        v = (v or "").strip()
+        if not v:
+            continue
+        entry = _ACCESSORY_FLAT.get(v)
+        if entry is None:
+            out.append(v)          # free text, same rule as _getup_text
+        elif allow_face or not entry["face"]:
+            out.append(entry["text"])
+    return out
+
+
+def _spend_optional(req: "SceneReq", cid: str, key: str, cast_size: int) -> bool:
+    """Should this optional reference spend an IMAGE slot, or ride as text?
+
+    Faces are never asked — they are mandatory, so a cast of three starts at
+    three references before anyone puts on a shoe. Measured: 2 refs 0.622, 3 refs
+    0.579. So the DEFAULT flips with the cast: at one or two people an outfit or
+    a manicure is worth its slot, and at three or more it is not, because the
+    budget is already spent on being able to tell who is who.
+
+    Explicit always wins. This only decides what happens when nobody said.
+    """
+    if key in req.as_image:
+        return bool(req.as_image[key])
+    return cast_size <= 2
 
 
 def _build_scene(req: "SceneReq") -> dict:
@@ -3721,25 +3849,84 @@ def _build_scene(req: "SceneReq") -> dict:
                               f"{name}'s face")
         roles.append(f"{face_tag[cid]} is {name}'s face.")
 
+        # NOT `if not oid: continue`. It used to be, and when getup was added
+        # below it every hairstyle, makeup, accessory and shoe silently did
+        # nothing unless an outfit happened to be picked too — five dead axes
+        # from one early exit. Caught by the per-axis hash diff, which exists
+        # because shot_type was dead for months without anyone noticing.
         oid = (req.wardrobe or {}).get(cid)
-        if not oid:
-            continue
-        w = _find_by_id(config.char_base(cid) / "wardrobe", oid)
-        if not w:
-            raise HTTPException(400, f"no such outfit for {name}: {oid}")
-        desc = (_wardrobe_meta(cid).get(oid, {}) or {}).get("description") or ""
-        # Outfits default to an image slot: garments are the thing a description
-        # reproduces least reliably.
-        if req.as_image.get(f"outfit:{cid}", True):
-            tag = spend("outfit", cid, _outfit_ref(w), f"{name}: {oid}")
-            roles.append(f"{tag} is the outfit {name} is wearing — reproduce "
-                         f"those garments on her, and take NOTHING about her "
-                         f"face from it.")
-        else:
-            ledger.append({"kind": "outfit", "key": cid, "label": f"{name}: {oid}",
-                           "mode": "text", "tag": None, "file": w.name})
-        if desc.strip():
-            roles.append(f"{name}'s look in full: {desc.strip()}")
+        if oid:
+            w = _find_by_id(config.char_base(cid) / "wardrobe", oid)
+            if not w:
+                raise HTTPException(400, f"no such outfit for {name}: {oid}")
+            desc = (_wardrobe_meta(cid).get(oid, {}) or {}).get("description") or ""
+            # Outfits default to an image slot at a cast of one or two, and to
+            # text at three or more — see _spend_optional. Garments are the thing
+            # a description reproduces least reliably, which is what earns the
+            # slot; telling three women apart is what outranks it.
+            if _spend_optional(req, cid, f"outfit:{cid}", len(cast)):
+                tag = spend("outfit", cid, _outfit_ref(w), f"{name}: {oid}")
+                roles.append(f"{tag} is the outfit {name} is wearing — reproduce "
+                             f"those garments on her, and take NOTHING about her "
+                             f"face from it.")
+            else:
+                ledger.append({"kind": "outfit", "key": cid, "label": f"{name}: {oid}",
+                               "mode": "text", "tag": None, "file": w.name})
+            if desc.strip():
+                roles.append(f"{name}'s look in full: {desc.strip()}")
+
+        # ---- the rest of her GETUP, attributed to her tag so a cast of three
+        # does not end up with one shared hairstyle. Text, not references: hair,
+        # makeup, accessories and shoes are all things a sentence reproduces well
+        # enough, and every image slot spent here is measured off the identity
+        # (2 refs 0.622, 3 refs 0.579). Nails are the exception below — a nail
+        # design is exactly what words reproduce worst.
+        getup: list[str] = []
+        styling = _getup_text(getup_data.HAIR_STYLING, (req.hair or {}).get(cid))
+        if styling:
+            # "her hair IS worn..." never "her hair is long and dark". Styling
+            # only; colour, length and texture are identity and belong to her
+            # reference. See a9cc83cd.
+            getup.append(f"her hair {styling}")
+        face_up = _getup_text(getup_data.MAKEUP, (req.makeup or {}).get(cid))
+        if face_up:
+            getup.append(face_up)
+        worn = _accessory_texts((req.accessories or {}).get(cid) or [],
+                                allow_face=req.face_accessories)
+        if worn:
+            getup.append("wearing " + ", ".join(worn))
+        shoes = _getup_text(getup_data.FOOTWEAR, (req.footwear or {}).get(cid))
+        if shoes:
+            # Only below a knee-up frame is there anything to see. Above it this
+            # spends prompt attention outside the picture.
+            if _FRAMING_ORDER.get(req.framing, 9) >= _FRAMING_ORDER["knee_up"]:
+                getup.append(f"in {shoes}")
+            else:
+                ledger.append({"kind": "footwear", "key": cid,
+                               "label": f"{name}: shoes", "mode": "dropped",
+                               "tag": None, "file": None})
+        if getup:
+            roles.append(f"{face_tag[cid]} — {name} — has {'; '.join(getup)}.")
+
+        # @imageN = her manicure. An image because a nail design is the one piece
+        # of getup a description reliably loses.
+        nid = (req.nails or {}).get(cid)
+        if nid:
+            npath = _find_by_id(_nails_dir(cid), nid)
+            if not npath:
+                raise HTTPException(400, f"no such manicure for {name}: {nid}")
+            nmeta = (_nails_meta(cid).get(nid, {}) or {})
+            if _spend_optional(req, cid, f"nails:{cid}", len(cast)):
+                tag = spend("nails", cid, npath, f"{name}: {nmeta.get('name') or nid}")
+                roles.append(f"{tag} is {name}'s manicure — reproduce that nail "
+                             f"shape, length, colour and finish exactly on HER "
+                             f"hands, and take nothing else from it.")
+            else:
+                ledger.append({"kind": "nails", "key": cid, "mode": "text",
+                               "label": f"{name}: {nmeta.get('name') or nid}",
+                               "tag": None, "file": npath.name})
+                if (nmeta.get("description") or "").strip():
+                    roles.append(f"{name}'s nails: {nmeta['description'].strip()}")
 
     # WHERE. The owner's corner, because a home belongs to somebody — labelled so
     # "whose kitchen" is never a guess.
@@ -3771,7 +3958,29 @@ def _build_scene(req: "SceneReq") -> dict:
     # register the brief happened to imply. `editorial` and `candid` produced
     # byte-identical prompts.
     opener = promptlib.SHOT_TYPES.get(req.shot_type, promptlib.SHOT_TYPES["candid"])
-    parts = [f"{opener}.", " ".join(roles), scene.strip()]
+    parts = [f"{opener}."]
+
+    # FRAMING, second — before the roles, before the brief, before anything that
+    # could argue with it.
+    #
+    # On 2026-08-04 a three-person scene was briefed "Tight head-and-shoulders
+    # crop ... nothing below the chest is in shot" as the last sentence of the
+    # prose and came back waist-up with a ceiling in it. Framing written as one
+    # more clause among twenty loses to the model's own idea of how to fit a cast
+    # into the frame. The shot path already places the camera holder early for
+    # the stated reason that it "decides the distance and the framing everything
+    # after it is written against"; this is the same argument applied to the
+    # thing that IS the framing.
+    #
+    # Whether early placement is enough is an open question with a cheap answer:
+    # generate the same cast at head_shoulders and at full_body and read back
+    # face_px. If the number does not move, this is decoration and the honest
+    # response is a real crop step, not a louder sentence.
+    frame = (framing_data.FRAMING.get(req.framing) or {}).get("text", "")
+    if frame:
+        parts.append(frame)
+
+    parts += [" ".join(roles), scene.strip()]
 
     if req.activity.strip():
         parts.append(f"What is happening: {req.activity.strip()}.")
@@ -3793,6 +4002,18 @@ def _build_scene(req: "SceneReq") -> dict:
     elif req.pose.strip():
         parts.append(req.pose.strip())
 
+    # PER-CHARACTER POSE, alongside the interaction rather than instead of it.
+    # An interaction says how the group is arranged relative to each other; it
+    # cannot say that one of them is sitting while the others stand. All 551
+    # entries in poses_data describe exactly one body, which is what makes them
+    # usable here — attributed by tag so they land on the right woman.
+    for cid in cast:
+        pid = (req.poses or {}).get(cid)
+        if not pid:
+            continue
+        ptext = promptlib.POSES_LIBRARY.get(pid) or pid
+        parts.append(f"{face_tag[cid]}: {ptext}")
+
     if len(cast) > 1:
         names = ", ".join(rows[c]["name"] for c in cast)
         parts.append(f"There are {len(cast)} DIFFERENT women in this photograph "
@@ -3800,6 +4021,18 @@ def _build_scene(req: "SceneReq") -> dict:
                      f"resemble each other. Keep each face exactly as its own "
                      f"reference shows it — do NOT blend, merge or average their "
                      f"features, and never give two of them the same face.")
+
+    # WHEN AND WHAT THE AIR IS DOING. Every one of these emits nothing at all
+    # when unset — no default. "Soft neutral lighting" appended to every prompt
+    # is how a year of photographs ends up looking like one afternoon, and the
+    # place and the hour already imply the light most of the time.
+    for lib, key in ((_LIGHTING_FLAT, req.lighting),
+                     (lighting_data.TIME_OF_DAY, req.time_of_day),
+                     (lighting_data.WEATHER, req.weather),
+                     (lighting_data.SEASON, req.season)):
+        entry = lib.get(key or "")
+        if entry and entry.get("text"):
+            parts.append(entry["text"])
 
     holder = (promptlib.CAMERA_HOLDERS.get(req.holder) or {}).get("text", "")
     if holder:
@@ -3811,9 +4044,18 @@ def _build_scene(req: "SceneReq") -> dict:
     parts.append("Photorealistic, real skin texture, natural light, sharp focus "
                  "on every face.")
 
-    text, sanitised = promptlib.sanitise(" ".join(x for x in parts if x))
+    assembled = " ".join(x for x in parts if x)
+    # A written prompt replaces everything assembled above — same contract as
+    # ShotReq.prompt. The REFERENCES are still whatever the pickers spent, so the
+    # @imageN tags the draft was written against stay valid; overriding the prose
+    # must not silently re-order what the tags point at.
+    text, sanitised = promptlib.sanitise((req.prompt_override or "").strip()
+                                         or assembled)
     return {"prompt": text, "refs": refs, "cast": cast, "owner": owner,
-            "ledger": ledger, "sanitised": sanitised}
+            "ledger": ledger, "sanitised": sanitised, "assembled": assembled,
+            "_roles": roles,
+            "face_px": framing_data.estimate_face_px(
+                req.framing, len(cast), req.aspect, req.resolution or RESOLUTION)}
 
 
 @app.get("/api/scene/library")
@@ -3851,10 +4093,95 @@ def scene_library(cast: int = 1, owner: str = ""):
         base = base[4:] if base.lower().startswith("her ") else base
         places.append({"key": c["key"], "label": f"{who}'s {base.lower()}",
                        "has_image": bool(f)})
+    def grouped(lib: dict, text_key: str = "") -> dict:
+        """{group: [{id, label, text}]} — the shape every picker in the composer
+        reads. Kept in one place so a new vocabulary is a data change only."""
+        out = {}
+        for group, items in lib.items():
+            out[group] = [
+                {"id": i,
+                 "label": (d.get("label") if isinstance(d, dict) else None)
+                          or i.replace("-", " "),
+                 "text": (d.get(text_key or "text") if isinstance(d, dict) else d),
+                 **({"face": d["face"]} if isinstance(d, dict) and "face" in d else {})}
+                for i, d in items.items()]
+        return out
+
+    def flat(lib: dict) -> list[dict]:
+        return [{"id": i, "label": d.get("label") or i, "text": d.get("text", "")}
+                for i, d in lib.items()]
+
     return {"moments": moments, "interactions": inter, "places": places,
             "holders": [{"id": k, **v} for k, v in promptlib.CAMERA_HOLDERS.items() if k],
             "flaws": [{"id": k, **v} for k, v in promptlib.SNAPSHOT_FLAWS.items() if k],
-            "shot_types": [{"id": k, "label": k} for k in promptlib.SHOT_TYPES]}
+            "shot_types": [{"id": k, "label": k} for k in promptlib.SHOT_TYPES],
+            # framing carries its own predicted face size AT THIS CAST, so the
+            # cost of a wide group shot is visible in the dropdown itself rather
+            # than discovered afterwards in a verdict that says "abstain".
+            "framing": [{"id": k, "label": v["label"], "text": v["text"],
+                         "face_px": framing_data.estimate_face_px(
+                             k, cast, "3:4", RESOLUTION)}
+                        for k, v in sorted(framing_data.FRAMING.items(),
+                                           key=lambda kv: kv[1]["order"]) if k],
+            "aspects": framing_data.ASPECTS,
+            "resolutions": ["1K", "2K", "4K"],
+            "lighting": grouped(lighting_data.LIGHTING),
+            "time_of_day": flat(lighting_data.TIME_OF_DAY),
+            "weather": flat(lighting_data.WEATHER),
+            "season": flat(lighting_data.SEASON),
+            "hair": grouped(getup_data.HAIR_STYLING),
+            "makeup": grouped(getup_data.MAKEUP),
+            "accessories": grouped(getup_data.ACCESSORIES),
+            "footwear": grouped(getup_data.FOOTWEAR),
+            "poses": {g: [{"id": i, "text": t} for i, t in items.items()]
+                      for g, items in promptlib.POSE_GROUPS.items()},
+            "plateau_px": gate.FACE_PLATEAU_PX}
+
+
+@app.post("/api/scene/ai-prompt")
+def scene_ai_prompt(req: SceneReq):
+    """Claude writes the scene prompt. Returned as a DRAFT, never sent to fal.
+
+    The same contract as /api/shot/ai-prompt: Claude expands the brief, is
+    forbidden to describe anyone, the result is sanitised and handed back for the
+    user to edit. What differs is that a scene has already decided a great deal
+    before Claude sees it — which tag holds whose face, how it is framed, what
+    each of them is wearing — so all of that goes in as directives rather than
+    being left for Claude to invent and then contradict.
+
+    The draft comes back in `prompt_override`'s shape: paste it there and it is
+    used verbatim, with the references unchanged, so the @imageN tags it was
+    written against still point where it thinks they do.
+    """
+    s = _build_scene(req)
+    rows = {c["id"]: c for c in db.chars_all()}
+    tags = [l["tag"] for l in s["ledger"] if l["kind"] == "face" and l["tag"]]
+
+    extra = ["Reference roles, which are already fixed and must be used exactly "
+             "as given: " + " ".join(s["_roles"])]
+    frame = (framing_data.FRAMING.get(req.framing) or {}).get("text", "")
+    if frame:
+        # Framing goes in as a REQUIREMENT rather than a hint. Prose framing lost
+        # to the model's default once already (2026-08-04, the head-and-shoulders
+        # crop that came back waist-up); if Claude is writing the prompt, the
+        # constraint has to survive into what it writes.
+        extra.append(f"Include this framing instruction near the START of the "
+                     f"prompt, close to verbatim: '{frame}'")
+    if len(s["cast"]) > 1:
+        extra.append("Do NOT invent an interaction or arrangement that "
+                     "contradicts the reference roles above.")
+
+    try:
+        raw = prompter.rewrite(
+            req.prompt, shot_type=req.shot_type, has_wardrobe=False,
+            pose_text=req.activity.strip(), cast=len(s["cast"]),
+            cast_tags=tags, extra_directives=extra)
+    except prompter.PrompterError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    clean, sanitised = promptlib.sanitise(raw)
+    return {"prompt": clean, "sanitised": sanitised, "assembled": s["assembled"],
+            "cast": [rows[c]["name"] for c in s["cast"] if c in rows],
+            "ledger": s["ledger"], "face_px": s["face_px"]}
 
 
 @app.post("/api/scene/preview")
@@ -3869,7 +4196,12 @@ def scene_preview(req: SceneReq):
     images = [x for x in s["ledger"] if x["mode"] == "image"]
     return {"prompt": s["prompt"], "cast": s["cast"], "owner": s["owner"],
             "ledger": s["ledger"], "images": len(images),
-            "sanitised": s["sanitised"]}
+            "sanitised": s["sanitised"], "assembled": s["assembled"],
+            # The predicted face size, and the measured band it lands in. This is
+            # the number that decides whether the gate can say anything at all
+            # about the picture, so it belongs next to the button, not in the
+            # verdict afterwards.
+            "face_px": s["face_px"], "plateau_px": gate.FACE_PLATEAU_PX}
 
 
 @app.post("/api/scene")
