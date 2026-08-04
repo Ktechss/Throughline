@@ -507,6 +507,35 @@ _INSPIRATION_CLAUSE = (
 )
 
 
+# The non-identity parts a head-and-shoulders portrait genuinely contains.
+#
+# Everything else in the tree — where she is, how it was lit, which camera, what
+# she is wearing, what she is doing — describes a SHOT, and the master face is
+# not a shot. It has its own fixed spec above, and letting the character's shot
+# parts through as well produced a prompt that argued with itself:
+#
+#   spec: "85mm portrait lens, shallow depth of field"
+#   parts: "wide 24mm-equivalent lens" ... "no bokeh"
+#   spec: "professional full-frame camera realism"
+#   parts: "Never a professional camera, never a photoshoot"
+#   spec: "warm neutral background, soft diffused window-style light"
+#   parts: "a plain white studio cyclorama" ... "flat and even, no colour cast"
+#
+# Three direct contradictions on lens, light and register, and the parts win on
+# volume. Flat-and-even is what a passport photo looks like, and that is what
+# came back. The build block was the same failure in a quieter form: "curvy,
+# full-figured, full chest, full hips" cannot render below the collarbone in a
+# head crop, so it renders in her face — overriding the face parts that
+# explicitly asked for a tapered jaw and a narrow chin.
+#
+# So the rule is: her identity parts, plus the four non-identity parts a head
+# and shoulders actually shows. Framing, lens, light, background and capture are
+# the spec's job and only the spec's job. Her full build is not lost — it reaches
+# every later prompt through build_clause(), which is text and costs no slot.
+_MASTER_FACE_KEEP = {"body.shoulders", "body.posture", "skin.facts",
+                     "grooming.makeup"}
+
+
 def _master_face_prompt(parts: list[promptlib.Part], inspired: bool,
                         look: str = DEFAULT_LOOK) -> str:
     """The prompt one master-face candidate is generated from.
@@ -516,8 +545,11 @@ def _master_face_prompt(parts: list[promptlib.Part], inspired: bool,
     reference yet and the seed has to come from words. Everything else here is
     fixed: presentation, realism, and what to avoid.
     """
-    face = promptlib.compose(parts, has_reference=False,
-                             pose_note=MASTER_FACE_PRESENTATION)
+    kept = [p for p in parts if p.identity or p.id in _MASTER_FACE_KEEP]
+    # Composed WITHOUT pose_note: with the pose parts dropped there is no pose
+    # section left for compose() to attach it to, so the presentation rides as
+    # its own block below — where it is the only voice on framing anyway.
+    face = promptlib.compose(kept, has_reference=False)
     blocks = [_INSPIRATION_CLAUSE] if inspired else []
     blocks += [
         "A highly photorealistic close-up identity portrait of a completely "
@@ -525,6 +557,7 @@ def _master_face_prompt(parts: list[promptlib.Part], inspired: bool,
         "photographed individual with a memorable, original face, never a CGI "
         "character, illustration or generic AI beauty model.",
         face,
+        MASTER_FACE_PRESENTATION,
         # The register, restated here. The bio above already carries it as
         # proportions; this keeps the image model from averaging back toward its
         # own default when it renders them.
