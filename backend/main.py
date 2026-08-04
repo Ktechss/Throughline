@@ -4164,10 +4164,14 @@ def scene_library(cast: int = 1, owner: str = ""):
         if keep:
             moments[group] = list(keep.values())
 
+    # `label` is not decoration. Both of these are browsed by a component that
+    # renders p.label, and without it 551 poses and 250 arrangements read as raw
+    # kebab-case ids — "square-shoulders-direct" — which is exactly as useful as
+    # the outfit dropdown that said "Casual1".
     inter = {}
     for group, items in INTERACTIONS.items():
-        keep = [{"id": i, "text": d["text"]} for i, d in items.items()
-                if d["min_cast"] <= cast]
+        keep = [{"id": i, "label": i.replace("-", " "), "text": d["text"]}
+                for i, d in items.items() if d["min_cast"] <= cast]
         if keep:
             inter[group] = keep
 
@@ -4220,7 +4224,8 @@ def scene_library(cast: int = 1, owner: str = ""):
             "makeup": grouped(getup_data.MAKEUP),
             "accessories": grouped(getup_data.ACCESSORIES),
             "footwear": grouped(getup_data.FOOTWEAR),
-            "poses": {g: [{"id": i, "text": t} for i, t in items.items()]
+            "poses": {g: [{"id": i, "label": i.replace("-", " "), "text": t}
+                          for i, t in items.items()]
                       for g, items in promptlib.POSE_GROUPS.items()},
             "plateau_px": gate.FACE_PLATEAU_PX}
 

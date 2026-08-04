@@ -4,6 +4,7 @@ import { Loader2, Sparkles, X, Wand2, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import CastRow from "@/components/collab/CastRow";
 import Picker from "@/components/collab/Picker";
+import BrowsePicker from "@/components/collab/BrowsePicker";
 
 // COLLABORATOR STUDIO — compose a photograph of one or more of them.
 //
@@ -265,11 +266,18 @@ export default function Collaborate() {
                 <Picker label="Where" flat={lib.places.map((p) => ({
                     id: p.key, label: p.label + (p.has_image ? "" : " (described)") }))}
                   value={place} onChange={setPlace} empty="wherever the brief says" />
-                {cast.length > 1 ? (
-                  <Picker label="Together" groups={lib.interactions} value={interaction}
-                    onChange={setInteraction} empty="however the scene reads" />
-                ) : <div />}
+                <div />
               </div>
+
+              {/* THE ARRANGEMENT. Not a dropdown: 250 entries, and which one is
+                  chosen is measured to move identity by 5x (cheek-to-cheek 0.118
+                  against both-to-camera 0.572, same everything else). The text
+                  has to be readable before it is chosen. */}
+              {cast.length > 1 && (
+                <BrowsePicker label="Together" hint="how the cast is arranged"
+                  groups={lib.interactions} selected={interaction}
+                  onSelect={setInteraction} emptyLabel="however the scene reads" />
+              )}
 
               <label className="block">
                 <span className="text-[10px] text-zinc-500">Doing</span>

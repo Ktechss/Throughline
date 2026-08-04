@@ -3,6 +3,7 @@ import { outfitView } from "@/api/throughline";
 import { ChevronDown, Shirt, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import Picker, { ChipMulti } from "./Picker";
+import BrowsePicker from "./BrowsePicker";
 
 // Everything one member of the cast is wearing, doing and made up as.
 //
@@ -114,14 +115,18 @@ export default function CastRow({ character, lib, value, onChange, framingOrder 
             <Picker label="Makeup" groups={lib?.makeup}
               value={value.makeup} onChange={(v) => set("makeup", v)}
               empty="her usual" />
-            <Picker label="Pose" groups={lib?.poses} className="col-span-2"
-              value={value.pose} onChange={(v) => set("pose", v)}
-              empty="however the scene reads" />
             <Picker label="Footwear" groups={lib?.footwear} disabled={!shoesVisible}
               hint={shoesVisible ? null : "out of frame"}
               value={value.footwear} onChange={(v) => set("footwear", v)}
               empty="unspecified" className="col-span-2" />
           </div>
+
+          {/* Her OWN pose — 551 of them, searchable. Distinct from the group
+              arrangement: that says where everyone is relative to each other,
+              this says what her body is doing inside it. */}
+          <BrowsePicker label="Pose" hint={`${character.name} only`} icons
+            groups={lib?.poses} selected={value.pose}
+            onSelect={(v) => set("pose", v)} emptyLabel="however the scene reads" />
 
           <ChipMulti label="Accessories" hint="◐ sits on the face" groups={lib?.accessories}
             values={value.accessories || []} onChange={(v) => set("accessories", v)} />
