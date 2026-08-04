@@ -22,6 +22,8 @@ from pydantic import BaseModel
 
 from . import (config, db, describe, gate, generate, prompt as promptlib, prompter,
                skeleton, timeline)
+from .interactions_data import INTERACTIONS
+from .scenes_data import MOMENTS
 from .config import (ARCHIVE_FORMAT, ARCHIVE_QUALITY, BODIES, BODIES_META,
                      CHARACTERS, CharPath, EDIT, GOLD, HOME_PATH,
                      IMAGES, NAILS, NAILS_META, PARTS_PATH, PLACES, POSE_REFS,
@@ -2821,9 +2823,15 @@ def _home(cid: str | None = None) -> dict:
     return {"style": "", "surroundings": ""}
 
 
-def _corner_file(key: str) -> Path | None:
-    """The stored image for a corner, whatever its extension."""
-    return _find_by_id(PLACES, key)
+def _corner_file(key: str, cid: str | None = None) -> Path | None:
+    """The stored image for a corner, whatever its extension.
+
+    `cid` names whose place. A scene offers the OWNER's corners — "Kiara's
+    kitchen" — and without this it would resolve through PLACES to whoever
+    happens to be active, which is the same failure already fixed in
+    db.runs_all, the wardrobe helpers, the gate loaders and _outfit_ref.
+    """
+    return _find_by_id(config.char_base(cid) / "places" if cid else PLACES, key)
 
 
 @app.get("/api/home")
@@ -3576,6 +3584,9 @@ def job(jid: str):
 # starts a word, it does not sit inside one.
 _MENTION = re.compile(r"(?<![\w.])@([A-Za-z0-9][A-Za-z0-9_-]*)")
 
+# {id: entry} across every category, so a lookup by id needs no group.
+_INTERACTIONS_FLAT = {i: d for g in INTERACTIONS.values() for i, d in g.items()}
+
 
 def _parse_cast(prompt: str) -> list[str]:
     """The characters named in a scene, in order of first mention.
@@ -3617,85 +3628,207 @@ def scene_cast(req: SceneCastReq):
 class SceneReq(BaseModel):
     prompt: str = ""                       # prose with @mentions
     wardrobe: dict[str, str] = {}          # {character_id: outfit_id}
+    place: str = ""                        # a corner/regular key, from the OWNER
+    activity: str = ""                     # what is happening
+    interaction: str = ""                  # how the cast is arranged (cast > 1)
+    pose: str = ""                         # how one body is arranged (cast == 1)
+    holder: str = ""                        # who held the camera
+    flaws: str = ""                        # how imperfect the frame is
+    shot_type: str = "candid"
+    # Which optional references spend an image SLOT rather than riding as text.
+    # Every one of them has a text form, so this is a real choice and not a
+    # degradation: outfits carry their saved description, corners carry their
+    # `gen` line. Default: outfits yes, place no — because a place is the one
+    # whose text form loses least.
+    as_image: dict[str, bool] = {}         # {"outfit:kiara": True, "place": False}
     aspect: str = "3:4"
     resolution: str | None = None
     seed: int | None = None
 
 
-def _build_scene(prompt: str, wardrobe: dict[str, str]) -> tuple[str, list[Path], list[str]]:
-    """(prompt, references, cast) for a scene.
+def _build_scene(req: "SceneReq") -> dict:
+    """Everything a scene needs, plus a LEDGER of what it spent to get there.
 
     References are attached per character in cast order — her face, then her
-    outfit if one was chosen — and the prompt then SAYS what each tag holds:
+    outfit if it was given a slot — and the prompt SAYS what each tag holds:
 
         @image1  Kiara's face     @image3  Sonam's face
         @image2  Kiara's outfit   @image4  Sonam's outfit
 
     Stated, not implied. A positional convention the model has to infer is one
-    off-by-one away from dressing somebody in a face, and with four references
-    that mistake is invisible in the output — you would just get a worse picture
-    and no idea why.
+    off-by-one away from dressing somebody in a face, and at four references that
+    mistake is invisible in the output.
 
-    Every @mention in the user's prose is replaced by that character's FACE tag,
-    because the model cannot resolve a name and can resolve @image1.
+    Every optional reference can ride as an IMAGE or as TEXT, and the ledger says
+    which. That is the honest way to present a real cost: two references measured
+    0.622 and three measured 0.579, so a two-hander with both outfits and a place
+    is five — and every one of those extras already has a text form good enough to
+    fall back to. The caller decides; this records the decision.
     """
-    cast = _parse_cast(prompt)
+    cast = _parse_cast(req.prompt)
     if not cast:
         raise HTTPException(400, "name at least one character with @, e.g. @kiara")
 
+    owner = cast[0]
+    rows = {c["id"]: c for c in db.chars_all()}
     refs: list[Path] = []
     roles: list[str] = []
+    ledger: list[dict] = []
     face_tag: dict[str, str] = {}
-    rows = {c["id"]: c for c in db.chars_all()}
+
+    def spend(kind: str, key: str, path: Path, label: str) -> str:
+        refs.append(path)
+        tag = f"@image{len(refs)}"
+        ledger.append({"kind": kind, "key": key, "label": label,
+                       "mode": "image", "tag": tag, "file": path.name})
+        return tag
 
     for cid in cast:
         ref = _char_reference(cid)
         if not ref:
             raise HTTPException(400, f"{rows[cid]['name']} has no master face yet")
-        refs.append(config.char_base(cid) / "refs" / ref)
-        face_tag[cid] = f"@image{len(refs)}"
-        roles.append(f"{face_tag[cid]} is {rows[cid]['name']}'s face.")
+        name = rows[cid]["name"]
+        face_tag[cid] = spend("face", cid, config.char_base(cid) / "refs" / ref,
+                              f"{name}'s face")
+        roles.append(f"{face_tag[cid]} is {name}'s face.")
 
-        oid = (wardrobe or {}).get(cid)
-        if oid:
-            w = _find_by_id(config.char_base(cid) / "wardrobe", oid)
-            if not w:
-                raise HTTPException(400, f"no such outfit for {rows[cid]['name']}: {oid}")
-            refs.append(_outfit_ref(w))
-            roles.append(f"@image{len(refs)} is the outfit {rows[cid]['name']} is "
-                         f"wearing — reproduce those garments on her, and take "
-                         f"NOTHING about her face from it.")
-            desc = (_wardrobe_meta(cid).get(oid, {}) or {}).get("description")
-            if desc and desc.strip():
-                roles.append(f"{rows[cid]['name']}'s look in full: {desc.strip()}")
+        oid = (req.wardrobe or {}).get(cid)
+        if not oid:
+            continue
+        w = _find_by_id(config.char_base(cid) / "wardrobe", oid)
+        if not w:
+            raise HTTPException(400, f"no such outfit for {name}: {oid}")
+        desc = (_wardrobe_meta(cid).get(oid, {}) or {}).get("description") or ""
+        # Outfits default to an image slot: garments are the thing a description
+        # reproduces least reliably.
+        if req.as_image.get(f"outfit:{cid}", True):
+            tag = spend("outfit", cid, _outfit_ref(w), f"{name}: {oid}")
+            roles.append(f"{tag} is the outfit {name} is wearing — reproduce "
+                         f"those garments on her, and take NOTHING about her "
+                         f"face from it.")
+        else:
+            ledger.append({"kind": "outfit", "key": cid, "label": f"{name}: {oid}",
+                           "mode": "text", "tag": None, "file": w.name})
+        if desc.strip():
+            roles.append(f"{name}'s look in full: {desc.strip()}")
+
+    # WHERE. The owner's corner, because a home belongs to somebody — labelled so
+    # "whose kitchen" is never a guess.
+    if req.place:
+        corner = _CORNER.get(req.place)
+        if not corner:
+            raise HTTPException(400, f"unknown place: {req.place}")
+        img = _corner_file(req.place, owner)
+        label = f"{rows[owner]['name']}'s {corner['label'].lower()}"
+        if img and req.as_image.get("place", False):
+            tag = spend("place", req.place, img, label)
+            roles.append(f"{tag} is the location — the setting is exactly the "
+                         f"place shown there. Do not invent a different one.")
+        else:
+            ledger.append({"kind": "place", "key": req.place, "label": label,
+                           "mode": "text", "tag": None,
+                           "file": img.name if img else None})
+            roles.append(f"The setting: {corner['gen']}.")
 
     # The user's prose, with every name turned into the tag it means.
-    scene = prompt
+    scene = req.prompt
     for cid, tag in face_tag.items():
         scene = re.sub(rf"(?<![\w.])@{re.escape(cid)}\b", tag, scene, flags=re.I)
 
-    head = " ".join(roles)
+    parts = [" ".join(roles), scene.strip()]
+
+    if req.activity.strip():
+        parts.append(f"What is happening: {req.activity.strip()}.")
+
+    # HOW THEY ARE ARRANGED. An interaction describes people relative to each
+    # other and only makes sense with a cast; a pose describes one body. A and B
+    # in the library text name the cast in mention order.
+    if len(cast) > 1 and req.interaction:
+        txt = _INTERACTIONS_FLAT.get(req.interaction, {}).get("text", "")
+        if txt:
+            for i, cid in enumerate(cast[:3]):
+                txt = txt.replace("AB"[i] if i < 2 else "C", face_tag[cid])
+            parts.append(txt)
+    elif req.pose.strip():
+        parts.append(req.pose.strip())
+
     if len(cast) > 1:
         names = ", ".join(rows[c]["name"] for c in cast)
-        head += (f" There are {len(cast)} DIFFERENT women in this photograph "
-                 f"({names}). Render them as distinct individuals who do not "
-                 f"resemble each other. Keep each face exactly as its own "
-                 f"reference shows it — do NOT blend, merge or average their "
-                 f"features, and never give two of them the same face.")
+        parts.append(f"There are {len(cast)} DIFFERENT women in this photograph "
+                     f"({names}). Render them as distinct individuals who do not "
+                     f"resemble each other. Keep each face exactly as its own "
+                     f"reference shows it — do NOT blend, merge or average their "
+                     f"features, and never give two of them the same face.")
 
-    text, _ = promptlib.sanitise(
-        f"{head} {scene.strip()} Photorealistic, real skin texture, natural "
-        f"light, sharp focus on every face.")
-    return text, refs, cast
+    holder = (promptlib.CAMERA_HOLDERS.get(req.holder) or {}).get("text", "")
+    if holder:
+        parts.append(holder)
+    flaw = (promptlib.SNAPSHOT_FLAWS.get(req.flaws) or {}).get("text", "")
+    if flaw:
+        parts.append(flaw)
+
+    parts.append("Photorealistic, real skin texture, natural light, sharp focus "
+                 "on every face.")
+
+    text, sanitised = promptlib.sanitise(" ".join(x for x in parts if x))
+    return {"prompt": text, "refs": refs, "cast": cast, "owner": owner,
+            "ledger": ledger, "sanitised": sanitised}
+
+
+@app.get("/api/scene/library")
+def scene_library(cast: int = 1, owner: str = ""):
+    """Moments, interactions and places for a cast of this size.
+
+    Filtered SERVER-side by cast: an interaction that needs two people must not
+    be offered to a solo scene, and the client should not have to know the rule.
+    Places are the OWNER's and are labelled with her name, so "whose kitchen" is
+    answered in the list rather than guessed at.
+    """
+    cid = owner or config.get_active()
+    who = (db.chars_get(cid) or {}).get("name", cid)
+
+    moments = {}
+    for group, items in MOMENTS.items():
+        keep = {mid: {**m, "id": mid} for mid, m in items.items()
+                if m["min_cast"] <= cast}
+        if keep:
+            moments[group] = list(keep.values())
+
+    inter = {}
+    for group, items in INTERACTIONS.items():
+        keep = [{"id": i, "text": d["text"]} for i, d in items.items()
+                if d["min_cast"] <= cast]
+        if keep:
+            inter[group] = keep
+
+    places = []
+    for c in (*HOME_CORNERS, *REGULAR_PLACES):
+        f = _corner_file(c["key"], cid)
+        # REGULAR_PLACES are already possessive ("Her gym", "Her street"), so
+        # prefixing blindly produced "Kiara's her street".
+        base = c["label"]
+        base = base[4:] if base.lower().startswith("her ") else base
+        places.append({"key": c["key"], "label": f"{who}'s {base.lower()}",
+                       "has_image": bool(f)})
+    return {"moments": moments, "interactions": inter, "places": places,
+            "holders": [{"id": k, **v} for k, v in promptlib.CAMERA_HOLDERS.items() if k],
+            "flaws": [{"id": k, **v} for k, v in promptlib.SNAPSHOT_FLAWS.items() if k],
+            "shot_types": [{"id": k, "label": k} for k in promptlib.SHOT_TYPES]}
 
 
 @app.post("/api/scene/preview")
 def scene_preview(req: SceneReq):
-    """The exact prompt and reference roles a scene would use, before spending."""
-    text, refs, cast = _build_scene(req.prompt, req.wardrobe)
-    return {"prompt": text, "cast": cast,
-            "references": [{"tag": f"@image{i+1}", "file": p.name}
-                           for i, p in enumerate(refs)]}
+    """The exact prompt, and the ledger of what it spent — before spending it.
+
+    The composer renders this rather than guessing: which references are attached,
+    at which tag, and what fell back to text. Tag roles are the failure that would
+    be invisible in the output, so they are readable here first.
+    """
+    s = _build_scene(req)
+    images = [x for x in s["ledger"] if x["mode"] == "image"]
+    return {"prompt": s["prompt"], "cast": s["cast"], "owner": s["owner"],
+            "ledger": s["ledger"], "images": len(images),
+            "sanitised": s["sanitised"]}
 
 
 @app.post("/api/scene")
@@ -3706,17 +3839,21 @@ def scene(req: SceneReq):
     the shape check_cast and the review already understand, so a scene needs no
     new review surface and the others still see themselves in it.
     """
-    text, refs, cast = _build_scene(req.prompt, req.wardrobe)
-    owner = cast[0]
+    s = _build_scene(req)
+    cast, owner, refs = s["cast"], s["owner"], s["refs"]
     session = generate.new_session(req.prompt.strip()[:60] or "scene")
 
     def run(job: dict) -> dict:
         return generate.generate(
-            prompt=text, system="", refs=refs, aspect=req.aspect,
+            prompt=s["prompt"], system="", refs=refs, aspect=req.aspect,
             seed=req.seed, session=session, progress=job, character=owner,
             fallback_endpoint=SCENE_EDIT, resolution=req.resolution,
             meta={"brief": req.prompt, "scene": True, "cast": cast,
-                  "wardrobe_by": req.wardrobe,
+                  "wardrobe_by": req.wardrobe, "place": req.place,
+                  "activity": req.activity, "interaction": req.interaction,
+                  # The ledger is kept so a scene can be read back later and the
+                  # reference count explained rather than re-derived.
+                  "ledger": s["ledger"],
                   "bio_references": [p.name for p in refs]})
 
     return {"job": generate.start_job(f"scene: {'+'.join(cast)}", run),
