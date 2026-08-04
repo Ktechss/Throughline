@@ -79,14 +79,8 @@ export default function Studio() {
   const lockFace = async (_char, runId) => {
     setGateBusy("Locking her face…");
     try {
-      const res = await api.send(`/api/characters/${charParam}/master-face`, "POST", { run_id: runId });
-      setGateBusy("Generating her body…");
-      for (;;) {
-        await new Promise((r) => setTimeout(r, 1200));
-        const st = await api.get(`/api/jobs/${res.job}`);
-        if (st.done) break;      // a body failure is not fatal — she is usable
-      }
-      await s.refresh();
+      await api.send(`/api/characters/${charParam}/master-face`, "POST", { run_id: runId });
+      await s.refresh();      // committing the face is the whole step now
     } catch (e) { s.setErr(String(e)); }
     finally { setGateBusy(null); }
   };

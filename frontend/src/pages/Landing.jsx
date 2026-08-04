@@ -122,14 +122,11 @@ export default function Landing() {
     setErr(null);
     setBuilding("Locking her face…");
     try {
-      const res = await api.send(`/api/characters/${character.id}/master-face`,
-                                 "POST", { run_id: runId });
-      setBuilding("Generating her body…");
-      for (;;) {
-        await new Promise((r) => setTimeout(r, 1200));
-        const st = await api.get(`/api/jobs/${res.job}`);
-        if (st.done) break;       // a body failure is not fatal — she is usable
-      }
+      await api.send(`/api/characters/${character.id}/master-face`,
+                     "POST", { run_id: runId });
+      // Nothing to wait for: committing the face IS the step. No body reference
+      // is generated here any more — it was a whole figure invented from a
+      // head-and-shoulders photo, and it showed.
       setPicking(null);
       await api.send("/api/characters/active", "PUT", { id: character.id }).catch(() => {});
       navigate(`/studio?char=${character.id}&tab=calibrate`);

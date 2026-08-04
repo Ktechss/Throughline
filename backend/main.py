@@ -866,7 +866,12 @@ def set_master_face(cid: str, req: MasterFaceReq):
                      the wrong tab. A character you cannot photograph is not a
                      character.
       calib_seed   — the face calibration generates its gallery angles FROM.
-      body ref     — generated from it, so build and face agree.
+
+    It does NOT generate a body reference. That was here and produced consistently
+    poor figures, because inventing a whole body from a head-and-shoulders photo
+    is a guess — and it then rode as @image2 on every later shot, so one bad guess
+    propagated. Build reaches the prompt as text instead; Bio -> Advanced body
+    makes a real one when there is a figure worth pinning.
 
     The face is verified to contain a detectable face first. `/api/bio/reference/
     from-run` has always done this and creation never did, which meant a seed
@@ -895,39 +900,21 @@ def set_master_face(cid: str, req: MasterFaceReq):
     cfg["calib_seed"] = dest.name
     bio_path.write_text(json.dumps(cfg, indent=2) + "\n")
 
-    def run(job: dict) -> dict:
-        # The body reference is a bonus, not a requirement — she already has a
-        # face and can be photographed. A body failure must not undo that.
-        job["stage"] = "generating body"
-        parts = _load_parts(cid)
-        figure = _BUILD_FIGURE.get((row.get("meta") or {}).get("build") or "") \
-            or promptlib.build_clause(parts)
-        body_prompt = (
-            "Full-body studio photograph of @image1 on a plain white seamless "
-            "background, lit flat and even. She stands straight and relaxed "
-            "facing the camera, arms at her sides, neutral expression, wearing "
-            "simple fitted plain activewear (a fitted tank top and leggings) so "
-            "her figure is clearly visible. Her FIGURE is the whole point of this "
-            "image: render her exact build faithfully and prominently, never "
-            f"substituting a generic slim fashion-model physique. Her build: "
-            f"{figure}. Her face and identity exactly match @image1. "
-            "Photorealistic, real skin texture, natural anatomy.")
-        body_row = generate.generate(
-            prompt=body_prompt, refs=[dest], aspect="3:4",
-            endpoint=EDIT, fallback_endpoint=SCENE_EDIT,
-            session=generate.new_session(f"body: {cid}"), progress=job,
-            character=cid, meta={"body_ref_create": True, "guided": True})
-        bsrc = config.char_base(cid) / "images" / body_row["file"]
-        if bsrc.exists():
-            bdst = _promote(bsrc, config.char_base(cid) / "refs" / "body-canonical.png")
-            c = json.loads(bio_path.read_text())
-            c["body_reference"] = bdst.name
-            bio_path.write_text(json.dumps(c, indent=2) + "\n")
-            body_row.setdefault("meta", {})["body_ref"] = bdst.name
-        return body_row
-
-    return {"reference": dest.name, "calib_seed": dest.name,
-            "job": generate.start_job(f"body: {cid}", run)}
+    # NO BODY REFERENCE. Creation used to generate one here and the results were
+    # consistently poor: a full-body activewear studio shot made from a single
+    # head-and-shoulders reference is asking the model to invent a whole figure
+    # from a face, and it invents a generic one. It then rode as @image2 on every
+    # later shot, so one bad guess propagated into everything.
+    #
+    # Nothing needs it. Both consumers guard with .exists(), so a character
+    # without one simply spends one fewer reference — which the measurement
+    # prefers anyway (2 refs 0.622, 3 refs 0.579) — and her proportions still
+    # reach every prompt through build_clause(), which is text and costs no slot.
+    #
+    # The capability is not gone, only the automatic one: Bio -> Advanced body
+    # still creates one deliberately, from a shape reference, when there is a
+    # figure worth pinning.
+    return {"reference": dest.name, "calib_seed": dest.name, "job": None}
 
 
 @app.get("/api/characters/{cid}/avatar")
