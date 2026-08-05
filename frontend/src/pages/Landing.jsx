@@ -96,7 +96,7 @@ export default function Landing() {
       }
       fd.append("home_style", form.home_style || "");
       fd.append("home_surroundings", form.home_surroundings || "");
-      fd.append("reference_mode", form.file ? "inspiration" : "none");
+      fd.append("reference_mode", form.file ? (form.refMode || "inspiration") : "none");
       if (form.file) fd.append("reference", form.file);
       const r = await fetch("/api/characters/guided", { method: "POST", body: fd });
       if (!r.ok) throw new Error((await r.text()).slice(0, 300));
@@ -327,6 +327,9 @@ function CreateDrawer({ onClose, onCreate, building }) {
   const [height, setHeight] = useState(168);
   const [age, setAge] = useState(null);
   const [faces, setFaces] = useState(4);
+  // "inspiration" = hair/mood only, she is a different person (4 generations).
+  // "identity"    = the upload IS her face (0 generations).
+  const [refMode, setRefMode] = useState("inspiration");
   const [look, setLook] = useState(null);
   const [homeStyle, setHomeStyle] = useState("");
   const [homeSurroundings, setHomeSurroundings] = useState("");
@@ -358,7 +361,7 @@ function CreateDrawer({ onClose, onCreate, building }) {
   const submit = () => {
     if (!name.trim() || building) return;
     onCreate({ name: name.trim(), description, face_shape: faceShape, build: bodyType,
-               height_cm: height, age: age || "", faces, look: look || "", ...picks,
+               height_cm: height, age: age || "", faces, look: look || "", refMode, ...picks,
                home_style: homeStyle, home_surroundings: homeSurroundings, file });
   };
 
@@ -417,11 +420,11 @@ function CreateDrawer({ onClose, onCreate, building }) {
             </div>
           </div>
 
-          {/* The only control here that spends. Each face is one generation, and
-              four is the ceiling because that is where the choice stops
-              improving — so this is a dial between "I know what I want" and
-              "show me options", not a quality setting. */}
-          <div>
+          {/* Faces cost money; the upload does not. Hidden entirely when the
+              upload IS her, because then there is nothing to generate and a
+              "faces to generate" dial would be offering to spend on something
+              already decided. */}
+          <div className={cn(file && refMode === "identity" && "hidden")}>
             <div className="flex items-center justify-between">
               <label className="text-[12px] font-medium text-zinc-300">Faces to generate</label>
               <span className="text-[11px] text-zinc-500">{faces} generation{faces > 1 ? "s" : ""}</span>
@@ -438,17 +441,62 @@ function CreateDrawer({ onClose, onCreate, building }) {
           </div>
 
           <div>
-            <label className="text-[12px] font-medium text-zinc-300">Style reference <span className="text-zinc-500 font-normal">(optional)</span></label>
+            <label className="text-[12px] font-medium text-zinc-300">Your own image <span className="text-zinc-500 font-normal">(optional)</span></label>
             {preview ? (
-              <div className="mt-1.5 flex items-center gap-3">
-                <img src={preview} alt="reference" className="h-20 w-16 rounded-md object-cover ring-1 ring-white/15" />
-                <button onClick={() => { setFile(null); setPreview(null); }} className="text-[12px] text-zinc-400 hover:text-rose-300 flex items-center gap-1"><X className="h-3.5 w-3.5" /> remove</button>
+              <div className="mt-1.5 space-y-2">
+                <div className="flex items-center gap-3">
+                  <img src={preview} alt="reference" className="h-20 w-16 rounded-md object-cover ring-1 ring-white/15" />
+                  <button onClick={() => { setFile(null); setPreview(null); }} className="text-[12px] text-zinc-400 hover:text-rose-300 flex items-center gap-1"><X className="h-3.5 w-3.5" /> remove</button>
+                </div>
+
+                {/* HOW the upload is used. The two modes are not variations of
+                    one another — one spends four generations to invent a
+                    different person, the other spends nothing and makes this
+                    picture her. */}
+                <div className="grid grid-cols-2 gap-1.5">
+                  {[
+                    { id: "identity", title: "This is her face", cost: "free",
+                      blurb: "Used exactly as uploaded. No faces generated." },
+                    { id: "inspiration", title: "Inspiration only", cost: `${faces} generation${faces > 1 ? "s" : ""}`,
+                      blurb: "Hair, mood and lighting only. She will be a different person." },
+                  ].map((m) => (
+                    <button key={m.id} onClick={() => setRefMode(m.id)}
+                      className={cn("rounded-lg px-2.5 py-2 text-left ring-1 transition-colors",
+                        refMode === m.id ? "bg-white/[0.07] ring-white/40" : "ring-white/10 hover:ring-white/25")}>
+                      <span className="flex items-baseline justify-between gap-1">
+                        <span className="text-[11px] font-medium text-zinc-200">{m.title}</span>
+                        <span className={cn("text-[9px]", m.cost === "free" ? "text-emerald-300" : "text-zinc-500")}>{m.cost}</span>
+                      </span>
+                      <span className="block text-[9px] text-zinc-500 leading-snug mt-0.5">{m.blurb}</span>
+                    </button>
+                  ))}
+                </div>
+
+                {refMode === "identity" ? (
+                  <div className="rounded-lg ring-1 ring-amber-400/25 bg-amber-400/5 px-3 py-2 space-y-1.5">
+                    <p className="text-[10px] text-amber-200/90 leading-relaxed">
+                      <strong className="font-medium">She must be fictional.</strong> This image is used as her face
+                      exactly as uploaded — nothing rewrites it. Do not upload a photograph of a real person.
+                    </p>
+                    <p className="text-[10px] text-zinc-400 leading-relaxed">
+                      <strong className="font-medium text-zinc-300">For the best results, calibrate her next.</strong>{" "}
+                      One upload is a single angle. Calibration generates her at twelve
+                      head angles and builds the identity gallery every later shot is
+                      scored against — that is where consistency actually comes from.
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-[10px] text-zinc-600 leading-relaxed">
+                    Her face comes from the pickers above, not from this image — the upload only
+                    steers hair, mood and lighting.
+                  </p>
+                )}
               </div>
             ) : (
               <label className="mt-1.5 rounded-lg border border-dashed border-white/15 px-4 py-6 flex flex-col items-center gap-2 text-center hover:border-white/30 cursor-pointer">
                 <Upload className="h-5 w-5 text-zinc-500" />
-                <p className="text-[11px] text-zinc-500">Upload a reference face image</p>
-                <p className="text-[10px] text-zinc-600">Used only for hair, mood and lighting — never her face. She will be a different person.</p>
+                <p className="text-[11px] text-zinc-500">Upload a face image</p>
+                <p className="text-[10px] text-zinc-600">Use it as her face and generate nothing, or as style inspiration only. You choose after uploading.</p>
                 <input type="file" accept="image/*" hidden onChange={pickFile} />
               </label>
             )}
@@ -535,7 +583,21 @@ function CreateDrawer({ onClose, onCreate, building }) {
         <div className="border-t border-white/5 px-6 py-4 flex items-center gap-3">
           <p className="hidden sm:flex flex-1 items-start gap-2 text-[11px] text-zinc-500 leading-relaxed">
             <Sparkles className="h-3.5 w-3.5 text-amber-300 flex-shrink-0 mt-0.5" />
-            bio → {faces} face{faces > 1 ? "s" : ""}{homeStyle.trim() ? " → home" : ""}. You pick her face, then her body is generated from it.
+            {(() => {
+              const own = file && refMode === "identity";
+              const n = (own ? 0 : faces) + (homeStyle.trim() ? HOME_CORNER_COUNT : 0);
+              return (
+                <>
+                  bio → {own ? "her face (uploaded)" : `${faces} face${faces > 1 ? "s" : ""}`}
+                  {homeStyle.trim() ? ` → ${HOME_CORNER_COUNT} home corners` : ""}.{" "}
+                  <span className={n === 0 ? "text-emerald-300" : ""}>
+                    {n === 0 ? "No generations — free." : `${n} generation${n > 1 ? "s" : ""}.`}
+                  </span>{" "}
+                  {own ? "She is shootable immediately; calibrate her next."
+                       : "You pick her face, then calibrate her."}
+                </>
+              );
+            })()}
           </p>
           <button onClick={onClose} disabled={!!building} className="rounded-lg ring-1 ring-white/10 px-5 py-2.5 text-[13px] text-zinc-300 hover:bg-white/5 disabled:opacity-40">Cancel</button>
           <button onClick={submit} disabled={!name.trim() || !!building} className="rounded-lg bg-white text-black px-6 py-2.5 text-[13px] font-medium hover:bg-zinc-200 disabled:opacity-40 flex items-center justify-center gap-2">

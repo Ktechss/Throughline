@@ -14,6 +14,7 @@ from datetime import date
 from pathlib import Path
 
 import shutil
+import tempfile
 
 from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -483,7 +484,24 @@ MASTER_FACE_NEGATIVE = (
 # never the face. Identity-lock mode is real and useful, but it belongs to HER
 # OWN approved master face, which is what every later shot already does; it is
 # not something an upload can opt into.
-REFERENCE_MODES = ("none", "inspiration")
+# "identity" is the third mode, and the only one that spends NOTHING.
+#
+# Creation's expensive step is inventing a face: four candidates at ~100s and one
+# generation each, and most of the time the owner already has the face. They made
+# it somewhere else, looked at it, and decided. Regenerating it here is paying
+# twice for a decision already taken — and it cannot even reproduce it, because
+# "inspiration" is forbidden from copying a face by design.
+#
+# So: upload it and it IS her. Zero generations, instant, and the picture she is
+# built on is the one that was chosen rather than a fifth approximation of it.
+#
+# THE RULE THIS DOES NOT RELAX. She is entirely fictional; no real person's
+# likeness, anywhere, ever. In "inspiration" mode that is enforced by the prompt,
+# which is why _NOT_HER exists and why an inspiration upload never becomes an
+# avatar. In "identity" mode there is no prompt to enforce anything — the file is
+# used as-is — so the guarantee moves to the person uploading. The UI states it
+# at the point of choosing, and it belongs there rather than buried here.
+REFERENCE_MODES = ("none", "inspiration", "identity")
 
 # Enough to see real variation without turning creation into a spending
 # decision. Four faces from one spec differ in exactly the way that matters
@@ -622,6 +640,49 @@ def _height_text(cm: int) -> str:
     return f"{cm}cm ({total_in // 12}'{total_in % 12}\")"
 
 
+def _write_bio(cid: str, updates: dict) -> None:
+    """Read-modify-write bio.json for one character.
+
+    Deliberately on the RAW file rather than through _bio_cfg(), which injects
+    Kiara.png and cd-body.png as defaults — writing those back would bake the
+    original character's reference into every new character's bio.
+    """
+    path = _state_path("bio.json", cid)
+    cfg = json.loads(path.read_text()) if path.exists() else {}
+    cfg.update(updates)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(cfg, indent=2) + "\n")
+
+
+def _build_home(job: dict, cid: str, style: str, surroundings: str) -> int:
+    """Her ten home corners, or none. Returns how many were rendered.
+
+    Gated on the style text being present: with nothing to describe the house,
+    ten generations buy ten unrelated generic rooms — real spend for something
+    the Home tab can do better later, once she has a home worth describing.
+    Silence here is a deliberate skip, and it is said out loud in the job note
+    rather than left to be discovered.
+
+    Shared by both creation paths so that skipping face generation does not also
+    skip the home, and so the ten-generation decision lives in exactly one place.
+    """
+    style, surroundings = style.strip(), surroundings.strip()
+    if style or surroundings:
+        _state_path("home.json", cid).write_text(json.dumps(
+            {"style": style, "surroundings": surroundings}, indent=2) + "\n")
+    if not style:
+        job["note"] = ("home skipped — no house style given; "
+                       "generate corners from the Home tab")
+        return 0
+    # Same argument as the faces, and a bigger win: ten rooms one after another
+    # was the longest part of a build by far.
+    rooms, failed = _parallel(
+        HOME_CORNERS, lambda c: _render_corner(c["key"], None, cid), job, "rooms")
+    if failed:
+        job["note"] = f"{len(failed)} home corners failed: {failed[0]}"
+    return len(rooms)
+
+
 @app.post("/api/characters/guided")
 async def create_character_guided(
     name: str = Form(...),
@@ -707,18 +768,51 @@ async def create_character_guided(
     picks = {k: v.strip().lower() for k, v in picks.items()}
     skin = _skin_text(skin_tone.strip().lower(), skin_undertone.strip().lower())
 
+    # READ AND VALIDATE THE UPLOAD FIRST, before any character exists.
+    #
+    # This was a rollback — create the character, then delete it again if the
+    # image turned out to have no face in it. That is the wrong shape twice over:
+    # set_active() had already pointed the app at the character being deleted, so
+    # the next request recreated its folders, and a failed creation left an empty
+    # directory and an active id naming nobody. Validating first means there is
+    # nothing to undo.
+    data: bytes = b""
+    ext = ".png"
+    if reference is not None and reference_mode != "none":
+        data = await reference.read()
+        ext = Path(reference.filename or "seed.png").suffix.lower()
+        if ext not in (".png", ".jpg", ".jpeg", ".webp"):
+            ext = ".png"
+    use_own_face = bool(data) and reference_mode == "identity"
+    if use_own_face:
+        tmp = Path(tempfile.gettempdir()) / f"tl-identity-probe{ext}"
+        tmp.write_bytes(data)
+        try:
+            gate.analyze(tmp)
+        except (gate.NoFaceFound, ValueError):
+            raise HTTPException(
+                400, "no face detected in that image — upload a clear, "
+                     "front-facing photo of her, or generate faces instead") from None
+        finally:
+            tmp.unlink(missing_ok=True)
+
     cid = _unique_char_id(name)
     config.ensure_char_dirs(cid)
     char = db.chars_create(cid, name)
     config.set_active(cid)                # the build job runs on the now-active char
 
     seed_upload: Path | None = None
-    if reference is not None and reference_mode != "none":
-        data = await reference.read()
-        if data:
-            ext = Path(reference.filename or "seed.png").suffix.lower()
-            if ext not in (".png", ".jpg", ".jpeg", ".webp"):
-                ext = ".png"
+    own_face: Path | None = None
+    if data:
+        if use_own_face:
+            # Named as HER, not as a seed. The _NOT_HER exclusion exists to keep
+            # an *inspiration* upload off her card, because that one may be a
+            # photograph of someone real; this one is the face she is, so it must
+            # be the file every later shot points at.
+            own_face = config.char_base(cid) / "refs" / f"{cid}-identity{ext}"
+            own_face.parent.mkdir(parents=True, exist_ok=True)
+            own_face.write_bytes(data)
+        else:
             seed_upload = _unique_ref_path(f"seed-upload{ext}")
             seed_upload.write_bytes(data)
 
@@ -807,6 +901,24 @@ async def create_character_guided(
         #
         # Nothing is committed here. No reference, no calib seed, no body. The
         # candidates are just rows; the pick endpoint does the committing.
+        #
+        # UNLESS she arrived with her own face. Then there is nothing to invent
+        # and nothing to choose between: commit it and skip the whole step. This
+        # is the entire saving — four generations and ~100s of wall clock — and
+        # it is also the only path where the face she ends up with is exactly the
+        # one that was looked at and approved.
+        if own_face is not None:
+            job["stage"] = "committing her face"
+            _write_bio(cid, {"reference": own_face.name,
+                             "calib_seed": own_face.name})
+            corners = _build_home(job, cid, home_style, home_surroundings) \
+                if home_style.strip() else 0
+            return {"character": cid, "home_corners": corners, "candidates": [],
+                    # No picker to show: she is ready to shoot immediately. The
+                    # caller sends her to Calibrate instead, which is where the
+                    # quality actually comes from.
+                    "face_from_upload": True}
+
         job["stage"] = "generating faces"
         prompt = _master_face_prompt(parts, inspired=bool(seed_upload), look=look)
         refs = [seed_upload] if seed_upload else None
@@ -847,24 +959,7 @@ async def create_character_guided(
         #    for something the Home tab can do better later, once she has a home
         #    worth describing. Silence here is a deliberate skip, and it is said
         #    out loud in the job note rather than left to be discovered.
-        style = home_style.strip()
-        corners_done = 0
-        if style or home_surroundings.strip():
-            _state_path("home.json", cid).write_text(json.dumps(
-                {"style": style, "surroundings": home_surroundings.strip()},
-                indent=2) + "\n")
-        if style:
-            # Same argument as the faces, and a bigger win: ten rooms one after
-            # another was the longest part of a build by far.
-            rooms, failed = _parallel(
-                HOME_CORNERS, lambda c: _render_corner(c["key"], None, cid),
-                job, "rooms")
-            corners_done = len(rooms)
-            if failed:
-                job["note"] = f"{len(failed)} home corners failed: {failed[0]}"
-        else:
-            job["note"] = ("home skipped — no house style given; "
-                           "generate corners from the Home tab")
+        corners_done = _build_home(job, cid, home_style, home_surroundings)
 
         # Nothing is committed yet — that is the point. The caller picks one of
         # these and POSTs it back to /api/characters/{cid}/master-face, which is
