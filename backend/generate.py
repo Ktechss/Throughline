@@ -155,6 +155,42 @@ CONTENT_RETRIES = 2
 # ~2 min, so 5 min of total headroom never trips a legitimate generation.
 START_TIMEOUT = 180      # seconds to leave the queue before giving up
 CLIENT_TIMEOUT = 300     # seconds total for one subscribe() attempt
+# How many times to try pulling the finished image before giving up and parking
+# it for refetch. The generation is already paid for by then, so a transient
+# stall is worth another connection: three attempts cost minutes, one lost image
+# costs a generation and, if it is a calibration face, a whole calibration run.
+DOWNLOAD_ATTEMPTS = 3
+
+
+def _download(url: str, dest, rid: str) -> None:
+    """Pull one finished image, with a TOTAL wall-clock budget on the read loop.
+
+    urlopen's timeout is PER socket read, not total — a connection that trickles
+    a few bytes inside each window never trips it and hangs the worker for
+    minutes (observed: stuck 'downloading' at 250s+ with a 120s timeout). So the
+    deadline is enforced here rather than left to the socket.
+
+    Raises RuntimeError on a stall or a truncated file, and leaves nothing
+    behind: a truncated image gates as no_face, which looks identical to identity
+    drift — a dead connection recorded as a model failure.
+    """
+    import urllib.request as _u
+    deadline = time.monotonic() + DOWNLOAD_TIMEOUT
+    with _u.urlopen(url, timeout=DOWNLOAD_TIMEOUT) as resp, open(dest, "wb") as fh:
+        while True:
+            if time.monotonic() > deadline:
+                fh.close()
+                dest.unlink(missing_ok=True)
+                raise RuntimeError(f"download timed out after {DOWNLOAD_TIMEOUT}s "
+                                   f"(stalled/slow connection to fal) ({rid})")
+            chunk = resp.read(262144)   # 256 KB
+            if not chunk:
+                break
+            fh.write(chunk)
+    if dest.stat().st_size < 10_000:
+        dest.unlink(missing_ok=True)
+        raise RuntimeError(f"truncated download ({rid})")
+
 DOWNLOAD_TIMEOUT = 240   # total seconds for the result image download. 4K results
                          # are ~18-20 MB; on a slow link to fal's CDN, 120s wasn't
                          # enough and shots failed on download. Total wall-clock
@@ -286,26 +322,53 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
     # hangs the worker for minutes (observed: stuck 'downloading' at 250s+ with a
     # 120s timeout). Enforce a TOTAL wall-clock budget on the read loop so a slow
     # or stalled transfer fails cleanly and the shot can be retried.
-    deadline = time.monotonic() + DOWNLOAD_TIMEOUT
     source_url = r["images"][0]["url"]
-    with urllib.request.urlopen(source_url, timeout=DOWNLOAD_TIMEOUT) as resp, \
-            open(dest, "wb") as fh:
-        while True:
-            if time.monotonic() > deadline:
-                fh.close()
-                dest.unlink(missing_ok=True)
-                raise RuntimeError(f"download timed out after {DOWNLOAD_TIMEOUT}s "
-                                   f"(stalled/slow connection to fal) ({rid})")
-            chunk = resp.read(262144)   # 256 KB
-            if not chunk:
-                break
-            fh.write(chunk)
 
-    # A truncated download gates as no_face, which looks identical to identity
-    # drift — a dead connection recorded as a model failure.
-    if dest.stat().st_size < 10_000:
-        dest.unlink(missing_ok=True)
-        raise RuntimeError(f"truncated download ({rid})")
+    # RETRY, then RECORD. The image is already made and already paid for by the
+    # time this line runs; everything after it is a local plumbing problem, and a
+    # plumbing problem must never destroy a generation.
+    #
+    # It did, once: twelve calibration faces for one character all failed here
+    # with "stalled/slow connection to fal", and because the row is only written
+    # AFTER a successful download, the URL died with the exception. The
+    # source_url field exists precisely so a missing file can be re-fetched for
+    # free instead of regenerated for money — and the one case it was for was the
+    # one case it was not saved. They were recovered by hand out of fal's request
+    # history, which is not a recovery procedure anybody should need.
+    err = None
+    for attempt in range(DOWNLOAD_ATTEMPTS):
+        if attempt and progress is not None:
+            progress["stage"] = f"downloading (retry {attempt})"
+        try:
+            _download(source_url, dest, rid)
+            err = None
+            break
+        # OSError covers urllib's URLError and HTTPError; RuntimeError is our own
+        # stall/truncation. Catching only the latter would have let a plain
+        # network error skip the parking below — the exact hole this whole change
+        # exists to close, reopened one line lower.
+        except (RuntimeError, OSError) as exc:
+            err = exc
+            dest.unlink(missing_ok=True)
+    if err is not None:
+        # Park a row carrying the URL so /api/runs/refetch can finish the job.
+        # `file` names a path that is deliberately NOT on disk, which is exactly
+        # the shape /api/runs/missing already looks for.
+        db.runs_insert({
+            "id": rid, "session": session or new_session("ad-hoc"),
+            "file": dest.name, "source_url": source_url, "endpoint": used_ep,
+            "moderation_fallback": moderation_fallback, "prompt": prompt,
+            "system": system, "refs": [p.name for p in refs],
+            "pose": pose_file.name if pose_file else None, "seed": seed,
+            "aspect": aspect, "resolution": resolution or RESOLUTION,
+            "seconds": round(time.time() - t0, 1),
+            "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "auto_leveled": 0.0, "mark": None, "meta": meta or {},
+            "verdict": {"status": "error",
+                        "reason": f"{err} — image is on fal, refetch to recover"},
+        }, character_id=owner)
+        raise RuntimeError(f"{err}; the image was generated and its URL is saved "
+                           f"— recover it from Review > missing images ({rid})")
 
     if progress is not None:
         progress["stage"] = "leveling & gating"
