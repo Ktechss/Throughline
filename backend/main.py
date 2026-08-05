@@ -654,6 +654,74 @@ def _write_bio(cid: str, updates: dict) -> None:
     path.write_text(json.dumps(cfg, indent=2) + "\n")
 
 
+def _bodies_available() -> list[dict]:
+    """Characters whose body reference exists on disk and can be copied."""
+    out = []
+    for row in db.chars_all():
+        cid = row["id"]
+        path = _state_path("bio.json", cid)
+        cfg = json.loads(path.read_text()) if path.exists() else {}
+        name = cfg.get("body_reference")
+        if name and (config.char_base(cid) / "refs" / name).exists():
+            out.append({"id": cid, "name": row["name"], "file": name})
+    return out
+
+
+def _copy_body_from(src_cid: str, dst_cid: str) -> str | None:
+    """Copy one character's body reference onto another, WITHOUT her head.
+
+    Sharing a figure is a reasonable thing to want and costs a generation to
+    reproduce. Sharing the image as-is is not: a body reference is a full-length
+    photograph and it contains a FACE — measured, 427px and frontal on one of
+    these, and three faces on another because it is a turnaround sheet. That
+    image is appended to `refs` on every shot, and `compose_tagged` has no role
+    line for it, so nothing tells the model whose face to ignore. Copying it
+    across characters would attach one woman's face to another woman's every
+    photograph, which is the blending failure built by hand.
+
+    So the head comes off. Everything below the lowest detected chin is kept,
+    which is exactly the part anyone wanted to share — shoulders, waist, hips,
+    limbs, proportion — and there is no identity left in the file to leak.
+
+    Returns the new filename, or None if there was nothing to copy.
+    """
+    src_path = _state_path("bio.json", src_cid)
+    cfg = json.loads(src_path.read_text()) if src_path.exists() else {}
+    name = cfg.get("body_reference")
+    if not name:
+        return None
+    src = config.char_base(src_cid) / "refs" / name
+    if not src.exists():
+        return None
+
+    dst = config.char_base(dst_cid) / "refs" / f"body-canonical{src.suffix}"
+    dst.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        from PIL import Image
+        faces = gate.analyze_all(src)
+        with Image.open(src) as im:
+            box = gate.face_box(src)
+            # face_box gives the best face; for a multi-face sheet take the
+            # LOWEST chin so no head survives the crop.
+            bottom = box[3] if box else 0
+            if len(faces) > 1:
+                bottom = max(bottom, int(im.height * 0.28))
+            cut = min(int(bottom * 1.06), int(im.height * 0.55))
+            if cut > 0 and im.height - cut > 200:
+                im.crop((0, cut, im.width, im.height)).save(dst)
+            else:
+                shutil.copy2(src, dst)
+    except Exception:  # noqa: BLE001 — a failed crop must not silently ship a face
+        try:
+            if gate.face_box(src):
+                return None          # refuse rather than copy a head across
+        except Exception:  # noqa: BLE001
+            return None
+        shutil.copy2(src, dst)
+    return dst.name
+
+
 def _build_home(job: dict, cid: str, style: str, surroundings: str) -> int:
     """Her ten home corners, or none. Returns how many were rendered.
 
@@ -707,6 +775,7 @@ async def create_character_guided(
     hair_colour: str = Form(""),
     hair_length: str = Form(""),
     hair_texture: str = Form(""),
+    body_from: str = Form(""),   # copy this character's FIGURE (head cropped off)
     home_style: str = Form(""),
     home_surroundings: str = Form(""),
     reference: UploadFile | None = File(None),
@@ -800,6 +869,13 @@ async def create_character_guided(
     config.ensure_char_dirs(cid)
     char = db.chars_create(cid, name)
     config.set_active(cid)                # the build job runs on the now-active char
+
+    # Her figure, copied from someone who already has one. Free, instant, and
+    # headless — see _copy_body_from for why the crop is not optional.
+    if body_from.strip() and db.chars_get(body_from.strip()):
+        copied = _copy_body_from(body_from.strip(), cid)
+        if copied:
+            _write_bio(cid, {"body_reference": copied})
 
     seed_upload: Path | None = None
     own_face: Path | None = None
@@ -3290,6 +3366,8 @@ def character_options():
     """
     return {
         "max_faces": MASTER_FACE_CANDIDATES,
+        # Whose figure can be copied into a new character, free.
+        "bodies_available": _bodies_available(),
         "looks": list(LOOKS),
         "default_look": DEFAULT_LOOK,
         "face_shapes": FACE_SHAPES,

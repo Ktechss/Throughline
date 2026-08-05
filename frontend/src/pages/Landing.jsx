@@ -94,6 +94,7 @@ export default function Landing() {
                        "hair_colour", "hair_length", "hair_texture"]) {
         fd.append(k, form[k] || "");
       }
+      fd.append("body_from", form.body_from || "");
       fd.append("home_style", form.home_style || "");
       fd.append("home_surroundings", form.home_surroundings || "");
       fd.append("reference_mode", form.file ? (form.refMode || "inspiration") : "none");
@@ -330,6 +331,8 @@ function CreateDrawer({ onClose, onCreate, building }) {
   // "inspiration" = hair/mood only, she is a different person (4 generations).
   // "identity"    = the upload IS her face (0 generations).
   const [refMode, setRefMode] = useState("inspiration");
+  // Copy an existing character's FIGURE (head cropped off server-side).
+  const [bodyFrom, setBodyFrom] = useState("");
   const [look, setLook] = useState(null);
   const [homeStyle, setHomeStyle] = useState("");
   const [homeSurroundings, setHomeSurroundings] = useState("");
@@ -361,7 +364,8 @@ function CreateDrawer({ onClose, onCreate, building }) {
   const submit = () => {
     if (!name.trim() || building) return;
     onCreate({ name: name.trim(), description, face_shape: faceShape, build: bodyType,
-               height_cm: height, age: age || "", faces, look: look || "", refMode, ...picks,
+               height_cm: height, age: age || "", faces, look: look || "", refMode,
+               body_from: bodyFrom, ...picks,
                home_style: homeStyle, home_surroundings: homeSurroundings, file });
   };
 
@@ -559,6 +563,35 @@ function CreateDrawer({ onClose, onCreate, building }) {
             open={open.has("body")} onToggle={toggle("body")}>
             <Chips label="Body type" options={opts?.builds || BODY_TYPES}
                    value={bodyType} onChange={setBodyType} />
+
+            {/* Copy a figure that already exists instead of building one later.
+                A body reference is a full-length photograph and it contains a
+                FACE, so the server crops the head off before copying — what
+                transfers is the proportions, never the identity. Free. */}
+            {(opts?.bodies_available || []).length > 0 && (
+              <div>
+                <label className="text-[11px] text-zinc-400">Copy her figure from</label>
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  <button onClick={() => setBodyFrom("")}
+                    className={cn("rounded-lg px-2.5 py-1 text-[11px] ring-1 transition-colors",
+                      !bodyFrom ? "bg-white text-black ring-white" : "ring-white/10 text-zinc-400 hover:text-white")}>
+                    nobody
+                  </button>
+                  {(opts.bodies_available || []).map((b) => (
+                    <button key={b.id} onClick={() => setBodyFrom(bodyFrom === b.id ? "" : b.id)}
+                      className={cn("rounded-lg px-2.5 py-1 text-[11px] ring-1 transition-colors",
+                        bodyFrom === b.id ? "bg-white text-black ring-white" : "ring-white/10 text-zinc-400 hover:text-white")}>
+                      {b.name}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[10px] text-zinc-500 mt-1.5">
+                  {bodyFrom
+                    ? "Her figure is copied with the head cropped off — proportions only, no face. Free."
+                    : "Leave as nobody and build one later from Bio → Advanced body, or skip it entirely."}
+                </p>
+              </div>
+            )}
             <div>
               <div className="flex items-center justify-between">
                 <label className="text-[11px] text-zinc-400 flex items-center gap-1.5"><Ruler className="h-3 w-3" /> Height</label>
