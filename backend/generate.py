@@ -7,6 +7,7 @@ gate's verdict. A generation you can't reproduce is an anecdote.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import time
@@ -151,15 +152,67 @@ CONTENT_RETRIES = 2
 # Hard ceilings so a stalled fal call (a hung queue, an oversized ref the model
 # chokes on) fails the job with a reason instead of spinning forever. START is
 # how long we wait to even leave fal's queue; CLIENT is the total wall-clock for
-# one attempt. A 4-panel wardrobe turnaround is the slowest real request at
-# ~2 min, so 5 min of total headroom never trips a legitimate generation.
+# one attempt.
+#
+# CLIENT_TIMEOUT was 300, chosen when "a 4-panel wardrobe turnaround is the
+# slowest real request at ~2 min, so 5 min never trips a legitimate generation".
+# That stopped being true. Measured over one afternoon's fal requests:
+#
+#     median 312s    p90 659s    max 659s
+#     4 of 8 requests exceeded the 300s ceiling
+#
+# The ceiling had drifted BELOW the median, so half of all generations were
+# being abandoned after fal had already made and billed them. Three calibration
+# faces and a wardrobe turnaround were lost that way in a single session, each
+# recoverable only by hand out of fal's request history.
+#
+# So: 15 minutes, comfortably past p90. And a timeout is no longer fatal —
+# _reclaim() below asks fal for the result the client stopped waiting for.
 START_TIMEOUT = 180      # seconds to leave the queue before giving up
-CLIENT_TIMEOUT = 300     # seconds total for one subscribe() attempt
+CLIENT_TIMEOUT = 900     # seconds total for one subscribe() attempt
+
+# How long to keep asking fal for a result our client timed out on. The image is
+# already paid for at that point, so patience here is free and giving up is not.
+RECLAIM_TIMEOUT = 900
+RECLAIM_POLL = 10
 # How many times to try pulling the finished image before giving up and parking
 # it for refetch. The generation is already paid for by then, so a transient
 # stall is worth another connection: three attempts cost minutes, one lost image
 # costs a generation and, if it is a calibration face, a whole calibration run.
 DOWNLOAD_ATTEMPTS = 3
+
+
+_REQ_ID = re.compile(r"\b([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b")
+
+
+def _reclaim(exc: Exception, endpoint: str, progress: dict | None):
+    """A client timeout is not a lost generation — ask fal for it.
+
+    fal_client.subscribe() gives up after CLIENT_TIMEOUT and raises, throwing
+    away a request that is still running and will still be billed. But the
+    exception names the request id, and fal keeps the result: fal_client.result()
+    fetches it once it lands.
+
+    So a timeout becomes "wait longer" instead of "pay again". Returns the result
+    payload, or None if there is no request id to chase or fal genuinely failed.
+
+    This exists because 50% of one afternoon's requests exceeded the old ceiling
+    and every one of them had to be recovered by hand from fal's request history.
+    """
+    m = _REQ_ID.search(str(exc))
+    if not m:
+        return None
+    req_id = m.group(1)
+    deadline = time.monotonic() + RECLAIM_TIMEOUT
+    while time.monotonic() < deadline:
+        if progress is not None:
+            progress["stage"] = "still running on fal — waiting"
+        try:
+            return fal_client.result(endpoint, req_id)
+        except Exception:  # noqa: BLE001 — not ready yet, or a real failure
+            pass
+        time.sleep(RECLAIM_POLL)
+    return None
 
 
 def _download(url: str, dest, rid: str) -> None:
@@ -308,6 +361,14 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
                                              if falling_back
                                              else "moderation retry")
                     continue
+                # A TIMEOUT is not a failure, it is impatience. The request is
+                # still running on fal and will still be billed, so go and get
+                # it rather than raising and losing a paid generation.
+                if "timed out" in str(exc).lower():
+                    reclaimed = _reclaim(exc, ep, progress)
+                    if reclaimed is not None:
+                        r, used_ep = reclaimed, ep
+                        break
                 raise
         if r is not None:
             break
