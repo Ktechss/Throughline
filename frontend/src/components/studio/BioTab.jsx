@@ -1,3 +1,4 @@
+import { refUrl, apiCharacter } from "@/api/throughline";
 import React, { useState } from "react";
 import { Lock, Star, Upload, Trash2, RefreshCw, ImageOff, ImagePlus, X, LoaderCircle, Home, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -136,7 +137,7 @@ function HomeSection({ home, busy, onSaveHome, onUpload, onGenerate, onDelete })
                     <span className="text-[10px] text-sky-300">{stage}</span>
                   </div>
                 ) : c.has_image ? (
-                  <img src={`/api/home/${c.key}/thumb?t=${stamp}`} alt={c.label} className="h-full w-full object-cover" />
+                  <img src={`/api/home/${c.key}/thumb?t=${stamp}&character=${apiCharacter() || ""}`} alt={c.label} className="h-full w-full object-cover" />
                 ) : (
                   <span className="text-[10px] text-zinc-600">no image yet</span>
                 )}
@@ -191,7 +192,7 @@ function Overview({ bio, gallery, parts, hasIdentity, refs, onSetBio, onDeleteRe
               <div className="relative h-40 w-32 rounded-xl overflow-hidden ring-1 ring-white/10 flex-shrink-0 bg-zinc-900 flex items-center justify-center">
                 {bio.reference ? (
                   <>
-                    <img src={`/api/refs/${bio.reference}/file`} alt="identity" className="h-full w-full object-cover" />
+                    <img src={refUrl(bio.reference)} alt="identity" className="h-full w-full object-cover" />
                     <div className="absolute top-1.5 left-1.5 rounded bg-black/60 backdrop-blur px-1.5 py-0.5 text-[9px] font-bold text-amber-300 ring-1 ring-amber-500/30">BIO</div>
                   </>
                 ) : (
@@ -336,7 +337,7 @@ function FaceManager({ bio, refs, onSetBio, onDeleteRef, onToGallery, onImport, 
           return (
             <div key={r.name} className={cn("rounded-xl ring-1 ring-white/8 bg-white/[0.02] overflow-hidden", isBio && "ring-amber-500/40")}>
               <div className="relative aspect-square overflow-hidden bg-zinc-900">
-                <img src={`/api/refs/${r.name}/thumb`} alt={r.name} className={cn("h-full w-full object-cover", !r.usable && "opacity-40")} />
+                <img src={refUrl(r.name, "thumb")} alt={r.name} className={cn("h-full w-full object-cover", !r.usable && "opacity-40")} />
                 {isBio && (
                   <span className="absolute top-2 left-2 rounded bg-black/60 px-1.5 py-0.5 text-[9px] font-bold text-amber-300 ring-1 ring-amber-500/30">
                     BIO
@@ -447,7 +448,7 @@ function AdvancedBody({ bodies, bodyPreview, bodyBusy, onUploadShape, onCreateBo
           <p className="text-[10px] text-zinc-600 mb-3">Optional — a figure whose proportions to match (headless/faceless is fine).</p>
           {shapeRef ? (
             <div className="relative inline-block">
-              <img src={`/api/refs/${shapeRef}/file`} alt="shape ref" className="h-28 w-24 rounded-md ring-1 ring-sky-500/40 object-cover" />
+              <img src={refUrl(shapeRef)} alt="shape ref" className="h-28 w-24 rounded-md ring-1 ring-sky-500/40 object-cover" />
               <button onClick={() => setShapeRef(null)} title="remove shape reference" className="absolute -right-2 -top-2 rounded-full bg-zinc-800 p-0.5 text-rose-400 ring-1 ring-white/10"><X className="h-3 w-3" /></button>
             </div>
           ) : (

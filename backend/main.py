@@ -1540,8 +1540,13 @@ def pose_ref_thumb(name: str):
 
 
 @app.get("/api/refs/{name}/thumb")
-def ref_thumb(name: str):
-    return _serve_thumb(REFS, name, (256, 384))
+def ref_thumb(name: str, character: str = ""):
+    # ?character= because an <img> cannot send X-Character. Reference FILENAMES
+    # collide across characters by design — every one of them has a
+    # calib-front.png and a body-canonical.webp — so an unscoped request does not
+    # 404, it silently serves whoever happens to be active. That is how one
+    # character's calibration face appeared inside another's Bio tab.
+    return _serve_thumb(config.char_base(character or None) / "refs", name, (256, 384))
 
 
 # ---------------------------------------------------------------- gallery
@@ -1856,8 +1861,8 @@ def delete_ref(name: str):
 
 
 @app.get("/api/refs/{name}/file")
-def ref_file(name: str):
-    p = REFS / Path(name).name
+def ref_file(name: str, character: str = ""):
+    p = config.char_base(character or None) / "refs" / Path(name).name
     if not p.exists():
         raise HTTPException(404, name)
     return FileResponse(p)
@@ -2728,8 +2733,8 @@ def wardrobe_from_run(payload: dict = Body(...)):
 
 
 @app.get("/api/wardrobe/{name}/file")
-def wardrobe_file(name: str):
-    p = WARDROBE / Path(name).name
+def wardrobe_file(name: str, character: str = ""):
+    p = config.char_base(character or None) / "wardrobe" / Path(name).name
     if not p.exists():
         raise HTTPException(404, name)
     return FileResponse(p)
@@ -3289,8 +3294,11 @@ def home_file(key: str):
 
 
 @app.get("/api/home/{key}/thumb")
-def home_thumb(key: str):
-    f = _corner_file(key)
+def home_thumb(key: str, character: str = ""):
+    # Corner KEYS collide across every character — they all have a "kitchen" and
+    # a "bedroom". Unscoped, this serves the active character's room inside
+    # someone else's Home tab.
+    f = _corner_file(key, character or None)
     if not f:
         raise HTTPException(404, key)
     return _serve_thumb(PLACES, f.name, (320, 240))

@@ -1,3 +1,4 @@
+import { refUrl } from "@/api/throughline";
 import React, { useState } from "react";
 import { Upload, Star, Loader2, RefreshCw, Lock, Check, X } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -109,7 +110,7 @@ function SeedStep({ bio, seed, onUploadSeed, onContinue }) {
         <div className="flex gap-3">
           <div className="relative h-40 w-32 rounded-xl overflow-hidden ring-1 ring-white/10 flex-shrink-0 bg-zinc-900">
             {bio?.calib_seed ? (
-              <img src={`/api/refs/${bio.calib_seed}/file`} alt="seed" className="h-full w-full object-cover" />
+              <img src={refUrl(bio.calib_seed)} alt="seed" className="h-full w-full object-cover" />
             ) : (
               <div className="h-full w-full flex items-center justify-center text-[10px] text-zinc-600 text-center px-2">no seed image set</div>
             )}

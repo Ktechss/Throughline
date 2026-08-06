@@ -7,6 +7,20 @@
 // generated for one character ended up filed under a different one.
 let _character = null
 export const setApiCharacter = (id) => { _character = id || null }
+export const apiCharacter = () => _character
+
+// URL for a per-character REFERENCE image, scoped.
+//
+// An <img> cannot send X-Character, and reference filenames collide across
+// characters by design — every one of them has a calib-front.png and a
+// body-canonical.webp. So an unscoped /api/refs/... does not 404, it silently
+// serves whoever is active: that is how one character's calibration face turned
+// up inside another's Bio tab. Same fix, same reason, as outfitView().
+export const refUrl = (name, kind = "file") => {
+  if (!name) return ""
+  const q = _character ? `?character=${encodeURIComponent(_character)}` : ""
+  return `/api/refs/${name}/${kind}${q}`
+}
 const _headers = (base = {}) => (_character ? { ...base, "X-Character": _character } : base)
 
 export const api = {

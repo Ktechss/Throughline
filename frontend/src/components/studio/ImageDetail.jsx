@@ -2,7 +2,7 @@ import React from "react";
 import { X, Check, Ban, Shirt, PersonStanding, Copy, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import VerdictChip from "./VerdictChip";
-import { ep } from "@/api/throughline";
+import { ep, refUrl, apiCharacter } from "@/api/throughline";
 
 // image = a runView/genView object; image.raw is the real run row (full metadata).
 export default function ImageDetail({ image, wardrobe = [], onClose, onMark, onToWardrobe, onToPoseRef, onUsePose }) {
@@ -67,13 +67,13 @@ export default function ImageDetail({ image, wardrobe = [], onClose, onMark, onT
               <div className="flex flex-wrap gap-3">
                 {face && (
                   <figure className="m-0 w-28">
-                    <img src={`/api/refs/${face}/file`} onError={hideOnErr} className="h-36 w-28 rounded-lg object-cover ring-1 ring-white/10" alt="face ref" />
+                    <img src={refUrl(face)} onError={hideOnErr} className="h-36 w-28 rounded-lg object-cover ring-1 ring-white/10" alt="face ref" />
                     <figcaption className="mt-1 truncate text-[10px] text-zinc-500">face · {face}</figcaption>
                   </figure>
                 )}
                 {outfitFile && (
                   <figure className="m-0 w-28">
-                    <img src={`/api/wardrobe/${outfitFile}/file`} onError={hideOnErr} className="h-36 w-28 rounded-lg object-cover ring-1 ring-white/10" alt="outfit ref" />
+                    <img src={`/api/wardrobe/${outfitFile}/file?character=${apiCharacter() || ""}`} onError={hideOnErr} className="h-36 w-28 rounded-lg object-cover ring-1 ring-white/10" alt="outfit ref" />
                     <figcaption className="mt-1 truncate text-[10px] text-zinc-500">outfit · {meta.wardrobe}</figcaption>
                   </figure>
                 )}
