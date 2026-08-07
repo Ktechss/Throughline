@@ -681,6 +681,78 @@ MOMENTS: dict[str, dict[str, dict]] = {
             "min_cast": 1},
     },
 
+    # Brand work. The pipeline is used for promotion, and an intimates or swim
+    # campaign is an ordinary commercial brief — but it needs a different default
+    # from the rest of this library: the GARMENT is the subject, so these run at
+    # the `commercial` register with clean flaws, where every other group here is
+    # deliberately imperfect.
+    #
+    # Same writing rule as everywhere else, and it matters more here: describe the
+    # setting and the garment, never the woman. Her face, skin, hair and build
+    # come from her references.
+    "Campaign": {
+        "product-still-plain": {
+            "label": "Product still, plain", "place": "",
+            "activity": "a clean studio product photograph against a seamless "
+                        "backdrop, the garment lit evenly and shown clearly",
+            "pose": "standing square to the camera, arms relaxed at her sides",
+            "interaction": "both-to-camera",
+            "framing": "chest_up", "lighting": "open-shade",
+            "time_of_day": "",
+            "holder": "", "flaws": "", "shot_type": "commercial",
+            "min_cast": 1},
+        "product-still-full": {
+            "label": "Product still, full length", "place": "",
+            "activity": "a full-length studio product photograph on a seamless "
+                        "backdrop, the whole garment visible head to toe",
+            "pose": "standing straight, weight even, arms clear of the body",
+            "interaction": "both-to-camera",
+            "framing": "full_body", "lighting": "open-shade",
+            "time_of_day": "",
+            "holder": "", "flaws": "", "shot_type": "commercial",
+            "min_cast": 1},
+        "campaign-bedroom-morning": {
+            "label": "Campaign, bedroom morning", "place": "bedroom",
+            "activity": "early light across an unmade bed, an unhurried morning, "
+                        "the room soft and quiet",
+            "pose": "sitting on the edge of the bed, looking toward the window",
+            "interaction": "both-looking-elsewhere",
+            "framing": "waist_up", "lighting": "soft-window",
+            "time_of_day": "early-morning",
+            "holder": "", "flaws": "subtle", "shot_type": "commercial",
+            "min_cast": 1},
+        "campaign-hotel-window": {
+            "label": "Campaign, hotel window", "place": "",
+            "activity": "a bright hotel room with a tall window, the city out of "
+                        "focus beyond it, light coming in from behind",
+            "pose": "standing at the window, one hand on the frame, turned to the light",
+            "interaction": "one-in-focus-one-behind",
+            "framing": "knee_up", "lighting": "backlit-rim",
+            "time_of_day": "mid-morning",
+            "holder": "", "flaws": "subtle", "shot_type": "commercial",
+            "min_cast": 1},
+        "campaign-poolside": {
+            "label": "Campaign, poolside", "place": "",
+            "activity": "the edge of a pool in full sun, water and tile bright, "
+                        "a towel and sunglasses on a lounger behind",
+            "pose": "standing at the pool edge, weight on one hip, looking off",
+            "interaction": "side-by-side-walking",
+            "framing": "knee_up", "lighting": "hard-sun",
+            "time_of_day": "midday",
+            "holder": "friend", "flaws": "subtle", "shot_type": "commercial",
+            "min_cast": 1},
+        "campaign-getting-ready": {
+            "label": "Campaign, getting ready", "place": "closet",
+            "activity": "among the racks mid-way through getting dressed, a robe "
+                        "over one arm, the day's options still on hangers",
+            "pose": "half turned toward the mirror, reaching for a hanger",
+            "interaction": "showing-something",
+            "framing": "waist_up", "lighting": "warm-lamp",
+            "time_of_day": "early-morning",
+            "holder": "mirror", "flaws": "subtle", "shot_type": "commercial",
+            "min_cast": 1},
+    },
+
     "Portrait": {
         "just-a-portrait": {
             "label": "Just a portrait", "place": "",

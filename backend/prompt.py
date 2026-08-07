@@ -68,11 +68,29 @@ _SANITISE = [
     (r"\b(?:barely|skimpy|tiny|micro|revealing|skin-?tight|barely-there)\s+",
      "", "revealing-wardrobe intensifier"),
     (r"\bshort\s+shorts\b", "denim shorts", "'short shorts'"),
-    # posture/undress cues
+    # SEXUALISED MOOD — still neutralised, and this is the load-bearing one.
+    # A product shot is about the garment. This rule is most of the difference
+    # between a campaign image and something else, and it costs nothing to keep.
     (r"\b(?:seductive|sultry|provocative|sensual|alluring)\b", "relaxed",
      "sexualised mood word"),
-    (r"\b(?:lingerie|underwear|bikini|topless|nude|naked|bare-?chested)\b",
+    # UNDRESS — still neutralised. A garment category is a garment; this is the
+    # absence of one, and that distinction is the whole of the rule below.
+    (r"\b(?:topless|nude|naked|bare-?chested|unclothed|undressed)\b",
      "casual clothing", "undress cue"),
+    # PRODUCTS — deliberately NOT rewritten. lingerie, underwear, swimwear,
+    # bikini, loungewear and the rest are retail categories with an ordinary
+    # advertising industry behind them, and they used to sit in the undress rule
+    # above. That made a whole class of brief fail SILENTLY, which is the worst
+    # shape a limitation can have:
+    #
+    #   in:  "Studio catalogue photograph for a lingerie brand campaign."
+    #   out: "Studio catalogue photograph for a casual clothing brand campaign."
+    #
+    # The brief was accepted, a generation was paid for, and a fully-dressed
+    # image came back with nothing reported. Naming a garment is not naming an
+    # absence of one, so these pass through untouched. What still guards the
+    # output is the mood rule and the undress rule above — plus the fact that
+    # she is fictional and adult, which no rule here can change.
 ]
 _SANITISE = [(re.compile(p, re.IGNORECASE), repl, why) for p, repl, why in _SANITISE]
 
@@ -502,6 +520,13 @@ SHOT_TYPES = {
     "editorial": "Editorial photo",
     "luxury": "Luxury lifestyle photo",
     "street": "Street style photo",
+    # Product photography, for a brand campaign. `editorial` was the closest
+    # existing register and it is the wrong one: editorial means fashion-
+    # editorial, which biases toward mood and away from showing the garment
+    # clearly — backwards for a catalogue shot, where the garment IS the subject.
+    # This is the prompt's opener, so it sets the register everything after it is
+    # written against, the same placement argument as framing.
+    "commercial": "Commercial product photograph, garment clearly shown",
     "pov": "First-person POV phone photo",   # faceless — see the pov branch in compose_tagged()
 }
 
