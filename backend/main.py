@@ -15,6 +15,7 @@ from pathlib import Path
 
 import shutil
 import tempfile
+import time
 
 from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -683,6 +684,14 @@ def _copy_body_from(src_cid: str, dst_cid: str) -> str | None:
     which is exactly the part anyone wanted to share — shoulders, waist, hips,
     limbs, proportion — and there is no identity left in the file to leak.
 
+    The copy also registers the figure in her BODY LIBRARY, not just as her
+    body_reference. Those are two different things and the first version only did
+    the second: `bio.body_reference` is what rides on a shot, while `bodies/` +
+    `state/bodies.json` is the picker the Bio tab actually renders. Setting one
+    without the other produced a character who HAD the right figure on every
+    photograph and showed an empty Body section, which reads as "the copy did
+    not work" when it had.
+
     Returns the new filename, or None if there was nothing to copy.
     """
     src_path = _state_path("bio.json", src_cid)
@@ -719,6 +728,25 @@ def _copy_body_from(src_cid: str, dst_cid: str) -> str | None:
         except Exception:  # noqa: BLE001
             return None
         shutil.copy2(src, dst)
+
+    # Register it in the body LIBRARY so the Bio tab has something to show and
+    # the figure can be re-selected later, exactly as /api/bodies/save does.
+    try:
+        src_name = (db.chars_get(src_cid) or {}).get("name") or src_cid
+        entry_id = f"from-{src_cid}"
+        (config.char_base(dst_cid) / "bodies").mkdir(parents=True, exist_ok=True)
+        shutil.copy2(dst, config.char_base(dst_cid) / "bodies" / f"{entry_id}.png")
+        meta_path = _state_path("bodies.json", dst_cid)
+        data = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+        bodies = [b for b in (data.get("bodies") or []) if b.get("id") != entry_id]
+        bodies.append({"id": entry_id,
+                       "build": f"figure copied from {src_name} (head cropped)",
+                       "created": time.strftime("%Y-%m-%dT%H:%M:%S")})
+        meta_path.parent.mkdir(parents=True, exist_ok=True)
+        meta_path.write_text(json.dumps({"active": entry_id, "bodies": bodies},
+                                        indent=2) + "\n")
+    except Exception:  # noqa: BLE001 — the reference is what matters; the
+        pass                          # library entry is convenience on top
     return dst.name
 
 
@@ -1622,6 +1650,14 @@ CALIB_FACES = [
 
 class CalibFacesReq(BaseModel):
     count: int = 5
+    # Specific angles to generate. Without this the only control was `count`,
+    # which takes CALIB_FACES[:n] from the front — so topping up a character who
+    # already has five meant regenerating those five to reach the sixth. Every
+    # duplicate is a paid generation for an image already on disk.
+    angles: list[str] | None = None
+    # Skip angles she already has. On by default: re-running calibration should
+    # cost only what is missing.
+    skip_existing: bool = True
 
 
 @app.post("/api/calibrate/faces")
@@ -1637,9 +1673,25 @@ def calibrate_faces(req: CalibFacesReq):
     face = REFS / Path(seed_name).name if seed_name else None
     if not face or not face.exists():
         raise HTTPException(400, "no calibration seed — upload a base image first (Step 1)")
-    n = max(1, min(req.count, len(CALIB_FACES)))
+    if req.angles:
+        wanted = [a.strip() for a in req.angles]
+        unknown = [a for a in wanted if a not in dict(CALIB_FACES)]
+        if unknown:
+            raise HTTPException(400, f"unknown calibration angles: {unknown}")
+        todo = [(a, d) for a, d in CALIB_FACES if a in wanted]
+    else:
+        todo = CALIB_FACES[:max(1, min(req.count, len(CALIB_FACES)))]
+
+    if req.skip_existing:
+        have = {(r.get("meta") or {}).get("angle")
+                for r in db.runs_all(character_id=owner)
+                if (r.get("meta") or {}).get("calibrate") == "face"}
+        todo = [(a, d) for a, d in todo if a not in have]
+    if not todo:
+        return {"jobs": [], "note": "she already has every angle asked for"}
+
     jobs = []
-    for angle, desc in CALIB_FACES[:n]:
+    for angle, desc in todo:
         prompt = (f"Headshot portrait of @image1 — {desc}. Plain neutral studio "
                   f"background, soft even lighting, head and shoulders framing. "
                   f"{IDENTITY_LOCK_LINE} Photorealistic, real skin texture, sharp "
