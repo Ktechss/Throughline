@@ -257,7 +257,8 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
              extra: dict | None = None, progress: dict | None = None,
              fallback_endpoint: str | None = None,
              resolution: str | None = None, gated: bool = True,
-             character: str | None = None) -> dict:
+             character: str | None = None,
+             safety_tolerance: str | int | None = None) -> dict:
     """One generation, gated and recorded.
 
     gated=False for output that is not a photo OF her — a wardrobe turnaround is
@@ -319,6 +320,23 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
                  "num_images": 1, "output_format": "png"}
             if system:
                 a["system_prompt"] = system
+            # fal exposes a documented moderation dial on every one of its major
+            # image endpoints — 1 strictest, 6 least strict, default 4 on nano.
+            # We had never set it, so every request went out on the default and a
+            # legitimate commercial category (intimates) was refused without the
+            # provider's own control ever being tried.
+            #
+            # Explicitly opt-in per request, NOT a raised global default: the
+            # right level depends on what is being shot, the default is right for
+            # nearly everything, and a quiet platform-wide loosening is not a
+            # decision that should live in a config constant. Recorded on the run
+            # so it is always visible what a given image was made under.
+            #
+            # This is the provider's setting, offered for the caller to choose.
+            # It does not widen what fal's terms permit, and the content still has
+            # to be within them.
+            if safety_tolerance:
+                a["safety_tolerance"] = str(safety_tolerance)
         if image_urls:
             a["image_urls"] = image_urls
         if seed is not None:
@@ -453,6 +471,7 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
         # came from the fallback (scene) model instead. Identity is weaker there
         # (~0.68 vs 0.81); the flag makes that visible rather than a silent swap.
         "moderation_fallback": moderation_fallback,
+        "safety_tolerance": str(safety_tolerance) if safety_tolerance else None,
         "prompt": prompt,
         "system": system,
         "refs": [p.name for p in refs],

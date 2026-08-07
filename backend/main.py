@@ -4046,6 +4046,11 @@ class SceneReq(BaseModel):
     prompt_override: str | None = None     # a written prompt used VERBATIM in
                                            # place of everything assembled here —
                                            # same contract as ShotReq.prompt
+    # fal's own moderation dial, 1 (strictest) to 6, default 4. Explicit per
+    # request: the default is right for nearly everything, and a commercial
+    # product brief is the case where the provider's control is worth reaching
+    # for rather than assuming the category is impossible.
+    safety_tolerance: str | None = None
     # Which optional references spend an image SLOT rather than riding as text.
     # Every one of them has a text form, so this is a real choice and not a
     # degradation: outfits carry their saved description, corners carry their
@@ -4546,6 +4551,7 @@ def scene(req: SceneReq):
             prompt=s["prompt"], system="", refs=refs, aspect=req.aspect,
             seed=req.seed, session=session, progress=job, character=owner,
             fallback_endpoint=SCENE_EDIT, resolution=req.resolution,
+            safety_tolerance=req.safety_tolerance,
             meta={"brief": req.prompt, "scene": True, "cast": cast,
                   "wardrobe_by": req.wardrobe, "place": req.place,
                   "activity": req.activity, "interaction": req.interaction,
