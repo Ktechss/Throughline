@@ -29,9 +29,9 @@ from .interactions_data import INTERACTIONS
 from .scenes_data import MOMENTS
 from .config import (ARCHIVE_FORMAT, ARCHIVE_QUALITY, BODIES, BODIES_META,
                      CHARACTERS, CharPath, EDIT, GOLD, HOME_PATH,
-                     IMAGES, NAILS, NAILS_META, PARTS_PATH, PLACES, POSE_REFS,
+                     IMAGES, NAILS, PLACES, POSE_REFS,
                      POSES, REF_BUDGET, REFS, RESOLUTION, ROOT, SCENE_EDIT,
-                     SCENE_TEXT2IMG, STATE, TEXT2IMG, TIMELINE_PATH, WARDROBE)
+                     SCENE_TEXT2IMG, TEXT2IMG, TIMELINE_PATH, WARDROBE)
 
 app = FastAPI(title="Throughline")
 

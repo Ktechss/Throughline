@@ -28,10 +28,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from backend import gate, generate                          # noqa: E402
-from backend.config import REFS                             # noqa: E402
+from backend import config, gate, generate                  # noqa: E402
 
-FACE = REFS / "Kiara.png"
+FACE = config.bio_face()
 EDIT = "openai/gpt-image-2/edit"
 
 HOLD = ("A candid iPhone photo of the woman in the reference image. She must "

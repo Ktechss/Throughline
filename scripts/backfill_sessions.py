@@ -17,7 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from backend import gate                                   # noqa: E402
+from backend import config, gate                           # noqa: E402
 from backend.config import IMAGES, RUNS_PATH               # noqa: E402
 
 # note -> (session label, started). Grouped by the decision each run belonged
@@ -66,7 +66,7 @@ def main() -> int:
             "id": uuid.uuid4().hex[:10], "session": BAKEOFF_SESSION,
             "file": fname, "endpoint": endpoint,
             "prompt": "(ad-hoc bakeoff; see FINDINGS.md)", "system": "",
-            "refs": ["Kiara.png"], "pose": None, "seed": None,
+            "refs": [config.bio_face().name], "pose": None, "seed": None,
             "aspect": "1024x1408", "resolution": "1024x1408",
             "seconds": None, "created": BAKEOFF_SESSION["started"],
             "mark": None, "meta": {"note": f"bakeoff: {endpoint}"},

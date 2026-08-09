@@ -3,7 +3,7 @@
 The morning's attempt was uninterpretable: faces came back 78-106px (under the
 abstain floor) and there was no gallery to score against. Both fixed. So:
 
-  - ONE face reference, the biggest we have (Kiara.png, 435px).
+  - ONE face reference: the character's current BIO face (config.bio_face()).
   - Close-up framing, so the face lands well above the floor. Framing is an
     identity setting: 660px scored 0.635 where 298px scored 0.450.
   - Every result scored against the same 5-angle gallery.
@@ -26,10 +26,10 @@ import fal_client
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from backend import gate                                   # noqa: E402
-from backend.config import IMAGES, REFS                    # noqa: E402
+from backend import config, gate                           # noqa: E402
+from backend.config import IMAGES                    # noqa: E402
 
-FACE = REFS / "Kiara.png"
+FACE = config.bio_face()
 
 PROMPT = ("A candid iPhone photo of a woman, tight head and shoulders portrait, "
           "her face filling most of the frame, facing the camera, plain white "

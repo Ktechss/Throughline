@@ -36,8 +36,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from backend import ingest                                  # noqa: E402
-from backend.config import REFS, THRESHOLD_PATH             # noqa: E402
+from backend import config, ingest                          # noqa: E402
+from backend.config import THRESHOLD_PATH             # noqa: E402
 from backend.gate import analyze, similarity                # noqa: E402
 
 INBOX = Path("data/inbox")
@@ -50,7 +50,7 @@ def main() -> int:
     args = ap.parse_args()
 
     faces = []
-    for src in sorted(INBOX.glob("*.png")) + [REFS / "Kiara.png"]:
+    for src in sorted(INBOX.glob("*.png")) + [config.bio_face()]:
         for p in ingest.detect(src):
             if p.bucket != "front" or not p.usable:
                 continue

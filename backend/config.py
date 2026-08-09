@@ -12,7 +12,6 @@ config are NOT per-character and stay plain constants.
 from __future__ import annotations
 
 import json
-import sys
 from contextvars import ContextVar
 from pathlib import Path
 
@@ -144,6 +143,27 @@ NAILS_META = CharPath("state", "nails.json")       # nail-style metadata: {stem:
 PLACES_META = CharPath("state", "places.json")     # place metadata: {stem: {name, category}}
 HOME_PATH = CharPath("state", "home.json")         # her home: {style}; corner images live in places/<key>.*
 BIO_PATH = CharPath("state", "bio.json")           # reference / body_reference / calib_seed
+
+
+def bio_face() -> Path:
+    """The ACTIVE character's identity reference, resolved at call time.
+
+    Scripts used to hardcode `REFS / "Kiara.png"`. That filename stopped existing
+    the moment the identity was re-seeded from a calibration face, and five
+    scripts broke silently-at-startup together. A reference is per-character and
+    gets renamed; the only durable answer is to ask bio.json who she is now.
+    """
+    try:
+        name = json.loads(BIO_PATH.read_text())["reference"]
+    except Exception:  # noqa: BLE001 — no bio yet / malformed: fall back below
+        name = ""
+    p = REFS / name if name else None
+    if p and p.exists():
+        return p
+    faces = sorted(REFS.glob("*.webp")) + sorted(REFS.glob("*.png"))
+    if not faces:
+        raise FileNotFoundError(f"no identity reference in {REFS}")
+    return faces[0]
 TIMELINE_PATH = CharPath("state", "timeline.json")  # her year: {eras: [{from, name, hair, note}]}
 
 
@@ -249,17 +269,3 @@ GPT_IMAGE_SIZE = {"width": 1024, "height": 1536}
 # 160px abstain floor and the gate reports "I can't tell" on exactly the shots
 # that most need checking. Applies to nano-banana; gpt-image sizes itself.
 RESOLUTION = "4K"
-
-# --------------------------------------------------------------------------
-# Local generation — $0 per image, on the 8GB RTX 5070 (Blackwell, sm_120).
-# --------------------------------------------------------------------------
-# The torch/diffusers stack lives in a SEPARATE venv (.venv-gen) and runs as a
-# subprocess — the web backend never imports torch. LOCAL_ENDPOINT is the
-# sentinel generate() keys off to shell out instead of calling fal.
-LOCAL_ENDPOINT = "local/sdxl-ip-adapter"
-# The .venv-gen layout differs by OS: Windows puts the interpreter in
-# Scripts/python.exe, POSIX in bin/python. Resolve it so the same code shells out
-# correctly on Linux servers and Windows dev boxes.
-_GEN_BIN, _GEN_PY = ("Scripts", "python.exe") if sys.platform == "win32" else ("bin", "python")
-LOCAL_PY = ROOT / ".venv-gen" / _GEN_BIN / _GEN_PY
-LOCAL_WORKER = ROOT / "local" / "generate_local.py"

@@ -26,7 +26,7 @@ from pathlib import Path
 
 import cv2
 
-from .gate import Face, _get_app
+from .gate import _get_app
 
 # Buckets by measured yaw. Wide and overlapping-free; a face that lands between
 # two buckets is reported as unbucketed rather than forced into the nearer one.
