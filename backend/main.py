@@ -4184,6 +4184,12 @@ class SceneReq(BaseModel):
     face_accessories: bool = True          # render face-worn items (sunglasses,
                                            # caps). Off keeps her eyes visible,
                                            # which is where the gate reads hardest
+    # Background people. Default OFF: a cast scene is about the cast, and the
+    # gate scores whichever face best matches the gallery — so every extra face
+    # is another chance to score a stranger instead of her. Turn on for the venue
+    # and street briefs that genuinely want life behind the subject, and expect
+    # faces_in_frame to rise with it.
+    allow_crowd: bool = False
     prompt_override: str | None = None     # a written prompt used VERBATIM in
                                            # place of everything assembled here —
                                            # same contract as ShotReq.prompt
@@ -4253,7 +4259,8 @@ def _accessory_texts(values: list[str], *, allow_face: bool) -> list[str]:
     return out
 
 
-def _spend_optional(req: "SceneReq", cid: str, key: str, cast_size: int) -> bool:
+def _spend_optional(req: "SceneReq", cid: str, key: str, cast_size: int,
+                    spent: int = 0) -> bool:
     """Should this optional reference spend an IMAGE slot, or ride as text?
 
     Faces are never asked — they are mandatory, so a cast of three starts at
@@ -4262,11 +4269,22 @@ def _spend_optional(req: "SceneReq", cid: str, key: str, cast_size: int) -> bool
     a manicure is worth its slot, and at three or more it is not, because the
     budget is already spent on being able to tell who is who.
 
-    Explicit always wins. This only decides what happens when nobody said.
+    `cast_size <= 2` alone was not enough. It asks how many PEOPLE there are, not
+    how many references have already been spent, so a two-hander with outfits and
+    manicures on both reached FIVE — the nightclub scene did exactly that against
+    a measured optimum of two. `spent` closes it: the mandatory faces are exempt,
+    and optional references stop earning slots once the budget beyond them is
+    gone. A two-hander now lands at 2-3 references instead of 5.
+
+    Explicit always wins. This only decides what happens when nobody said, and
+    anything refused here still reaches the prompt as text and is recorded in the
+    ledger as mode="text", so nothing goes quietly missing.
     """
     if key in req.as_image:
         return bool(req.as_image[key])
-    return cast_size <= 2
+    if cast_size > 2:
+        return False
+    return max(0, spent - cast_size) < REF_BUDGET - 1
 
 
 def _build_scene(req: "SceneReq") -> dict:
@@ -4330,7 +4348,7 @@ def _build_scene(req: "SceneReq") -> dict:
             # text at three or more — see _spend_optional. Garments are the thing
             # a description reproduces least reliably, which is what earns the
             # slot; telling three women apart is what outranks it.
-            if _spend_optional(req, cid, f"outfit:{cid}", len(cast)):
+            if _spend_optional(req, cid, f"outfit:{cid}", len(cast), len(refs)):
                 tag = spend("outfit", cid, _outfit_ref(w), f"{name}: {oid}")
                 roles.append(f"{tag} is the outfit {name} is wearing — reproduce "
                              f"those garments on her, and take NOTHING about her "
@@ -4382,7 +4400,7 @@ def _build_scene(req: "SceneReq") -> dict:
             if not npath:
                 raise HTTPException(400, f"no such manicure for {name}: {nid}")
             nmeta = (_nails_meta(cid).get(nid, {}) or {})
-            if _spend_optional(req, cid, f"nails:{cid}", len(cast)):
+            if _spend_optional(req, cid, f"nails:{cid}", len(cast), len(refs)):
                 tag = spend("nails", cid, npath, f"{name}: {nmeta.get('name') or nid}")
                 roles.append(f"{tag} is {name}'s manicure — reproduce that nail "
                              f"shape, length, colour and finish exactly on HER "
@@ -4480,13 +4498,30 @@ def _build_scene(req: "SceneReq") -> dict:
         ptext = promptlib.POSES_LIBRARY.get(pid) or pid
         parts.append(f"{face_tag[cid]}: {ptext}")
 
+    distinct_clause = ""
     if len(cast) > 1:
         names = ", ".join(rows[c]["name"] for c in cast)
-        parts.append(f"There are {len(cast)} DIFFERENT women in this photograph "
-                     f"({names}). Render them as distinct individuals who do not "
-                     f"resemble each other. Keep each face exactly as its own "
-                     f"reference shows it — do NOT blend, merge or average their "
-                     f"features, and never give two of them the same face.")
+        distinct_clause = (f"There are {len(cast)} DIFFERENT women in this photograph "
+                           f"({names}). Render them as distinct individuals who do not "
+                           f"resemble each other. Keep each face exactly as its own "
+                           f"reference shows it — do NOT blend, merge or average their "
+                           f"features, and never give two of them the same face.")
+        parts.append(distinct_clause)
+
+    # NOBODY ELSE IN FRAME. A brief that says "blurred crowd behind" gets one:
+    # the nightclub scene came back with NINE faces, and check_cast then scores
+    # "the one best matching the gallery" — which turns identity into a lottery
+    # over strangers. Kiara took 0.5093 and a `drift` diagnosis on that frame.
+    #
+    # Default on, because a cast scene is about the cast. `allow_crowd` exists
+    # for the venue and street briefs that genuinely want background life.
+    crowd_clause = ""
+    if cast and not req.allow_crowd:
+        crowd_clause = (f"Exactly {len(cast)} "
+                        f"{'person is' if len(cast) == 1 else 'people are'} in this "
+                        f"photograph. No other faces, no bystanders, no crowd, and "
+                        f"no reflections of other people.")
+        parts.append(crowd_clause)
 
     # WHEN AND WHAT THE AIR IS DOING. Every one of these emits nothing at all
     # when unset — no default. "Soft neutral lighting" appended to every prompt
@@ -4511,12 +4546,59 @@ def _build_scene(req: "SceneReq") -> dict:
                  "on every face.")
 
     assembled = " ".join(x for x in parts if x)
-    # A written prompt replaces everything assembled above — same contract as
+
+    # A written prompt replaces the PROSE assembled above — same contract as
     # ShotReq.prompt. The REFERENCES are still whatever the pickers spent, so the
     # @imageN tags the draft was written against stay valid; overriding the prose
     # must not silently re-order what the tags point at.
-    text, sanitised = promptlib.sanitise((req.prompt_override or "").strip()
-                                         or assembled)
+    #
+    # But it used to replace the STRUCTURAL clauses too, and that is what broke
+    # every collaboration in the database — all ten rejected. prompt_override is
+    # the documented happy path (/api/scene/ai-prompt returns its draft "in
+    # prompt_override's shape"), so in practice the role lines, the distinctness
+    # clause and the crowd constraint were absent from every real scene.
+    #
+    # Traced on run d46c1a72ac, Kiara + Soni at a nightclub — five references
+    # attached, TWO of them never named by the draft:
+    #
+    #   @image1 calib-front.webp          (Kiara's face)   named
+    #   @image2 Outing4.webp              (outfit)         NOT NAMED
+    #   @image3 nail5.jpg                 (manicure)       named
+    #   @image4 soni-singh-identity.webp  (Soni's face)    named
+    #   @image5 NightOut1.webp            (outfit)         NOT NAMED
+    #
+    # Result: 9 faces in frame, Kiara 0.5093 `drift`, rejected. Exactly the
+    # failure the body-reference fix measured on the shot path, where one
+    # unexplained image moved similarity 0.7838 -> 0.1473.
+    #
+    # So an override no longer gets to drop facts about what was ATTACHED. Any
+    # reference whose tag the draft never mentions gets its role line back, and
+    # the distinctness and crowd clauses are re-appended when missing. This is
+    # the same precedent the shot path sets, where build_text, camera_holder and
+    # flaws are appended to an AI prompt rather than trusted to it because a
+    # prompt written earlier "would otherwise contradict them". Reference roles
+    # are the stronger case: they describe what the model is actually being sent.
+    # Missing ROLE lines open the prompt; the distinctness and crowd clauses
+    # close it. That split is measured, not aesthetic. Moving the clauses to the
+    # front on the theory that early placement wins — the argument the framing
+    # note above makes — was tried and was WORSE on the same brief and refs:
+    #
+    #   clauses at tail : 6 faces | kiara 0.5024 | soni 0.6067 (kept)
+    #   clauses at front: 8 faces | kiara 0.5251 | soni 0.4982 (rejected)
+    #
+    # n=1 each, so treat the ordering as weakly held; what it does rule out is
+    # "just put the constraint first", which is the obvious next idea.
+    override = (req.prompt_override or "").strip()
+    if override:
+        image_tags = [l["tag"] for l in ledger if l.get("mode") == "image" and l.get("tag")]
+        unnamed = [t for t in image_tags if t not in override]
+        head = " ".join(r for r in roles if any(t in r for t in unnamed))
+        tail = [c for c in (distinct_clause, crowd_clause)
+                if c and c.split(".")[0] not in override]
+        raw = " ".join(x for x in ([head, override] + tail) if x)
+    else:
+        raw = assembled
+    text, sanitised = promptlib.sanitise(raw)
     return {"prompt": text, "refs": refs, "cast": cast, "owner": owner,
             "ledger": ledger, "sanitised": sanitised, "assembled": assembled,
             "_roles": roles,
