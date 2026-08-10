@@ -4712,6 +4712,26 @@ def scene_ai_prompt(req: SceneReq):
 
     extra = ["Reference roles, which are already fixed and must be used exactly "
              "as given: " + " ".join(s["_roles"])]
+
+    # NAME EVERY ATTACHED TAG. "Use the roles exactly as given" was not read as
+    # "mention all of them": on the nightclub scene the draft named @image1,
+    # @image3 and @image4 and described both OUTFITS in words instead, leaving
+    # @image2 and @image5 attached with nothing said about them. Two unexplained
+    # images went to the model and it returned nine faces.
+    #
+    # _build_scene now repairs that after the fact by prepending the missing role
+    # lines, but a draft that names them itself puts each tag where the sentence
+    # about it belongs, instead of in a block bolted to the front.
+    img_tags = [l["tag"] for l in s["ledger"] if l["mode"] == "image" and l["tag"]]
+    if img_tags:
+        extra.append(
+            "Every one of these reference tags is attached to the request and "
+            "MUST appear at least once in the prompt you write, at the point "
+            "where it is relevant: " + ", ".join(img_tags) + ". Do not describe "
+            "an outfit or a manicure in words instead of pointing at its tag — "
+            "the image is attached either way, and an image the prompt never "
+            "names is one the model has to guess the purpose of.")
+
     frame = (framing_data.FRAMING.get(req.framing) or {}).get("text", "")
     if frame:
         # Framing goes in as a REQUIREMENT rather than a hint. Prose framing lost
@@ -4723,6 +4743,27 @@ def scene_ai_prompt(req: SceneReq):
     if len(s["cast"]) > 1:
         extra.append("Do NOT invent an interaction or arrangement that "
                      "contradicts the reference roles above.")
+
+    # NO CROWD, unless it was asked for. The draft that produced nine faces wrote
+    # "blurred crowd behind" of its own accord — the brief said a stranger took
+    # the photo in a club, and Claude filled the room in. _build_scene appends a
+    # crowd constraint, but it then contradicts the draft's own prose and loses:
+    # regenerating still gave six faces. The fix has to be that the prose never
+    # asks for a crowd in the first place.
+    #
+    # This matters because the gate scores whichever face best matches the
+    # gallery, so background people are not set dressing — they are extra chances
+    # to score a stranger and call it her.
+    if not req.allow_crowd:
+        extra.append(
+            "Do NOT write any background people into the scene. No crowd, no "
+            "bystanders, no other patrons, dancers, staff or passers-by, and no "
+            "reflections of other people — not even blurred, out of focus or in "
+            "the far background. A busy venue is conveyed with lighting, "
+            "bottles, glassware, furniture and depth of field, never with other "
+            "human beings. Exactly "
+            f"{len(s['cast'])} {'person is' if len(s['cast']) == 1 else 'people are'} "
+            "in the photograph.")
 
     try:
         raw = prompter.rewrite(
