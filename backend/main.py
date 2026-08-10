@@ -283,6 +283,48 @@ _BUILD_FRAME = {
     "full-figured": "soft, full-figured build",
 }
 
+# The other three body parts the build owns. FRAME above is one line; these are
+# the parts that actually carry the shape, and until now the picker did not
+# write them — it set body.frame and left body.bust/waist/hips at prompt.py's
+# defaults, which are Kiara's spec-sheet numbers. Picking "voluptuous" therefore
+# produced a bio reading "pronounced curvy, full-figured hourglass" directly
+# above "a full chest ... 40-inch hips", and compose() rebuilds the whole body
+# section into the Subject line of every shot — so the picker was contradicted
+# on every generation from the moment the character was created.
+#
+# Register matches _BUILD_FRAME, not _BUILD_FIGURE: this text rides on ordinary
+# shots through the standard model, where _BUILD_FIGURE's explicit wording is
+# both unnecessary and closer to the moderation boundary. Proportional rather
+# than absolute — height is its own picker (168cm and 185cm cannot share a hip
+# measurement), so these describe ratios and let body.height set the scale.
+_BUILD_PARTS = {
+    "slim": {
+        "body.bust": "a small, neat bust",
+        "body.waist": "a narrow, straight waist",
+        "body.hips": "narrow hips, roughly in line with her shoulders",
+    },
+    "athletic": {
+        "body.bust": "a small to average bust on a lean chest",
+        "body.waist": "a lean, firm waist with visible definition",
+        "body.hips": "narrow, strong hips and a firm seat",
+    },
+    "curvy": {
+        "body.bust": "a full, rounded bust with a natural weight and a natural hang",
+        "body.waist": "a clearly indented waist, distinctly narrower than both bust and hips",
+        "body.hips": "full, rounded hips balancing the bust",
+    },
+    "voluptuous": {
+        "body.bust": "a very full, heavy, rounded bust with a natural weight and a natural hang",
+        "body.waist": "a dramatically narrow, deeply indented waist",
+        "body.hips": "wide, full, rounded hips balancing the bust",
+    },
+    "full-figured": {
+        "body.bust": "a full, heavy bust with a natural weight and a natural hang",
+        "body.waist": "a soft, rounded midsection with a gently defined waist",
+        "body.hips": "wide, full, soft hips",
+    },
+}
+
 # --------------------------------------------------------------------------
 # The rest of the identity pickers.
 # --------------------------------------------------------------------------
@@ -656,15 +698,40 @@ def _write_bio(cid: str, updates: dict) -> None:
 
 
 def _bodies_available() -> list[dict]:
-    """Characters whose body reference exists on disk and can be copied."""
+    """Every figure a new character can be built from, across all characters.
+
+    Lists saved BODY TYPES, not just each character's active body_reference.
+    Building a figure costs generations and iteration, and the point of the body
+    library is that the work is done once — but creation could previously only
+    borrow whichever type happened to be active, so reusing any other one meant
+    going back to the source character, selecting it, then creating. Every saved
+    type is offered here instead.
+
+    `id` is "<cid>" (that character's active body_reference, the old behaviour)
+    or "<cid>:<type-id>" for a specific saved type. `_copy_body_from` parses
+    both. The dict shape is unchanged so the creation picker renders it as-is.
+    """
     out = []
     for row in db.chars_all():
-        cid = row["id"]
+        cid, who = row["id"], row["name"]
+        meta = _state_path("bodies.json", cid)
+        saved = json.loads(meta.read_text()).get("bodies", []) if meta.exists() else []
+        for b in saved:
+            f = config.char_base(cid) / "bodies" / b["id"]
+            f = next((p for p in (f.with_suffix(s) for s in (".png", ".webp", ".jpg"))
+                      if p.exists()), None)
+            if f:
+                out.append({"id": f"{cid}:{b['id']}", "name": f"{who} · {b['id']}",
+                            "file": f.name, "build": b.get("build", "")})
+        if saved:
+            continue
+        # No saved types — fall back to her active body reference, so a character
+        # who never named a figure is still borrowable.
         path = _state_path("bio.json", cid)
         cfg = json.loads(path.read_text()) if path.exists() else {}
         name = cfg.get("body_reference")
         if name and (config.char_base(cid) / "refs" / name).exists():
-            out.append({"id": cid, "name": row["name"], "file": name})
+            out.append({"id": cid, "name": who, "file": name, "build": ""})
     return out
 
 
@@ -692,16 +759,34 @@ def _copy_body_from(src_cid: str, dst_cid: str) -> str | None:
     photograph and showed an empty Body section, which reads as "the copy did
     not work" when it had.
 
+    `src_cid` is either "<cid>" (her active body reference) or "<cid>:<type-id>"
+    for one specific saved body type, as offered by _bodies_available().
+
     Returns the new filename, or None if there was nothing to copy.
     """
-    src_path = _state_path("bio.json", src_cid)
-    cfg = json.loads(src_path.read_text()) if src_path.exists() else {}
-    name = cfg.get("body_reference")
-    if not name:
-        return None
-    src = config.char_base(src_cid) / "refs" / name
-    if not src.exists():
-        return None
+    src_cid, _, type_id = src_cid.partition(":")
+    build_text = ""
+    if type_id:
+        meta = _state_path("bodies.json", src_cid)
+        saved = json.loads(meta.read_text()).get("bodies", []) if meta.exists() else []
+        entry = next((b for b in saved if b["id"] == type_id), None)
+        if not entry:
+            return None
+        build_text = entry.get("build", "")
+        src = next((p for p in ((config.char_base(src_cid) / "bodies" / type_id)
+                                .with_suffix(s) for s in (".png", ".webp", ".jpg"))
+                    if p.exists()), None)
+        if src is None:
+            return None
+    else:
+        src_path = _state_path("bio.json", src_cid)
+        cfg = json.loads(src_path.read_text()) if src_path.exists() else {}
+        name = cfg.get("body_reference")
+        if not name:
+            return None
+        src = config.char_base(src_cid) / "refs" / name
+        if not src.exists():
+            return None
 
     dst = config.char_base(dst_cid) / "refs" / f"body-canonical{src.suffix}"
     dst.parent.mkdir(parents=True, exist_ok=True)
@@ -733,14 +818,19 @@ def _copy_body_from(src_cid: str, dst_cid: str) -> str | None:
     # the figure can be re-selected later, exactly as /api/bodies/save does.
     try:
         src_name = (db.chars_get(src_cid) or {}).get("name") or src_cid
-        entry_id = f"from-{src_cid}"
+        entry_id = type_id or f"from-{src_cid}"
         (config.char_base(dst_cid) / "bodies").mkdir(parents=True, exist_ok=True)
         shutil.copy2(dst, config.char_base(dst_cid) / "bodies" / f"{entry_id}.png")
         meta_path = _state_path("bodies.json", dst_cid)
         data = json.loads(meta_path.read_text()) if meta_path.exists() else {}
         bodies = [b for b in (data.get("bodies") or []) if b.get("id") != entry_id]
+        # Carry the SOURCE's build text, not a "copied from X" placeholder. The
+        # library's whole job is that image and text travel together (see
+        # /api/bodies/select, which restores this text into body.bust) — a copy
+        # that keeps the image and drops the wording recreates on the new
+        # character exactly the image-vs-text drift the pairing exists to stop.
         bodies.append({"id": entry_id,
-                       "build": f"figure copied from {src_name} (head cropped)",
+                       "build": build_text or f"figure copied from {src_name} (head cropped)",
                        "created": time.strftime("%Y-%m-%dT%H:%M:%S")})
         meta_path.parent.mkdir(parents=True, exist_ok=True)
         meta_path.write_text(json.dumps({"active": entry_id, "bodies": bodies},
@@ -900,7 +990,8 @@ async def create_character_guided(
 
     # Her figure, copied from someone who already has one. Free, instant, and
     # headless — see _copy_body_from for why the crop is not optional.
-    if body_from.strip() and db.chars_get(body_from.strip()):
+    # body_from is "<cid>" or "<cid>:<body-type-id>" — validate the cid half.
+    if body_from.strip() and db.chars_get(body_from.strip().partition(":")[0]):
         copied = _copy_body_from(body_from.strip(), cid)
         if copied:
             _write_bio(cid, {"body_reference": copied})
@@ -974,6 +1065,7 @@ async def create_character_guided(
                 updates["face.shape"] = f"a {shape} face" + (f", {cur}" if cur else "")
         if build:
             updates["body.frame"] = _BUILD_FRAME[build]
+            updates.update(_BUILD_PARTS[build])
         if height:
             updates["body.height"] = _height_text(height)
         for key, val in picks.items():
@@ -2645,6 +2737,23 @@ class OutfitCreateReq(BaseModel):
     outfit: str          # free text: "white crop top, baggy jeans, strappy heels"
     name: str | None = None   # optional label only; the outfit is SAVED later via
                               # /api/wardrobe/from-run once the user likes the preview
+    # fal's own moderation dial, 1 (strictest) to 6, default 4 — same contract as
+    # SceneReq. A turnaround is the FIRST thing a garment goes through, so an
+    # intimates brief the default refuses never reaches a shot at all: the
+    # wardrobe item cannot be created, and the category looks impossible when it
+    # is only unattempted. Opt-in per request; not a raised global default.
+    #
+    # MEASURED, so nobody spends another two generations on it: this dial does
+    # NOT rescue an intimates turnaround. A sheer embroidered teddy described
+    # with the garment's own retail vocabulary was refused at the default AND at
+    # 6 (least strict), both times as
+    #   {"loc": ["body", "prompt"], "type": "content_policy_violation"}
+    # — `loc` is the PROMPT, not the image. safety_tolerance governs output
+    # moderation; it has no bearing on an input screen, so raising it changes
+    # nothing here. Keep the parameter (it is the right control to expose, and
+    # it does apply to shots), but a prompt-level refusal is a provider policy
+    # boundary, not a tuning problem.
+    safety_tolerance: str | None = None
 
 
 def _clean_outfit_text(text: str) -> str:
@@ -2750,11 +2859,19 @@ def wardrobe_create(req: OutfitCreateReq):
                                  # renders the biggest face, at ~200px: 116 of 118 were
                                  # rejected for face size alone. Not a measurement.
                                  gated=False,
-                                 meta={"outfit_create": req.outfit, "body": _bodies().get("active")},
-                                 # A revealing outfit turnaround can trip gpt-image-2's
-                                 # moderation; render it on the scene model instead of
-                                 # dead-spinning to a failure.
+                                 meta={"outfit_create": req.outfit, "body": _bodies().get("active"),
+                                       "safety_tolerance": req.safety_tolerance},
+                                 # NOTE: this fallback is a no-op and kept only as a
+                                 # marker. It was written when the primary was
+                                 # gpt-image-2 ("render it on the scene model instead
+                                 # of dead-spinning"), but PRIMARY_EDIT is now
+                                 # SCENE_EDIT itself, and generate() only appends a
+                                 # fallback when it differs from the primary. A
+                                 # refusal here is therefore nano-banana's own, and
+                                 # safety_tolerance below — not this line — is what
+                                 # answers it.
                                  fallback_endpoint=SCENE_EDIT,
+                                 safety_tolerance=req.safety_tolerance,
                                  # Wide canvas so four full-body panels fit side by side.
                                  extra={"image_size": {"width": 1536, "height": 1024}})
 

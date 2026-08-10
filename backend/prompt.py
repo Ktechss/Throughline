@@ -243,24 +243,36 @@ def default_parts() -> list[Part]:
         P("body.shoulders", "body", "Shoulders",
           "shoulders roughly in line with her hips, not broadened"),
         P("body.bust", "body", "Chest / proportion",
-          "a full chest with a natural, relaxed shape, not exaggerated or lifted",
+          "a full chest with a natural weight and a natural hang",
           critical=True,
           note="The BODY REFERENCE IMAGE carries her actual proportions — this "
                "line only steers away from the generator's default (spherical, "
                "gravity-defying, unnaturally high), the same class of tell as "
-               "the cinched waist. Kept deliberately vague: an explicit cup "
-               "size + revealing wardrobe reads as sexualised to gpt-image-2's "
-               "moderation classifier and gets the whole prompt refused "
-               "(content_policy_violation). The number lived here before the "
-               "body reference existed; the image supersedes it. For a male "
-               "subject, edit the text — the part is the slot, not the gender."),
+               "the cinched waist. It used to read 'not exaggerated or lifted', "
+               "which damped SIZE as well as the artifact: the creation picker "
+               "writes only body.frame (main.py:976), so picking 'voluptuous' "
+               "left this default sitting underneath it saying the opposite, and "
+               "compose() rebuilds the body section into the Subject line even "
+               "when a body reference exists — so it contradicted the reference "
+               "on every shot instead of only steering the generator. The guard "
+               "is kept but narrowed to SHAPE: weight and hang, never size. Set "
+               "the size per-character; cup sizes pass the sanitiser now (see "
+               "_SANITISE), though an explicit one plus revealing wardrobe can "
+               "still trip gpt-image-2 and fall back to the scene model. For a "
+               "male subject, edit the text — the part is the slot, not the gender."),
         P("body.waist", "body", "Waist",
-          "a 30-inch waist, defined but NOT cinched or corseted",
+          "a 30-inch waist, clearly defined",
           critical=True,
           note="Load-bearing. 30in against 40in hips is already a strong "
                "hourglass; the generator will try to exaggerate it further into "
                "a corset, which is one of the clearest AI tells. The number sets "
-               "the shape, 'not cinched' stops the exaggeration. Both needed."),
+               "the shape. 'NOT cinched or corseted' used to follow it and was "
+               "dropped for the same reason as body.bust: it read as a cap "
+               "rather than a correction, and fought any character whose body "
+               "reference genuinely is cinched. Nothing automated catches the "
+               "corset tell — the gate is blind to body — so `mark` is the only "
+               "check. Restore the negation here, per character, if runs come "
+               "back corseted; don't fight it in the brief."),
         P("body.hips", "body", "Hips", "40-inch hips, balancing the bust"),
         P("body.legs", "body", "Legs", "notably long legs, a high leg-to-torso ratio"),
         P("body.posture", "body", "Posture", "elegant posture, a long neck"),
