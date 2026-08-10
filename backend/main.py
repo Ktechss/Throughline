@@ -2032,7 +2032,26 @@ def gallery_from_ref(req: GalleryFromRefReq):
         face = gate.add_to_gallery(p, req.view)
     except gate.NoFaceFound as exc:
         raise HTTPException(400, str(exc)) from None
-    return {"view": req.view, "yaw": round(face.yaw, 1),
+    # Re-derive the threshold. /api/gallery/from-run and /api/gallery/remove both
+    # already do this; from-ref was the one door left that changed the yardstick
+    # without re-measuring it, and the drift is silent because everything keeps
+    # working — the gallery just stops agreeing with the floor derived from it.
+    #
+    # Kiara is the case. Her `profile-right` (yaw +70.3) was added here after her
+    # threshold was computed, so 13 vectors were being scored against a floor
+    # derived from 12: stored 0.58 against a recomputed 0.4761. Drop that one
+    # entry and the recomputation returns 0.5795 — which is where the stored
+    # number came from. Every collaboration rejection of hers tonight (0.4811,
+    # 0.4880, 0.5024, 0.5093, 0.5251) sat inside that 0.10 gap.
+    #
+    # Best-effort, matching from-run: under three entries there is nothing to
+    # derive, and that must not block the add that gets you to three.
+    threshold = None
+    try:
+        threshold = gate.calibrate_from_gallery()["threshold"]
+    except Exception:  # noqa: BLE001 — too few faces yet, or an unreadable gallery
+        pass
+    return {"view": req.view, "yaw": round(face.yaw, 1), "threshold": threshold,
             "face_px": face.width, "pose_class": face.pose_class}
 
 
@@ -4272,9 +4291,28 @@ def _spend_optional(req: "SceneReq", cid: str, key: str, cast_size: int,
     `cast_size <= 2` alone was not enough. It asks how many PEOPLE there are, not
     how many references have already been spent, so a two-hander with outfits and
     manicures on both reached FIVE — the nightclub scene did exactly that against
-    a measured optimum of two. `spent` closes it: the mandatory faces are exempt,
-    and optional references stop earning slots once the budget beyond them is
-    gone. A two-hander now lands at 2-3 references instead of 5.
+    a measured optimum of two.
+
+    But charging OUTFITS against a running count was worse than the problem. The
+    cast is walked in order, so the first character's outfit was evaluated with
+    one slot spent and passed, and the second's with three spent and failed:
+    whoever happened to be mentioned first kept her garment and the other silently
+    lost hers. A collaboration where only one woman wears what she was dressed in
+    is not a budget saving, it is a wrong picture — and the demotion does not even
+    buy the garment back in words, because text does not hold a garment. Soni's
+    plum cocktail dress was described correctly in the prose and she still came
+    back in something else entirely.
+
+    So outfits are a CLASS, not a queue. At a cast of one or two everybody's
+    outfit gets a slot or nobody's does, which is symmetric and matches what the
+    pipeline is for. At three or more they all fall back to text together —
+    telling three women apart is what the budget is really for.
+
+    Manicures lose their slot as soon as there is more than one person, which is
+    what keeps a two-hander at four references (two faces, two outfits) rather
+        than five. That is the cheapest thing to give up: the saved nail
+    description already carries shape, colour and finish as words, and unlike a
+    garment those words survive. A solo shot still gets the image.
 
     Explicit always wins. This only decides what happens when nobody said, and
     anything refused here still reaches the prompt as text and is recorded in the
@@ -4284,7 +4322,9 @@ def _spend_optional(req: "SceneReq", cid: str, key: str, cast_size: int,
         return bool(req.as_image[key])
     if cast_size > 2:
         return False
-    return max(0, spent - cast_size) < REF_BUDGET - 1
+    if key.startswith("outfit:"):
+        return True
+    return cast_size == 1
 
 
 def _build_scene(req: "SceneReq") -> dict:
