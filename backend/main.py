@@ -3725,6 +3725,7 @@ def shot(req: ShotReq):
         guest_name = grow["name"]
 
     has_wardrobe = False
+    has_body_ref = False
     if req.wardrobe_id:
         w = _find_by_id(WARDROBE, req.wardrobe_id)
         if not w:
@@ -3751,6 +3752,7 @@ def shot(req: ShotReq):
         body = REFS / cfg["body_reference"]
         if body.exists():
             refs.append(body)
+            has_body_ref = True
 
     # ------------------------------------------------------------------ the date
     # When this shot happens. Season, hair era and the manicure cycle all fall out
@@ -3924,6 +3926,28 @@ def shot(req: ShotReq):
             carry_text=carry_text, pov=req.pov)
         if collab_clause:
             text = f"{collab_clause} {text}"
+
+    # The BODY reference needs a role line, and this was measured the hard way.
+    #
+    # When no outfit is chosen, body-canonical rides as @image2 — and it is a
+    # full-length photograph that CONTAINS HER FACE. compose_tagged only names
+    # @image1, so nothing told the model what the second image was for. Two
+    # unexplained faces went to nano-banana and it returned a stranger:
+    #
+    #   same prompt, face ref + unlabelled body ref : 0.1473  REJECTED
+    #   same prompt, face reference alone           : 0.7838  kept
+    #
+    # A 0.64 swing — the body reference was not shaping her build, it was
+    # replacing her identity. _copy_body_from's docstring already warned that an
+    # unlabelled body image "has no role line for it, so nothing tells the model
+    # whose face to ignore"; that hazard was live on every outfit-less shot.
+    #
+    # Same exclusion shape body_ref_create uses on its own @image2.
+    if has_body_ref:
+        text += (" Her build and proportions match @image2 — take ONLY the body "
+                 "shape, proportions and silhouette from @image2. Her face, "
+                 "identity, bone structure, skin and hair come only from "
+                 "@image1, never from @image2.")
 
     # Carry the outfit's FULL styling into the shot. The turnaround (@image2) has
     # her head cropped and may not show every accessory, so the saved outfit
