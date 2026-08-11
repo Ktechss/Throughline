@@ -12,6 +12,7 @@ config are NOT per-character and stay plain constants.
 from __future__ import annotations
 
 import json
+import os
 from contextvars import ContextVar
 from pathlib import Path
 
@@ -269,3 +270,21 @@ GPT_IMAGE_SIZE = {"width": 1024, "height": 1536}
 # 160px abstain floor and the gate reports "I can't tell" on exactly the shots
 # that most need checking. Applies to nano-banana; gpt-image sizes itself.
 RESOLUTION = "4K"
+
+
+# WHO RENDERS. All three resell Google's nano-banana-pro, so the picture is the
+# same and the bill is not. Measured 2026-08-11 on one prompt with three
+# references at 4K, scored on her own gallery — provider was the only variable:
+#
+#     fal    0.4304   $0.30            66s
+#     kie    0.4267   $0.12 (24 cr)   220s
+#     poyo   0.4426   $0.175 (35 cr)  265s
+#
+# 0.016 of spread, against seed-to-seed variance of 0.12-0.63 on identical
+# prompts — the same picture for 40% of the money. poyo's advertised $0.070 was
+# $0.175 once the task record was actually read, which is why this says kie.
+#
+# fal stays the fallback and stays reachable per-call: it is 3x faster, and a
+# second provider is only an asset while the first still works. Override with
+# THROUGHLINE_PROVIDER=fal, or per call via generate(provider=...).
+PROVIDER = os.environ.get("THROUGHLINE_PROVIDER", "kie").strip().lower()

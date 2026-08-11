@@ -15,7 +15,7 @@ import fal_client
 
 from . import config, db, gate
 from .config import (ARCHIVE_FORMAT, ARCHIVE_QUALITY, GPT_IMAGE, GPT_IMAGE_SIZE,
-                     IMAGES, RESOLUTION,
+                     IMAGES, PROVIDER, RESOLUTION,
                      SCENE_EDIT, SCENE_TEXT2IMG)
 
 # The pipeline was rebuilt around nano-banana-pro as the PRIMARY generator: it
@@ -254,7 +254,8 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
              fallback_endpoint: str | None = None,
              resolution: str | None = None, gated: bool = True,
              character: str | None = None,
-             safety_tolerance: str | int | None = None) -> dict:
+             safety_tolerance: str | int | None = None,
+             provider: str | None = None) -> dict:
     """One generation, gated and recorded.
 
     gated=False for output that is not a photo OF her — a wardrobe turnaround is
@@ -289,9 +290,44 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
     dest.parent.mkdir(parents=True, exist_ok=True)
     primary = endpoint or (PRIMARY_EDIT if refs else PRIMARY_T2I)
 
+    # WHO RENDERS THIS. Same model, same picture, different bill — measured on
+    # one prompt with three references at 4K, scored on her own gallery:
+    #
+    #     fal   0.4304  $0.30            66s
+    #     kie   0.4267  $0.12 (24 cr)   220s
+    #     poyo  0.4426  $0.175 (35 cr)  265s
+    #
+    # A 0.016 spread is inside the seed-to-seed variance this project sees on
+    # identical prompts, so kie is the same picture for 40% of the money. fal
+    # stays reachable per-call and stays the fallback, because it is 3x faster
+    # and because a second provider is only an asset while the first still works.
+    #
+    # kie replaces exactly one step: submit a prompt plus reference URLs, get an
+    # image URL. Everything below — the download retry, the source_url parking,
+    # auto-level, the gate, the row — is provider-agnostic and untouched.
+    use = (provider or PROVIDER or "fal").lower()
+    if use == "kie" and refs:
+        from . import providers
+        t0 = time.time()
+        try:
+            r = providers.kie_generate(
+                prompt=prompt, refs=refs, aspect=aspect,
+                resolution=resolution or RESOLUTION, progress=progress)
+        except providers.ProviderError as exc:
+            # Fall back to fal rather than losing the shot. A reseller queue or a
+            # refusal should cost latency, not a generation the caller wanted.
+            if progress is not None:
+                progress["stage"] = "kie failed — falling back to fal"
+            r, use = None, "fal"
+            _kie_error = str(exc)
+        else:
+            _kie_error = None
+    else:
+        r, _kie_error = None, None
+
     # Upload refs ONCE and reuse the URLs across both endpoints — re-uploading
     # for the fallback would double the cost and latency for nothing.
-    image_urls = [upload(p) for p in refs] if refs else []
+    image_urls = [upload(p) for p in refs] if (refs and r is None) else []
 
     def build_args(ep: str) -> dict:
         # Arguments are per-endpoint. fal ignores foreign fields rather than
@@ -342,10 +378,9 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
         plan.append((fallback_endpoint, 1))
 
     t0 = time.time()
-    r = None
-    used_ep = primary
+    used_ep = primary if r is None else f"kie/nano-banana-pro"
     last = None
-    for ep, tries in plan:
+    for ep, tries in (plan if r is None else []):
         falling_back = ep != primary
         for attempt in range(tries):
             try:
@@ -381,7 +416,10 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
         if r is not None:
             break
     if r is None:
-        raise last
+        # `last` is None only if the loop never ran, which now happens when kie
+        # failed AND the fal plan was skipped — surface kie's message rather
+        # than a bare TypeError.
+        raise last or RuntimeError(_kie_error or "no provider produced an image")
 
     moderation_fallback = used_ep != primary
     if progress is not None:
@@ -426,6 +464,7 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
         db.runs_insert({
             "id": rid, "session": session or new_session("ad-hoc"),
             "file": dest.name, "source_url": source_url, "endpoint": used_ep,
+            "provider": use, "credits": (r or {}).get("credits"),
             "moderation_fallback": moderation_fallback, "prompt": prompt,
             "system": system, "refs": [p.name for p in refs],
             "pose": pose_file.name if pose_file else None, "seed": seed,
@@ -457,6 +496,11 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
         # honestly rather than silently costing a generation.
         "source_url": source_url,
         "endpoint": used_ep,
+        # WHO rendered it and what they charged. Without this the provider
+        # comparison is unrepeatable: a run's endpoint alone cannot tell you
+        # whether 0.61 came from fal at $0.30 or kie at $0.12.
+        "provider": use,
+        "credits": (r or {}).get("credits"),
         # True = the primary endpoint refused on content_policy and this image
         # came from the fallback (scene) model instead. Identity is weaker there
         # (~0.68 vs 0.81); the flag makes that visible rather than a silent swap.
