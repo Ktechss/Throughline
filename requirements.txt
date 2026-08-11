@@ -19,3 +19,7 @@ fal-client>=0.5
 # Claude — bio writing, AI prompt, describe/enrich (backend/describe.py, prompter.py).
 # Needs ANTHROPIC_API_KEY in .env.
 anthropic>=0.40
+
+# Tests. Pure-function checks over the composer — no fal, no models, ~0.4s.
+# See tests/README.md for why each assertion exists.
+pytest>=8
