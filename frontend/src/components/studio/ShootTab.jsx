@@ -15,7 +15,7 @@ export default function ShootTab({
   resolution, setResolution, faceAcc, setFaceAcc, pov, setPov,
   withChar, setWithChar, castable = [],
   selectedOutfit, setSelectedOutfit, selectedPose, setSelectedPose,
-  onGenerate, hasIdentity, onOpenDetail, onUploadOutfit, onOpenDesigner, onDeleteOutfit,
+  onGenerate, shotPreview, hasIdentity, onOpenDetail, onUploadOutfit, onOpenDesigner, onDeleteOutfit,
   creating, outfitPreview, onSaveOutfit, onDiscardOutfit, outfitCategories = [],
   nails, selectedNail, setSelectedNail, onSaveNail, onDeleteNail,
 }) {
@@ -87,6 +87,54 @@ export default function ShootTab({
             </button>
           </div>
           {pov && <p className="mt-2 text-[11px] text-emerald-300/80">POV mode: no face — describe the product / what's in her hand in the brief. Pick a manicure for best hand consistency. The AI prompt is ignored in POV; identity gate is N/A.</p>}
+
+          {/* WHAT THIS WILL ACTUALLY SEND, before it costs anything.
+              Two numbers earn their place. `brief share` is the one a real
+              failure turned on: a street brief was 10% of its own prompt and the
+              street never rendered — the wardrobe boilerplate did. `face` says
+              which side of the 400px plateau the gate will be reading, because
+              under it a verdict is about framing rather than identity. */}
+          {shotPreview && (
+            <div className="mt-4 rounded-xl bg-white/[0.03] ring-1 ring-white/10 px-3 py-2.5 text-[11px]">
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-zinc-400">
+                <span>{shotPreview.chars} chars</span>
+                <span className={cn(shotPreview.brief_share < 0.15 && "text-amber-400")}>
+                  brief {Math.round(shotPreview.brief_share * 100)}%
+                </span>
+                <span className={cn(shotPreview.face_px < shotPreview.plateau_px && "text-amber-400")}>
+                  face ~{shotPreview.face_px}px
+                </span>
+                <span>{(shotPreview.references || []).length} refs</span>
+              </div>
+              {shotPreview.brief_share < 0.15 && (
+                <p className="mt-1.5 text-amber-400/80">
+                  Your brief is a small part of this prompt — the rest is outfit and
+                  grooming text, and the model weights what dominates.
+                </p>
+              )}
+              {(shotPreview.references || []).length > 0 && (
+                <p className="mt-1.5 text-zinc-500">
+                  {shotPreview.references.map((r) => `${r.tag} ${r.file}`).join(" · ")}
+                </p>
+              )}
+              {(shotPreview.demoted || []).map((d) => (
+                <p key={d} className="mt-1 text-zinc-500">↓ {d}</p>
+              ))}
+              {(shotPreview.sanitised || []).map((s, i) => (
+                <p key={i} className="mt-1 text-amber-400/70">
+                  rewritten: “{s.was}” → “{s.now}” ({s.why})
+                </p>
+              ))}
+              <details className="mt-1.5">
+                <summary className="cursor-pointer text-zinc-500 hover:text-zinc-300">
+                  full prompt
+                </summary>
+                <p className="mt-1.5 whitespace-pre-wrap text-zinc-400 leading-relaxed max-h-56 overflow-y-auto">
+                  {shotPreview.prompt}
+                </p>
+              </details>
+            </div>
+          )}
 
           {/* Generate button */}
           <button

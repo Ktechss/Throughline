@@ -150,6 +150,38 @@ export function useStudio(charParam) {
     tick();
   };
 
+  // What the shot will actually send, built from the SAME body as onGenerate.
+  //
+  // Not a second description of the request: the two share `shotBody` here and
+  // the server composes the preview by running shot() with preview=true, so the
+  // string shown is the string sent. The previous preview composed its own
+  // approximation and reported 880 characters for a prompt that shipped 4,517 —
+  // it was reassuring precisely when it should have warned.
+  const shotBody = () => ({
+    brief, aspect: "3:4", prompt: pov ? null : (aiPrompt.trim() || null),
+    wardrobe_id: selectedOutfit?.id || null, pose_ref_id: null,
+    pose_id: selectedPose?.id || null, pose_text: null,
+    nail_id: selectedNail?.id || null,
+    resolution, face_accessories: faceAcc,
+    pov, shot_type: pov ? "pov" : "candid",
+    with_character: withChar?.id || null,
+  });
+
+  const [shotPreview, setShotPreview] = useState(null);
+  useEffect(() => {
+    if (!bio?.reference || (!brief && !selectedOutfit && !selectedPose)) {
+      setShotPreview(null); return;
+    }
+    const t = setTimeout(() => {
+      api.send("/api/shot/preview", "POST", shotBody())
+         .then(setShotPreview).catch(() => setShotPreview(null));
+    }, 350);
+    return () => clearTimeout(t);
+    // Deps are the fields shotBody() reads, listed explicitly — shotBody itself
+    // is recreated every render and would retrigger this on every keystroke.
+  }, [brief, aiPrompt, selectedOutfit?.id, selectedPose?.id, selectedNail?.id,
+      resolution, faceAcc, pov, withChar?.id, bio?.reference]);
+
   const onGenerate = async () => {
     if (!bio?.reference) { setErr("No identity reference yet — calibrate her first."); return; }
     setErr(null);
@@ -157,15 +189,7 @@ export function useStudio(charParam) {
     const tmp = `tmp-${Date.now()}-${Math.round(Math.random() * 1e6)}`;
     setGenerations((gs) => [{ jid: tmp, label, status: { stage: "starting", elapsed: 0, done: false }, run: null }, ...gs]);
     try {
-      const { job } = await api.send("/api/shot", "POST", {
-        brief, aspect: "3:4", prompt: pov ? null : (aiPrompt.trim() || null),
-        wardrobe_id: selectedOutfit?.id || null, pose_ref_id: null,
-        pose_id: selectedPose?.id || null, pose_text: null,
-        nail_id: selectedNail?.id || null,
-        resolution, face_accessories: faceAcc,
-        pov, shot_type: pov ? "pov" : "candid",   // faceless first-person product/lifestyle
-        with_character: withChar?.id || null,
-      });
+      const { job } = await api.send("/api/shot", "POST", shotBody());
       setGenerations((gs) => gs.map((g) => (g.jid === tmp ? { ...g, jid: job } : g)));
       pollGen(job);
     } catch (e) {
@@ -496,7 +520,7 @@ export function useStudio(charParam) {
     faceAcc, setFaceAcc, pov, setPov, selectedOutfit, setSelectedOutfit, selectedPose, setSelectedPose,
     selectedNail, setSelectedNail, nails, saveNail, deleteNail, updateNail, bulkDeleteNails,
     home, homeBusy, saveHome, uploadCorner, generateCorner, deleteCorner,
-    gens, onGenerate,
+    gens, onGenerate, shotPreview,
     // outfit designer
     drawerOpen, openDesigner, closeDesigner, outfitText, setOutfitText, outfitImageUrl,
     details, setDetailField, idea, setIdea, pickers, setPicker, describing, enriching, creating,

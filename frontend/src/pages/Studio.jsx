@@ -180,7 +180,7 @@ export default function Studio() {
                 withChar={s.withChar} setWithChar={s.setWithChar} castable={s.castable}
                 selectedOutfit={s.selectedOutfit} setSelectedOutfit={s.setSelectedOutfit}
                 selectedPose={s.selectedPose} setSelectedPose={s.setSelectedPose}
-                onGenerate={s.onGenerate} hasIdentity={!!s.bio?.reference}
+                onGenerate={s.onGenerate} shotPreview={s.shotPreview} hasIdentity={!!s.bio?.reference}
                 onOpenDetail={setDetail}
                 onUploadOutfit={s.uploadOutfit} onOpenDesigner={s.openDesigner} onDeleteOutfit={s.deleteOutfit}
                 creating={s.creating} outfitPreview={s.outfitPreview}
