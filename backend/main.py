@@ -3658,6 +3658,11 @@ class ShotReq(BaseModel):
     # as a real shot on purpose: the only honest preview of a prompt is the
     # prompt, produced by the code that would have sent it.
     preview: bool = False
+    # Attach the pinned body reference EVEN when an outfit already owns @image2.
+    # Off by default because it is a third image and that is measured to cost
+    # ~0.04 of identity; on when the figure matters more than the last 0.04,
+    # which for a body built deliberately is most of the time.
+    body_ref: bool = False
     brief: str = ""              # the ONLY thing the user writes
     prompt: str | None = None    # AI-written (Claude) prompt, edited by the user;
                                  # used VERBATIM when present instead of the template
@@ -3798,20 +3803,35 @@ def shot(req: ShotReq):
         else:
             refs.append(_outfit_ref(w))   # @image2 = outfit, head cropped off (no competing face)
             has_wardrobe = True
-    elif not cast:
-        # No outfit chosen: fall back to the body reference for build (@image2).
-        #
-        # NOT on a collaboration. There @image2 is the guest's face, so this would
-        # append a THIRD reference — measured worse than two (0.579 vs 0.622) — to
-        # the one kind of shot already asking the model to hold two identities
-        # apart. Her build still reaches the prompt through build_clause(), which
-        # is text and costs no slot. Caught on the first real collab: it shipped
-        # calib-front + calib-front + body-canonical.
-        cfg = _bio_cfg()
-        body = REFS / cfg["body_reference"]
-        if body.exists():
-            refs.append(body)
-            has_body_ref = True
+
+    # THE BODY REFERENCE. Attached when no outfit took @image2, or on demand.
+    #
+    # It used to be `elif not cast:` hanging off the wardrobe branch, which meant
+    # a pinned figure applied only to shots where she was not wearing anything
+    # chosen — that is, almost never. Reported as "identity was never an issue,
+    # it is just the body shape I am missing": a rooftop set shot in a saree had
+    # `curvy athlete full` pinned and every frame reached the model with her
+    # build as TEXT alone, because @image2 was the garment.
+    #
+    # Text does not hold a body any better than it holds a garment. The saree
+    # print proved the same thing from the other side: 1,940 words describing a
+    # fabric lost to the photograph of it.
+    #
+    # So `body_ref=True` buys the third slot deliberately. It is measured and it
+    # is real — 2 refs 0.622 against 3 refs 0.579 — but that is the owner's trade
+    # to make, and for a figure that took a day to build it is often the right
+    # one. Still never on a collaboration: there @image2 is the guest's face and
+    # a fourth image on a shot already holding two identities apart is the wrong
+    # place to spend.
+    cfg = _bio_cfg()
+    body = REFS / cfg["body_reference"]
+    wants_body = (not has_wardrobe or req.body_ref) and not cast
+    if wants_body and body.exists():
+        refs.append(body)
+        has_body_ref = True
+        if has_wardrobe:
+            demoted.append("body reference added as a 3rd image "
+                           "(costs ~0.04 similarity, holds her figure)")
 
     # ------------------------------------------------------------------ the date
     # When this shot happens. Season, hair era and the manicure cycle all fall out
@@ -4003,10 +4023,16 @@ def shot(req: ShotReq):
     #
     # Same exclusion shape body_ref_create uses on its own @image2.
     if has_body_ref:
-        text += (" Her build and proportions match @image2 — take ONLY the body "
-                 "shape, proportions and silhouette from @image2. Her face, "
-                 "identity, bone structure, skin and hair come only from "
-                 "@image1, never from @image2.")
+        # The TAG, not a guess. This line hardcoded @image2, which is right only
+        # when the body reference is the second image — and with an outfit also
+        # attached it is the third. The prompt then said "take ONLY the clothing
+        # from @image2" and "take the body shape from @image2" in the same
+        # breath, which is not a directive, it is an argument.
+        body_tag = f"@image{refs.index(body) + 1}"
+        text += (f" Her build and proportions match {body_tag} — take ONLY the "
+                 f"body shape, proportions and silhouette from {body_tag}. Her "
+                 f"face, identity, bone structure, skin and hair come only from "
+                 f"@image1, never from {body_tag}.")
 
     # Carry the outfit's FULL styling into the shot. The turnaround (@image2) has
     # her head cropped and may not show every accessory, so the saved outfit

@@ -169,12 +169,18 @@ def rewrite(brief: str, *, shot_type: str = "candid", has_wardrobe: bool = False
         # @image2 is a turnaround of HER wearing the outfit, so it carries her
         # face/skin too. Make the exclusion explicit or the model pulls identity
         # from the wardrobe image and it overrides @image1 — same guard as pose.
+        # The turnaround was generated on her BODY reference as well as her face,
+        # so its silhouette is hers — "only the clothing" discarded a figure the
+        # image was already holding. Excludes the face, which is what the guard
+        # was ever protecting. Kept identical to compose_tagged's wording so a
+        # written prompt and a template prompt do not disagree.
         directives.append(
             "Include, close to verbatim: 'She is wearing the complete outfit "
             "from @image2 — reproduce every clothing item and accessory exactly "
-            "as shown. Take ONLY the clothing and accessories from @image2; her "
-            "face, skin, hair, features and identity come only from @image1, "
-            "never from @image2.'")
+            "as shown, and keep her build, proportions and silhouette as they "
+            "appear there. Take the clothing and the body shape from @image2, "
+            "but NOT the face: her face, skin, hair, features and identity come "
+            "only from @image1, never from @image2.'")
 
     # Whatever the caller already knows to be true and Claude cannot infer — the
     # scene path passes its framing, its per-character getup and its reference
