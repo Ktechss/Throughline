@@ -44,6 +44,12 @@ export default function Collaborate() {
   const [holder, setHolder] = useState("");
   const [flaws, setFlaws] = useState("");
   const [faceAcc, setFaceAcc] = useState(true);
+  // Background people. OFF by default because the gate scores whichever face
+  // best matches the gallery, so bystanders are extra chances to score a
+  // stranger and call it her — a club brief once returned NINE faces. But the
+  // server-side default alone made a crowd unaskable from the UI, and "blurred
+  // crowd behind us" is a legitimate thing to want from a nightclub selfie.
+  const [allowCrowd, setAllowCrowd] = useState(false);
   const [seed, setSeed] = useState("");
   const [modes, setModes] = useState({});
   const [draft, setDraft] = useState("");        // AI-written, editable
@@ -80,7 +86,7 @@ export default function Collaborate() {
   const body = useMemo(() => ({
     prompt, place, activity, interaction, holder, flaws, shot_type: shotType,
     framing, aspect, resolution, lighting, time_of_day: timeOfDay, weather, season,
-    face_accessories: faceAcc,
+    face_accessories: faceAcc, allow_crowd: allowCrowd,
     seed: seed === "" ? null : Number(seed),
     prompt_override: draft.trim() || null,
     wardrobe: pick(members, "outfit"), nails: pick(members, "nail"),
@@ -90,7 +96,7 @@ export default function Collaborate() {
       Object.entries(members).map(([k, v]) => [k, v.accessories || []]).filter(([, v]) => v.length)),
     as_image: Object.fromEntries(Object.entries(modes).map(([k, v]) => [k, v !== "text"])),
   }), [prompt, place, activity, interaction, holder, flaws, shotType, framing, aspect,
-       resolution, lighting, timeOfDay, weather, season, faceAcc, seed, draft, members, modes]);
+       resolution, lighting, timeOfDay, weather, season, faceAcc, allowCrowd, seed, draft, members, modes]);
 
   // The right column renders what the SERVER will actually do, not a guess.
   useEffect(() => {
@@ -308,6 +314,21 @@ export default function Collaborate() {
                       faceAcc ? "translate-x-4" : "translate-x-0")} />
                   </span>
                   Face accessories
+                </button>
+                {/* Also an identity lever. Every extra face is another candidate
+                    for the gate to score, and it scores whichever one best
+                    matches the gallery — so a crowd makes the verdict a lottery
+                    rather than a measurement. Off by default; on when the
+                    photograph is genuinely of a room. */}
+                <button onClick={() => setAllowCrowd(!allowCrowd)}
+                  title="Let the scene contain background people. Raises faces in frame, which the gate cannot tell apart from her."
+                  className="flex items-center gap-2 text-[11px] text-zinc-400 hover:text-zinc-200">
+                  <span className={cn("relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors",
+                    allowCrowd ? "bg-amber-500/80" : "bg-white/10")}>
+                    <span className={cn("absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white transition-transform",
+                      allowCrowd ? "translate-x-4" : "translate-x-0")} />
+                  </span>
+                  Background people
                 </button>
                 <label className="flex items-center gap-1.5 text-[11px] text-zinc-500">
                   seed

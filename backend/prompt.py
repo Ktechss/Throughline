@@ -75,8 +75,31 @@ _SANITISE = [
      "sexualised mood word"),
     # UNDRESS — still neutralised. A garment category is a garment; this is the
     # absence of one, and that distinction is the whole of the rule below.
-    (r"\b(?:topless|nude|naked|bare-?chested|unclothed|undressed)\b",
+    (r"\b(?:topless|naked|bare-?chested|unclothed|undressed)\b",
      "casual clothing", "undress cue"),
+    # "nude" is NOT in the list above, because in this domain it is overwhelmingly
+    # a COLOUR. The blanket rule rewrote a real shot's saved styling into
+    #
+    #   "blush-casual clothing satin"       (was blush-nude)
+    #   "Fingernail polish: soft casual clothing pink"
+    #   "Lipstick: soft casual clothing pink"
+    #
+    # and shipped that to fal. Same failure as the product-category rule that was
+    # already narrowed once — a word that means undress in one context and a
+    # perfectly ordinary retail colour in another, rewritten on sight.
+    #
+    # So match the CONTEXT rather than the word: a person being nude, not a thing
+    # being nude-coloured. "nude pink", "nude-toned", "blush-nude", "nude satin"
+    # and a "nude manicure" all pass through untouched now.
+    # The verb is CAPTURED and put back, or "she is nude" rewrites to
+    # "she wearing casual clothing" — broken English shipped to the model, which
+    # is its own kind of damage.
+    (r"\b(is|are|was|were|posing|posed|poses|appears?|standing|lying|sitting)\s+"
+     r"(?:fully\s+|completely\s+|totally\s+|semi-?\s*|partially\s+)?nude\b",
+     r"\1 wearing casual clothing", "undress cue"),
+    (r"\bin the nude\b", "in casual clothing", "undress cue"),
+    (r"\bnude\s*(?:photo\s?shoot|photograph\w*|photo|shoot|scene|model\w*|body|figure)\b",
+     "casual clothing photograph", "undress cue"),
     # PRODUCTS — deliberately NOT rewritten. lingerie, underwear, swimwear,
     # bikini, loungewear and the rest are retail categories with an ordinary
     # advertising industry behind them, and they used to sit in the undress rule

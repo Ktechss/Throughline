@@ -3617,6 +3617,14 @@ def put_timeline(payload: dict = Body(...)):
     return {"eras": eras}
 
 
+# How much saved outfit TEXT rides along when the outfit also has an IMAGE.
+# A turnaround shows fabric, print, cut and drape better than any sentence;
+# what it cannot show is lip colour, nail colour and small accessories, and
+# those fit comfortably here. Set by the failure that found it: 1,940
+# characters of saree description overrode its own reference print.
+_OUTFIT_TEXT_CAP = 600
+
+
 class ShotReq(BaseModel):
     brief: str = ""              # the ONLY thing the user writes
     prompt: str | None = None    # AI-written (Claude) prompt, edited by the user;
@@ -3980,6 +3988,28 @@ def shot(req: ShotReq):
     # would quietly mean "dropped".
     if req.wardrobe_id:
         desc = (_wardrobe_meta().get(req.wardrobe_id, {}) or {}).get("description")
+        # When the outfit HAS its own image, the description competes with it —
+        # and loses the thing only a picture can carry. Measured on a real street
+        # shot: a 1,940-character saree description rode alongside its turnaround,
+        # and the model painted the print from the WORDS. Reference: bold coral,
+        # sky-blue and mustard blooms. Result: small washed-out pink roses, blue
+        # and yellow gone. Drape, blouse and shoes survived; the pattern did not.
+        #
+        # The same prompt ran 4,517 characters with 3,631 of them wardrobe and
+        # grooming boilerplate — 80% — against ~880 characters of the scene the
+        # user actually asked for. The street, the park and the blurred families
+        # never stood a chance, and the face landed at 360px under the plateau.
+        #
+        # So when the image is attached the text is TRIMMED to what a cropped
+        # turnaround genuinely cannot show — lip and nail colour, jewellery, bag,
+        # eyewear — and stops re-describing fabric the picture is already holding.
+        # With no image (a collaboration demotes it) the full text stays, because
+        # then words are all there is.
+        if desc and has_wardrobe and len(desc) > _OUTFIT_TEXT_CAP:
+            cut = desc[:_OUTFIT_TEXT_CAP]
+            desc = cut[:cut.rfind(".") + 1] or cut
+            demoted.append(f"outfit description trimmed to {len(desc)} chars "
+                           f"(@image2 carries the garment)")
         # Only point at @image2 when @image2 IS the outfit. On a collaboration
         # that tag holds the guest's FACE, and telling the model to take garments
         # from it is worse than saying nothing — the description alone carries
@@ -3987,7 +4017,7 @@ def shot(req: ShotReq):
         from_ref = "from @image2 " if has_wardrobe else ""
         if desc and desc.strip():
             if req.face_accessories:
-                styling, _ = promptlib.sanitise(
+                styling, _extra = promptlib.sanitise(
                     "She is WEARING this complete look in the shot — show every "
                     "element on her, not only the clothing: reproduce the garments "
                     f"{from_ref}and also render her hairstyle and hair colour, "
@@ -4003,7 +4033,7 @@ def shot(req: ShotReq):
             else:
                 # Face clear — apply everything EXCEPT items that cover the face,
                 # so identity stays fully readable (the gate can score it).
-                styling, _ = promptlib.sanitise(
+                styling, _extra = promptlib.sanitise(
                     f"She is wearing this look — reproduce the garments {from_ref}"
                     "and apply its hairstyle and hair colour, lip colour, nail "
                     "colours, jewellery, bag, belt and watch. But do NOT add any "
@@ -4012,12 +4042,13 @@ def shot(req: ShotReq):
                     "fully clear, uncovered and visible, even if the description "
                     "mentions such items. Her facial identity comes only from "
                     f"@image1: {desc.strip()}")
+            sanitised += _extra
             text = f"{text} {styling}"
 
     # Manicure reference: match her nails to the chosen nail image. Nails only —
     # face/identity stay with @image1, outfit unchanged.
     if nail_tag:
-        nail_line, _ = promptlib.sanitise(
+        nail_line, _extra = promptlib.sanitise(
             f"NAILS — highest priority: her nails ALWAYS match the manicure shown in "
             f"{nail_tag} — the same nail shape, length, base colour, finish and any "
             "nail art on BOTH her fingernails and her toenails (a matching manicure "
@@ -4030,6 +4061,7 @@ def shot(req: ShotReq):
             f"{nail_tag} only. Keep her hands and nails clearly in focus. This changes "
             "only her nails; her facial identity comes only from @image1 and her "
             "outfit is otherwise unchanged.")
+        sanitised += _extra
         text = f"{text} {nail_line}"
 
     # Home reference: the brief named one of her rooms — put her in HER home, the
@@ -4038,13 +4070,14 @@ def shot(req: ShotReq):
         where = ("a place she goes regularly" if place_kind == "regular"
                  else "her own home")
         thing = "space" if place_kind == "regular" else "room"
-        place_line, _ = promptlib.sanitise(
+        place_line, _extra = promptlib.sanitise(
             f"SETTING — {where}: the location and background of this photo is "
             f"exactly the {thing} shown in {place_tag} — reproduce that same place (the "
             f"furniture, walls, layout, décor and overall setting) faithfully and keep "
             f"it consistent. Do not invent or substitute a different {thing}. She is "
             f"naturally within this space doing what the brief describes; her identity "
             f"still comes only from @image1.")
+        sanitised += _extra
         text = f"{text} {place_line}"
 
     # The date, last: season, hair era and manicure wear. Appended rather than
@@ -4052,9 +4085,10 @@ def shot(req: ShotReq):
     # barred from describing her, and hair and nails sit right on that line.
     # POV shots are faceless and hairless in frame, so only the season applies.
     if tl_clause:
-        when_line, _ = promptlib.sanitise(
+        when_line, _extra = promptlib.sanitise(
             timeline.clause(when, {}, [])[0] if req.pov else tl_clause)
         if when_line:
+            sanitised += _extra
             text = f"{text} {when_line}"
 
     label = req.brief.strip()[:60] or "untitled shot"
