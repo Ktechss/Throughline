@@ -14,6 +14,8 @@ from datetime import date
 from pathlib import Path
 
 import shutil
+import threading
+from contextlib import asynccontextmanager
 import tempfile
 import time
 
@@ -33,7 +35,16 @@ from .config import (ARCHIVE_FORMAT, ARCHIVE_QUALITY, BODIES, BODIES_META,
                      POSES, REF_BUDGET, REFS, RESOLUTION, ROOT, SCENE_EDIT,
                      SCENE_TEXT2IMG, TEXT2IMG, TIMELINE_PATH, WARDROBE)
 
-app = FastAPI(title="Throughline")
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    # Recover any download that was parked before the UI is even served: a
+    # reseller's result URL expires in ~24h, so the sooner the sweep runs after a
+    # restart, the more likely a paid-for image is still there to fetch.
+    _start_sweeper()
+    yield
+
+
+app = FastAPI(title="Throughline", lifespan=_lifespan)
 
 # Create tables + import the JSON ledgers once (idempotent — only imports while a
 # table is still empty). Runs, videos and wardrobe meta now live in eve1.db; the
@@ -1553,6 +1564,114 @@ class RefetchReq(BaseModel):
     run_id: str
 
 
+def _pull_to_disk(url: str, dest: Path) -> int:
+    """Download one result URL to `dest`, in the format the row's name promises.
+
+    ONE download path, shared by the manual refetch and the automatic sweep
+    below. They were separate, and drifted: generate._download grew a browser
+    User-Agent for kie's CDN while this one did not, so the endpoint that exists
+    to rescue a failed download 403'd for the exact reason the download had.
+    """
+    import urllib.request
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_suffix(dest.suffix + ".part")
+    try:
+        # kie's result CDN 403s urllib's default UA. fal's is indifferent.
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=generate.DOWNLOAD_TIMEOUT) as r, \
+                open(tmp, "wb") as fh:
+            shutil.copyfileobj(r, fh)
+        if tmp.stat().st_size < 10_000:      # same floor generate() uses
+            raise ValueError("re-downloaded file is implausibly small")
+        # The provider serves the ORIGINAL png, but the row names the archived
+        # file. Land it in the format the name promises, or the row points at a
+        # .webp full of PNG bytes — readable, since PIL sniffs content, but a lie
+        # on disk and 10x the size the archive was chosen for.
+        if dest.suffix.lower() == f".{ARCHIVE_FORMAT}":
+            from PIL import Image
+            with Image.open(tmp) as im:
+                im.convert("RGB").save(dest, ARCHIVE_FORMAT.upper(),
+                                       quality=ARCHIVE_QUALITY or 90, method=4)
+            tmp.unlink(missing_ok=True)
+        else:
+            tmp.replace(dest)
+        return dest.stat().st_size
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+# How long a parked run stays worth sweeping. fal's URLs persist indefinitely —
+# a July run was refetched successfully this session — but kie and poyo both
+# document results as available for ~24 HOURS. So a reseller shot that fails to
+# download is recoverable only inside that window, and after it the credits are
+# spent for nothing. 20h leaves margin; older rows stay refetchable by hand.
+SWEEP_WINDOW_H = 20
+SWEEP_EVERY_S = 600
+
+
+def _sweep_missing() -> int:
+    """Re-pull any recent run whose image never landed. Returns how many.
+
+    The immediate path already retries three times before parking the row, so
+    everything reaching here has failed three times in a row — which is either
+    permanent (a 403, a dead URL) or a stall that outlived one generation. The
+    first stays broken and costs one request per sweep; the second heals itself,
+    which is the entire point.
+    """
+    now = time.time()
+    healed = 0
+    # EVERY character, not the active one. generate.all_runs() is scoped to
+    # whoever is active — 391 of 447 rows at the time this was written — so a
+    # parked download could hide behind a character switch and quietly age past
+    # the reseller's 24h URL window while the sweep looked elsewhere. That is
+    # also why /api/runs/missing did not list the tea-shop shot.
+    for row in db.runs_all_everywhere():
+        url = row.get("source_url")
+        if not url or not row.get("file"):
+            continue
+        found = db.runs_owner(row["id"])
+        if not found:
+            continue
+        _, cid = found
+        dest = config.char_base(cid) / "images" / row["file"]
+        if dest.exists():
+            continue
+        try:
+            age_h = (now - time.mktime(time.strptime(
+                row.get("created", ""), "%Y-%m-%dT%H:%M:%S"))) / 3600
+        except Exception:                                   # noqa: BLE001
+            age_h = 0
+        if age_h > SWEEP_WINDOW_H:
+            continue
+        try:
+            _pull_to_disk(url, dest)
+            healed += 1
+        except Exception:                                   # noqa: BLE001
+            pass        # next sweep, or by hand — never fatal
+    return healed
+
+
+def _start_sweeper() -> None:
+    """Heal missing downloads in the background, on startup and every 10 min.
+
+    A daemon thread rather than an async task because _pull_to_disk is blocking
+    urllib, and a 20MB 4K image would otherwise stall the event loop serving the
+    UI. Wired through lifespan below — on_event is deprecated in this FastAPI.
+    """
+    def loop() -> None:
+        while True:
+            try:
+                n = _sweep_missing()
+                if n:
+                    print(f"[sweeper] recovered {n} missing image(s)")
+            except Exception as exc:                        # noqa: BLE001
+                print(f"[sweeper] {type(exc).__name__}: {str(exc)[:120]}")
+            time.sleep(SWEEP_EVERY_S)
+
+    threading.Thread(target=loop, daemon=True, name="refetch-sweeper").start()
+
+
 @app.post("/api/runs/refetch")
 def refetch_run(req: RefetchReq):
     """Re-download a run's image when the file has gone missing.
@@ -1576,32 +1695,11 @@ def refetch_run(req: RefetchReq):
         raise HTTPException(
             409, "this run predates source-url recording, so there is nothing to "
                  "re-download — regenerate it from the Shoot tab if you want it back")
-    import urllib.error, urllib.request
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest.with_suffix(dest.suffix + ".part")
     try:
-        with urllib.request.urlopen(url, timeout=generate.DOWNLOAD_TIMEOUT) as r, \
-                open(tmp, "wb") as fh:
-            shutil.copyfileobj(r, fh)
-        if tmp.stat().st_size < 10_000:      # same floor generate() uses
-            raise ValueError("re-downloaded file is implausibly small")
-        # fal serves the ORIGINAL png, but the row names the archived file. Land
-        # it in the format the name promises, or the row points at a .webp full
-        # of PNG bytes — readable, since PIL sniffs content, but a lie on disk
-        # and 10x the size the archive was chosen for.
-        if dest.suffix.lower() == f".{ARCHIVE_FORMAT}":
-            from PIL import Image
-            with Image.open(tmp) as im:
-                im.convert("RGB").save(dest, ARCHIVE_FORMAT.upper(),
-                                       quality=ARCHIVE_QUALITY or 90, method=4)
-            tmp.unlink(missing_ok=True)
-        else:
-            tmp.replace(dest)
+        size = _pull_to_disk(url, dest)
     except Exception as exc:  # noqa: BLE001
-        tmp.unlink(missing_ok=True)
         raise HTTPException(502, f"could not re-download: {str(exc)[:160]}") from None
-    return {"ok": True, "file": row["file"], "action": "refetched",
-            "bytes": dest.stat().st_size}
+    return {"ok": True, "file": row["file"], "action": "refetched", "bytes": size}
 
 
 @app.get("/api/runs/missing")

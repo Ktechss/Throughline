@@ -192,6 +192,21 @@ def runs_insert(row: dict, character_id: str | None = None) -> dict:
     return row
 
 
+def runs_all_everywhere(newest_first: bool = True) -> list[dict]:
+    """Every run for EVERY character. Deliberately unscoped.
+
+    runs_all() answers for one character, which is right for listing and wrong
+    for maintenance: a missing download belongs to whoever generated it, not to
+    whoever is on screen now, and the refetch sweeper must not lose a parked
+    image because the user clicked another character.
+    """
+    order = "DESC" if newest_first else "ASC"
+    with _conn() as con:
+        rows = con.execute(f"SELECT doc FROM runs ORDER BY seq {order}").fetchall()
+    # _conn() sets no row_factory, so rows are plain tuples — index, don't key.
+    return [json.loads(r[0]) for r in rows]
+
+
 def runs_owner(run_id: str) -> tuple[dict, str] | None:
     """One run by id, ACROSS characters, with the character that owns it.
 

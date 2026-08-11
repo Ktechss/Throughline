@@ -225,7 +225,18 @@ def _download(url: str, dest, rid: str) -> None:
     """
     import urllib.request as _u
     deadline = time.monotonic() + DOWNLOAD_TIMEOUT
-    with _u.urlopen(url, timeout=DOWNLOAD_TIMEOUT) as resp, open(dest, "wb") as fh:
+    # A BROWSER USER-AGENT, because kie's result CDN 403s urllib's default.
+    #
+    # fal's CDN does not care, so this went unnoticed until the first real kie
+    # shot: the image generated, 24 credits were spent, and the download died
+    # with "HTTP Error 403: Forbidden". Same bot filter that sits in front of
+    # kie's uploader, which providers.py already works around — the download
+    # path is fal-era code and never got the same treatment.
+    #
+    # Recoverable only because source_url is parked on the row before the
+    # download is attempted. That design note now has a second real case.
+    req = _u.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with _u.urlopen(req, timeout=DOWNLOAD_TIMEOUT) as resp, open(dest, "wb") as fh:
         while True:
             if time.monotonic() > deadline:
                 fh.close()
