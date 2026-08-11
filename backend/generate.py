@@ -316,25 +316,35 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
     # kie replaces exactly one step: submit a prompt plus reference URLs, get an
     # image URL. Everything below — the download retry, the source_url parking,
     # auto-level, the gate, the row — is provider-agnostic and untouched.
-    use = (provider or PROVIDER or "fal").lower()
-    if use == "kie" and refs:
-        from . import providers
-        t0 = time.time()
-        try:
-            r = providers.kie_generate(
-                prompt=prompt, refs=refs, aspect=aspect,
-                resolution=resolution or RESOLUTION, progress=progress)
-        except providers.ProviderError as exc:
-            # Fall back to fal rather than losing the shot. A reseller queue or a
-            # refusal should cost latency, not a generation the caller wanted.
-            if progress is not None:
-                progress["stage"] = "kie failed — falling back to fal"
-            r, use = None, "fal"
-            _kie_error = str(exc)
-        else:
-            _kie_error = None
+    # The CHAIN, in the owner's chosen order (Settings), skipping anything
+    # disabled or missing its key. Each is tried in turn and a failure costs
+    # latency, not the shot; fal is the end of every chain because it is the
+    # dearest and the one that works when the cheap ones queue or refuse.
+    from . import providers
+    if provider:
+        chain = [provider.lower()]
     else:
-        r, _kie_error = None, None
+        chain = providers.chain()
+
+    r, use, _prov_error = None, "fal", None
+    if refs:
+        for name in chain:
+            run_it = providers.RUNNERS.get(name)
+            if run_it is None:          # "fal" — handled by the block below
+                use = "fal"
+                break
+            try:
+                if progress is not None:
+                    progress["stage"] = f"generating on {name}"
+                r = run_it(prompt=prompt, refs=refs, aspect=aspect,
+                           resolution=resolution or RESOLUTION, progress=progress)
+                use = name
+                break
+            except providers.ProviderError as exc:
+                _prov_error = f"{name}: {exc}"
+                if progress is not None:
+                    progress["stage"] = f"{name} unavailable — trying next"
+                continue
 
     # Upload refs ONCE and reuse the URLs across both endpoints — re-uploading
     # for the fallback would double the cost and latency for nothing.
@@ -430,7 +440,7 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
         # `last` is None only if the loop never ran, which now happens when kie
         # failed AND the fal plan was skipped — surface kie's message rather
         # than a bare TypeError.
-        raise last or RuntimeError(_kie_error or "no provider produced an image")
+        raise last or RuntimeError(_prov_error or "no provider produced an image")
 
     moderation_fallback = used_ep != primary
     if progress is not None:

@@ -27,6 +27,7 @@ from pydantic import BaseModel
 from . import (config, db, describe, gate, generate, prompt as promptlib, prompter,
                skeleton, timeline)
 from . import framing_data, getup_data, lighting_data
+from . import providers
 from .interactions_data import INTERACTIONS
 from .scenes_data import MOMENTS
 from .config import (ARCHIVE_FORMAT, ARCHIVE_QUALITY, BODIES, BODIES_META,
@@ -1670,6 +1671,47 @@ def _start_sweeper() -> None:
             time.sleep(SWEEP_EVERY_S)
 
     threading.Thread(target=loop, daemon=True, name="refetch-sweeper").start()
+
+
+# ------------------------------------------------------------------ providers
+# Who renders, in what order, and which are switched off. All three resell the
+# same Google model, so this is a price/latency decision rather than a quality
+# one — measured on one prompt, three references, 4K, scored on her own gallery:
+#
+#     fal    0.4304   $0.30            66s
+#     kie    0.4267   $0.12 (24 cr)   220s
+#     poyo   0.4426   $0.175 (35 cr)  265s
+#
+# 0.016 of spread against seed-to-seed variance of 0.12-0.63 on identical
+# prompts. The order is a running preference — "kie is queueing today, put fal
+# first" — so it is persisted and editable live rather than an env var needing a
+# restart.
+
+
+class ProviderOrderReq(BaseModel):
+    order: list[dict]        # [{name, enabled}] in priority order
+
+
+@app.get("/api/providers")
+def get_providers():
+    """The chain, with what each costs and whether it can actually run."""
+    rows = []
+    for r in providers.load_order():
+        c = providers.CATALOGUE[r["name"]]
+        rows.append({**r, "label": c["label"], "usd": c["usd"],
+                     "seconds": c["seconds"], "note": c["note"],
+                     "key_env": c["key"], "has_key": providers.available(r["name"])})
+    return {"providers": rows, "chain": providers.chain(),
+            # kie's balance is the one that silently decides whether the cheap
+            # path works at all: 24 credits per 4K edit, and an empty account
+            # falls through to fal at full price without complaining.
+            "kie_credits": providers.kie_credits()}
+
+
+@app.put("/api/providers")
+def put_providers(req: ProviderOrderReq):
+    saved = providers.save_order(req.order)
+    return {"providers": saved, "chain": providers.chain()}
 
 
 @app.post("/api/runs/refetch")

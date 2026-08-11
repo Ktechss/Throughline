@@ -151,3 +151,159 @@ def kie_generate(*, prompt: str, refs: list[Path], aspect: str, resolution: str,
         if progress is not None and state:
             progress["stage"] = f"generating ({state})"
     raise ProviderError(f"kie: task {task} did not finish in {POLL_TIMEOUT}s")
+
+
+# --------------------------------------------------------------------- poyo
+_POYO_SUBMIT = "https://api.poyo.ai/api/generate/submit"
+_POYO_STATUS = "https://api.poyo.ai/api/generate/status"
+
+# poyo publishes $0.070 for a 4K nano-banana-pro edit. Its own task record says
+# 35 credits, and its credits are $0.005, so the real number is $0.175 — still
+# 42% under fal, but two and a half times what the page advertises and half again
+# what kie charges. The advertised figure was the tier labelled "via Fal"; what
+# the API actually routes to is dearer. Read the meter, not the pricing page.
+POYO_CREDIT_USD = 0.005
+
+
+def poyo_key() -> str:
+    k = os.environ.get("POYO_API_KEY", "").strip()
+    if not k:
+        raise ProviderError("POYO_API_KEY is not set — add it to .env")
+    return k
+
+
+def poyo_generate(*, prompt: str, refs: list[Path], aspect: str, resolution: str,
+                  progress: dict | None = None) -> dict:
+    """Render on poyo. Same contract as kie_generate.
+
+    poyo has NO upload endpoint of its own — it only accepts URLs — so the
+    references are hosted on kie and handed over. That means poyo needs a working
+    KIE_API_KEY even when kie itself is disabled, which is worth knowing before
+    turning kie off and expecting poyo to carry on alone.
+
+    It also enforces 10MB per image. Local references are 0.3-1.2MB so that is
+    irrelevant in practice, but a 4K OUTPUT used as a reference is 12-21MB and
+    would be refused — the failure that first surfaced the limit.
+    """
+    key = poyo_key()
+    if progress is not None:
+        progress["stage"] = "uploading references"
+    urls = [kie_upload(p) for p in refs]
+
+    if progress is not None:
+        progress["stage"] = "generating"
+    d = _post(_POYO_SUBMIT,
+              {"model": "nano-banana-pro-edit",
+               # image_urls here, image_input on kie. Same model, same idea,
+               # different spelling — send the wrong one and it generates with no
+               # references at all rather than erroring.
+               "input": {"prompt": prompt, "image_urls": urls, "size": aspect,
+                         "resolution": resolution, "n": 1, "output_format": "png"}},
+              key)
+    task = (d.get("data") or {}).get("task_id") or d.get("task_id")
+    if not task:
+        raise ProviderError(f"poyo submit: {json.dumps(d)[:200]}")
+
+    t0 = time.time()
+    while time.time() - t0 < POLL_TIMEOUT:
+        time.sleep(POLL_EVERY)
+        st = (_get(f"{_POYO_STATUS}/{task}", key).get("data") or {})
+        state = st.get("status")
+        if state == "failed":
+            raise ProviderError(f"poyo: {st.get('error_message') or 'failed'}")
+        if state == "finished":
+            return {"images": [{"url": st["files"][0]["file_url"]}],
+                    "credits": st.get("credits_amount")}
+        if progress is not None and state:
+            progress["stage"] = f"generating ({state})"
+    raise ProviderError(f"poyo: task {task} did not finish in {POLL_TIMEOUT}s")
+
+
+# ------------------------------------------------------------------ registry
+#
+# What each provider costs and how fast it is, measured on one prompt with three
+# references at 4K — never taken from a pricing page, because poyo's was wrong by
+# 2.5x. `usd` is per 4K edit.
+CATALOGUE = {
+    "kie":  {"label": "kie.ai", "usd": 0.12, "seconds": 220, "key": "KIE_API_KEY",
+             "note": "same picture as fal for 40% of the price; 24 credits per 4K edit"},
+    "poyo": {"label": "poyo.ai", "usd": 0.175, "seconds": 265, "key": "POYO_API_KEY",
+             "note": "35 credits per 4K edit — its advertised $0.070 was not what "
+                     "the API charged; needs a kie key to host references"},
+    "fal":  {"label": "fal.ai", "usd": 0.30, "seconds": 66, "key": "FAL_KEY",
+             "note": "dearest and 3x faster; the fallback everything else falls to"},
+}
+
+RUNNERS = {"kie": kie_generate, "poyo": poyo_generate}
+
+
+def available(name: str) -> bool:
+    """Is this provider usable at all — i.e. is its key present?"""
+    entry = CATALOGUE.get(name)
+    return bool(entry and os.environ.get(entry["key"], "").strip())
+
+
+# The ORDER providers are tried in, and which are switched off. Persisted rather
+# than an env var because it is a running preference — "kie is queueing today,
+# put fal first" — and restarting the server to change it is not a workflow.
+#
+# fal is deliberately last-and-permanent in the default: it is the dearest, and
+# it is what everything else falls to, so it earns its place by working when the
+# cheap ones do not.
+_DEFAULT_ORDER = ["kie", "poyo", "fal"]
+_SETTINGS = None            # set by config at import; kept out of this module's
+                            # import graph so providers.py stays dependency-free
+
+
+def settings_path():
+    from . import config
+    return config.ROOT / "data" / "providers.json"
+
+
+def load_order() -> list[dict]:
+    """[{name, enabled}] in priority order, healed against the catalogue.
+
+    Anything unknown is dropped and anything missing is appended, so editing the
+    file by hand — or adding a provider in a later version — cannot leave the
+    pipeline with no way to render.
+    """
+    import json as _json
+    p = settings_path()
+    saved = []
+    if p.exists():
+        try:
+            saved = _json.loads(p.read_text()).get("order") or []
+        except Exception:                                   # noqa: BLE001
+            saved = []
+    out, seen = [], set()
+    for row in saved:
+        n = (row or {}).get("name")
+        if n in CATALOGUE and n not in seen:
+            out.append({"name": n, "enabled": bool(row.get("enabled", True))})
+            seen.add(n)
+    for n in _DEFAULT_ORDER:
+        if n not in seen:
+            out.append({"name": n, "enabled": True})
+    return out
+
+
+def save_order(order: list[dict]) -> list[dict]:
+    import json as _json
+    p = settings_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    clean = [{"name": r["name"], "enabled": bool(r.get("enabled", True))}
+             for r in order if r.get("name") in CATALOGUE]
+    p.write_text(_json.dumps({"order": clean}, indent=2) + "\n")
+    return load_order()
+
+
+def chain() -> list[str]:
+    """The providers to try, in order: enabled, key present, best first.
+
+    Never returns empty. If everything is disabled or unkeyed, fal is used
+    anyway — a settings mistake should degrade to the expensive provider, not to
+    a pipeline that cannot render at all.
+    """
+    picked = [r["name"] for r in load_order()
+              if r["enabled"] and available(r["name"])]
+    return picked or ["fal"]

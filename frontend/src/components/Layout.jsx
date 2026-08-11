@@ -6,6 +6,7 @@ const NAV = [
   { to: "/", label: "Characters", icon: Users },
   { to: "/studio", label: "Studio", icon: Clapperboard },
   { to: "/collaborate", label: "Collaborator Studio", icon: Users2 },
+  { to: "/settings", label: "Settings", icon: Settings },
 ];
 
 // Exact match, not a prefix and not a fallback.
