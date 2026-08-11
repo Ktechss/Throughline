@@ -12,7 +12,7 @@ const RES = ["1K", "2K", "4K"];
 export default function ShootTab({
   gens, outfits, poseGroups,
   brief, setBrief, aiPrompt, setAiPrompt, aiBusy, onAiPrompt,
-  resolution, setResolution, faceAcc, setFaceAcc, pov, setPov,
+  resolution, setResolution, faceAcc, setFaceAcc, pov, setPov, bodyRef, setBodyRef,
   withChar, setWithChar, castable = [],
   selectedOutfit, setSelectedOutfit, selectedPose, setSelectedPose,
   onGenerate, shotPreview, hasIdentity, onOpenDetail, onUploadOutfit, onOpenDesigner, onDeleteOutfit,
@@ -84,6 +84,19 @@ export default function ShootTab({
                 <span className={cn("absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform", pov ? "translate-x-4" : "translate-x-0")} />
               </span>
               POV (faceless)
+            </button>
+            {/* A wardrobe turnaround compresses her build — four full-body panels
+                on one canvas leaves each figure a few hundred pixels tall, and
+                bust volume does not survive that. Every saved outfit came back
+                slimmer than the body it was generated from. This attaches the
+                pinned body reference directly as a third image instead. */}
+            <button type="button" onClick={() => setBodyRef(!bodyRef)}
+              title="Attach her pinned body reference as a 3rd image so the figure comes from it, not from the outfit sheet. Costs ~0.04 similarity."
+              className="flex items-center gap-2 text-[12px] text-zinc-400 hover:text-zinc-200">
+              <span className={cn("relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors", bodyRef ? "bg-sky-500/80" : "bg-white/10")}>
+                <span className={cn("absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform", bodyRef ? "translate-x-4" : "translate-x-0")} />
+              </span>
+              Hold her figure
             </button>
           </div>
           {pov && <p className="mt-2 text-[11px] text-emerald-300/80">POV mode: no face — describe the product / what's in her hand in the brief. Pick a manicure for best hand consistency. The AI prompt is ignored in POV; identity gate is N/A.</p>}

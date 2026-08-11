@@ -29,6 +29,16 @@ export function useStudio(charParam) {
   const [resolution, setResolution] = useState("4K");
   const [faceAcc, setFaceAcc] = useState(true);
   const [pov, setPov] = useState(false);   // faceless first-person POV product/lifestyle shot
+  // Attach her pinned body reference as a THIRD image, even when an outfit
+  // already owns @image2. Off by default because a third reference is
+  // measured to cost ~0.04 identity — on when the figure matters more.
+  //
+  // It exists because a wardrobe turnaround compresses her build: four
+  // full-body panels across one canvas leaves each figure a few hundred
+  // pixels tall, and bust volume does not survive that. Every saved outfit
+  // came back slimmer than the body it was generated from. This bypasses the
+  // swatch and asserts the body directly.
+  const [bodyRef, setBodyRef] = useState(false);
   // A COLLABORATION: the other character whose face rides as @image2.
   const [withChar, setWithChar] = useState(null);
   const [castable, setCastable] = useState([]);   // others who have a master face
@@ -162,7 +172,7 @@ export function useStudio(charParam) {
     wardrobe_id: selectedOutfit?.id || null, pose_ref_id: null,
     pose_id: selectedPose?.id || null, pose_text: null,
     nail_id: selectedNail?.id || null,
-    resolution, face_accessories: faceAcc,
+    resolution, face_accessories: faceAcc, body_ref: bodyRef,
     pov, shot_type: pov ? "pov" : "candid",
     with_character: withChar?.id || null,
   });
@@ -180,7 +190,7 @@ export function useStudio(charParam) {
     // Deps are the fields shotBody() reads, listed explicitly — shotBody itself
     // is recreated every render and would retrigger this on every keystroke.
   }, [brief, aiPrompt, selectedOutfit?.id, selectedPose?.id, selectedNail?.id,
-      resolution, faceAcc, pov, withChar?.id, bio?.reference]);
+      resolution, faceAcc, bodyRef, pov, withChar?.id, bio?.reference]);
 
   const onGenerate = async () => {
     if (!bio?.reference) { setErr("No identity reference yet — calibrate her first."); return; }
@@ -520,7 +530,7 @@ export function useStudio(charParam) {
     faceAcc, setFaceAcc, pov, setPov, selectedOutfit, setSelectedOutfit, selectedPose, setSelectedPose,
     selectedNail, setSelectedNail, nails, saveNail, deleteNail, updateNail, bulkDeleteNails,
     home, homeBusy, saveHome, uploadCorner, generateCorner, deleteCorner,
-    gens, onGenerate, shotPreview,
+    gens, onGenerate, shotPreview, bodyRef, setBodyRef,
     // outfit designer
     drawerOpen, openDesigner, closeDesigner, outfitText, setOutfitText, outfitImageUrl,
     details, setDetailField, idea, setIdea, pickers, setPicker, describing, enriching, creating,
