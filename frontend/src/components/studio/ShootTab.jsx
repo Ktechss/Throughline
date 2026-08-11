@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Sparkles, Loader2, Wand2, Shirt, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
+import ModelPicker from "@/components/ModelPicker";
 import VerdictChip from "./VerdictChip";
 import OutfitPicker from "./OutfitPicker";
 import PosePicker from "./PosePicker";
@@ -13,6 +14,7 @@ export default function ShootTab({
   gens, outfits, poseGroups,
   brief, setBrief, aiPrompt, setAiPrompt, aiBusy, onAiPrompt,
   resolution, setResolution, faceAcc, setFaceAcc, pov, setPov, bodyRef, setBodyRef,
+  model, setModel,
   withChar, setWithChar, castable = [],
   selectedOutfit, setSelectedOutfit, selectedPose, setSelectedPose,
   onGenerate, shotPreview, hasIdentity, onOpenDetail, onUploadOutfit, onOpenDesigner, onDeleteOutfit,
@@ -72,6 +74,7 @@ export default function ShootTab({
                 <button key={r} onClick={() => setResolution(r)} className={cn("rounded-md px-2.5 py-1 text-[11px] ring-1 transition-colors", resolution === r ? "bg-white text-black ring-white" : "ring-white/10 text-zinc-400 hover:text-white")}>{r}</button>
               ))}
             </div>
+            <ModelPicker value={model} onChange={setModel} className="w-[248px]" />
             <button type="button" onClick={() => setFaceAcc(!faceAcc)} className="flex items-center gap-2 text-[12px] text-zinc-400 hover:text-zinc-200">
               <span className={cn("relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors", faceAcc ? "bg-emerald-500/80" : "bg-white/10")}>
                 <span className={cn("absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform", faceAcc ? "translate-x-4" : "translate-x-0")} />

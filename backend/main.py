@@ -1440,6 +1440,10 @@ class GenReq(BaseModel):
     use_pose_image: bool = False
     refs: list[str] = []          # filenames under data/images, or absolute
     note: str = ""
+    # Which kie model renders this. None uses the project default
+    # (providers.load_model). Per-request so the wardrobe can be made on
+    # one model and the shot on another without changing the default.
+    model: str | None = None
 
 
 def _resolve_ref(name: str) -> Path:
@@ -1483,6 +1487,7 @@ def do_generate(req: GenReq):
             prompt=text, system=promptlib.SYSTEM, refs=refs,
             aspect=req.aspect, seed=req.seed, pose_file=pose_file,
             session=session, character=config.get_active(),
+            model=req.model,
             meta={"note": req.note, "pose": req.pose_name,
                   "pose_as_image": req.use_pose_image},
         )
@@ -1715,6 +1720,36 @@ def put_providers(req: ProviderOrderReq):
     return {"providers": saved, "chain": providers.chain()}
 
 
+class ModelReq(BaseModel):
+    model: str
+
+
+@app.get("/api/models")
+def get_models():
+    """The kie model catalogue and which one renders by default.
+
+    `ceiling` is the honest maximum rather than the requested one — seedream
+    5-pro has no 4K tier, so a 4K request silently renders at 2K. Surfacing that
+    next to the price is the difference between choosing it and being surprised
+    by a small face.
+
+    Measured on one project prompt, same references, scored on her own gallery:
+    nano-banana-pro 0.7634 · seedream-4.5 0.7724 · 5-pro 0.7638 · 5-lite 0.6658.
+    Identity is close across all four; photorealism is NOT — nano renders skin
+    and hand anatomy the seedream tiers do not, which no number here reports.
+    """
+    return {"models": providers.model_rows(), "default": providers.load_model()}
+
+
+@app.put("/api/models")
+def put_model(req: ModelReq):
+    try:
+        return {"default": providers.save_model(req.model),
+                "models": providers.model_rows()}
+    except providers.ProviderError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
 @app.post("/api/runs/refetch")
 def refetch_run(req: RefetchReq):
     """Re-download a run's image when the file has gone missing.
@@ -1891,6 +1926,10 @@ class CalibFacesReq(BaseModel):
     # Skip angles she already has. On by default: re-running calibration should
     # cost only what is missing.
     skip_existing: bool = True
+    # Which kie model renders this. None uses the project default
+    # (providers.load_model). Per-request so the wardrobe can be made on
+    # one model and the shot on another without changing the default.
+    model: str | None = None
 
 
 @app.post("/api/calibrate/faces")
@@ -1934,7 +1973,7 @@ def calibrate_faces(req: CalibFacesReq):
             row = generate.generate(
                 prompt=prompt, system="", refs=[face], aspect="3:4",
                 session=generate.new_session(f"calib face: {angle}"), progress=job,
-                character=cid,
+                character=cid, model=req.model,
                 meta={"calibrate": "face", "angle": angle})
             # Keep EVERY generated calibration face in the reference library
             # (advanced · face) so nothing is ever lost — the candidate copy in
@@ -2370,6 +2409,10 @@ class BodyRefCreateReq(BaseModel):
     shape: str | None = None       # optional shape override; else uses the body parts
     shape_ref: str | None = None   # optional body-SHAPE reference image (filename in refs)
     turnaround: bool = False       # full-body 4-view sheet (front/side/back/¾) like wardrobe
+    # Which kie model renders this. None uses the project default
+    # (providers.load_model). Per-request so the wardrobe can be made on
+    # one model and the shot on another without changing the default.
+    model: str | None = None
 
 
 @app.post("/api/bio/shape-ref/upload")
@@ -2460,7 +2503,7 @@ def body_ref_create(req: BodyRefCreateReq):
         return generate.generate(
             prompt=prompt, system="", refs=refs, aspect=aspect,
             session=generate.new_session("body reference"), progress=job,
-            character=owner,
+            character=owner, model=req.model,
             meta={"body_ref_create": True, "shape": shape_clean,
                   "shape_ref": req.shape_ref, "turnaround": req.turnaround},
             fallback_endpoint=SCENE_EDIT, extra=extra)
@@ -2914,6 +2957,8 @@ class OutfitCreateReq(BaseModel):
     # it does apply to shots), but a prompt-level refusal is a provider policy
     # boundary, not a tuning problem.
     safety_tolerance: str | None = None
+    # Which kie model renders the turnaround. None keeps the default.
+    model: str | None = None
 
 
 def _clean_outfit_text(text: str) -> str:
@@ -3031,7 +3076,7 @@ def wardrobe_create(req: OutfitCreateReq):
         # they see and approve the preview.
         return generate.generate(prompt=prompt, system="", refs=refs, aspect="16:9",
                                  session=generate.new_session(f"create outfit: {label}"),
-                                 progress=job, character=owner,
+                                 progress=job, character=owner, model=req.model,
                                  # A turnaround is a garment swatch, not a photo of
                                  # her — /api/wardrobe/from-run uses only its clothing.
                                  # Gating it scores whichever of its four panels
@@ -3841,6 +3886,11 @@ class ShotReq(BaseModel):
     nail_id: str | None = None       # a manicure reference image, attached as @imageN
     shot_type: str = "candid"
     resolution: str | None = None    # "1K" | "2K" | "4K" (nano). None -> config default
+    # Which kie model renders this shot. None keeps the configured default.
+    # The tiers do NOT share a resolution vocabulary — see providers.KIE_MODELS —
+    # so asking for 4K on seedream-5-pro silently yields 2K, and the run row
+    # records what actually rendered rather than what was asked for.
+    model: str | None = None
     face_accessories: bool = True    # render face-worn items (sunglasses/hats) from the
                                      # outfit; off = keep her face clear (better identity)
     pov: bool = False                # faceless first-person POV product/lifestyle shot —
@@ -4367,7 +4417,7 @@ def shot(req: ShotReq):
             # it on the scene model instead (weaker identity, recorded) rather
             # than dead-spinning to a failure.
             fallback_endpoint=SCENE_EDIT,
-            resolution=req.resolution,
+            resolution=req.resolution, model=req.model,
             meta={"brief": req.brief, "bio_references": [p.name for p in refs],
                   # Present ONLY on a collaboration. generate() branches the gate
                   # on it, and the guest's review finds her shots by it.
@@ -4646,6 +4696,10 @@ def _build_scene(req: "SceneReq") -> dict:
     roles: list[str] = []
     ledger: list[dict] = []
     face_tag: dict[str, str] = {}
+    # Which kie model renders this. None uses the project default
+    # (providers.load_model). Per-request so the wardrobe can be made on
+    # one model and the shot on another without changing the default.
+    model: str | None = None
 
     def spend(kind: str, key: str, path: Path, label: str) -> str:
         refs.append(path)
@@ -5145,7 +5199,7 @@ def scene(req: SceneReq):
             prompt=s["prompt"], system="", refs=refs, aspect=req.aspect,
             seed=req.seed, session=session, progress=job, character=owner,
             fallback_endpoint=SCENE_EDIT, resolution=req.resolution,
-            safety_tolerance=req.safety_tolerance,
+            safety_tolerance=req.safety_tolerance, model=req.model,
             meta={"brief": req.prompt, "scene": True, "cast": cast,
                   "wardrobe_by": req.wardrobe, "place": req.place,
                   "activity": req.activity, "interaction": req.interaction,

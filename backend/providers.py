@@ -128,29 +128,148 @@ def kie_upload(path: Path) -> str:
     return url
 
 
+# --------------------------------------------------------- kie model registry
+#
+# kie's catalogue is NOT uniform, and every difference below fails SILENTLY
+# rather than erroring. Send image_urls to a nano model, or image_input to a
+# seedream one, and the task succeeds, bills in full, and renders with NO
+# REFERENCES AT ALL — which looks like catastrophic identity drift rather than
+# a wiring bug. That trap is why this is a table and not an if/else.
+#
+# Verified against the raw OpenAPI: appending .md to any docs.kie.ai model page
+# returns the schema with exact enums, maxItems and defaults.
+#
+#   model                           refs key      res key     ceiling
+#   nano-banana-pro                 image_input   resolution  4K
+#   nano-banana-2                   image_input   resolution  4K   (14 refs)
+#   seedream/4.5-edit               image_urls    quality     4K   (high)
+#   seedream/5-pro-image-to-image   image_urls    quality     2K   (high)
+#   seedream/5-lite-image-to-image  image_urls    quality     4K   (ultra)
+#
+# The seedream tiers do not share a quality vocabulary: "high" is 4K on 4.5,
+# 2K on 5-pro and only 3K on 5-lite. Asking for 4K therefore has to be
+# translated per model, and 5-pro cannot honour it at all — it is clamped and
+# the caller is told, because silently returning half the pixels is how a shot
+# comes back with a 169px face and no explanation.
+_PASSTHROUGH = {"1K": "1K", "2K": "2K", "4K": "4K"}
+
+KIE_MODELS: dict[str, dict] = {
+    "nano-banana-pro": {
+        "model": "nano-banana-pro", "label": "Nano Banana Pro", "refs_key": "image_input",
+        "res_key": "resolution", "res_map": _PASSTHROUGH, "max_refs": 8,
+        "extra": {"output_format": "png"}, "usd_4k": 0.12,
+    },
+    "nano-banana-2": {
+        "model": "nano-banana-2", "label": "Nano Banana 2", "refs_key": "image_input",
+        "res_key": "resolution", "res_map": _PASSTHROUGH, "max_refs": 14,
+        "extra": {"output_format": "png"}, "usd_4k": 0.09,
+    },
+    "seedream-4.5": {
+        "model": "seedream/4.5-edit", "label": "Seedream 4.5", "refs_key": "image_urls",
+        "res_key": "quality", "res_map": {"1K": "basic", "2K": "basic", "4K": "high"},
+        "max_refs": 14, "extra": {}, "usd_4k": 0.0325,
+    },
+    "seedream-5-pro": {
+        "model": "seedream/5-pro-image-to-image", "label": "Seedream 5 Pro", "refs_key": "image_urls",
+        # No 4K tier exists: basic=1K, high=2K. 4K maps to the ceiling, not to
+        # an error, so a caller asking for 4K still renders — at 2K.
+        "res_key": "quality", "res_map": {"1K": "basic", "2K": "high", "4K": "high"},
+        "ceiling": "2K", "max_refs": 10, "extra": {}, "usd_4k": 0.075,
+    },
+    "seedream-5-lite": {
+        "model": "seedream/5-lite-image-to-image", "label": "Seedream 5 Lite", "refs_key": "image_urls",
+        "res_key": "quality", "res_map": {"1K": "basic", "2K": "basic", "4K": "ultra"},
+        "max_refs": 14, "extra": {}, "usd_4k": 0.0275,
+    },
+}
+
+DEFAULT_KIE_MODEL = os.environ.get("THROUGHLINE_KIE_MODEL", "nano-banana-pro").strip()
+
+
+def model_path():
+    return config.ROOT / "data" / "model.json"
+
+
+def load_model() -> str:
+    """The project-wide default model key.
+
+    Persisted rather than env-only for the same reason the provider order is:
+    "render the wardrobe on seedream but the shot on nano" is a working decision
+    made mid-session, and restarting the server to change it is not a workflow.
+    A per-request `model` still overrides this for one generation.
+    """
+    import json as _json
+    p = model_path()
+    if p.exists():
+        try:
+            n = (_json.loads(p.read_text()) or {}).get("model")
+            if n in KIE_MODELS:
+                return n
+        except Exception:                                   # noqa: BLE001
+            pass
+    return DEFAULT_KIE_MODEL if DEFAULT_KIE_MODEL in KIE_MODELS else "nano-banana-pro"
+
+
+def save_model(name: str) -> str:
+    import json as _json
+    if name not in KIE_MODELS:
+        raise ProviderError(f"unknown kie model {name!r} — known: {sorted(KIE_MODELS)}")
+    p = model_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(_json.dumps({"model": name}, indent=2) + "\n")
+    return name
+
+
+def model_rows() -> list[dict]:
+    """The catalogue as the UI needs it — label, price, and the real ceiling.
+
+    `ceiling` is the honest maximum, not the requested one: seedream-5-pro has no
+    4K tier, so a 4K request renders at 2K. Surfacing that in the picker is the
+    difference between choosing it and being surprised by a 169px face.
+    """
+    cur = load_model()
+    return [{"id": k, "model": s["model"], "label": s.get("label", k),
+             "usd_4k": s["usd_4k"], "max_refs": s["max_refs"],
+             "ceiling": s.get("ceiling", "4K"), "active": k == cur}
+            for k, s in KIE_MODELS.items()]
+
+
+def kie_model(name: str | None) -> dict:
+    """Resolve a model key, accepting either our key or kie's own model string."""
+    n = (name or load_model()).strip()
+    if n in KIE_MODELS:
+        return KIE_MODELS[n]
+    for spec in KIE_MODELS.values():
+        if spec["model"] == n:
+            return spec
+    raise ProviderError(f"unknown kie model {n!r} — known: {sorted(KIE_MODELS)}")
+
+
 def kie_generate(*, prompt: str, refs: list[Path], aspect: str, resolution: str,
-                 progress: dict | None = None) -> dict:
+                 progress: dict | None = None, model: str | None = None) -> dict:
     """Render on kie and return fal's response shape: {"images": [{"url": ...}]}.
 
     generate() unpacks r["images"][0]["url"] and knows nothing else about who
     made it, so matching that shape is the whole of the integration.
     """
     key = kie_key()
+    spec = kie_model(model)
+
+    # Over-budget references are dropped HERE rather than silently truncated by
+    # the API, so the run record and the caller agree on what was actually sent.
+    if len(refs) > spec["max_refs"]:
+        refs = refs[: spec["max_refs"]]
+
     if progress is not None:
         progress["stage"] = "uploading references"
     urls = [kie_upload(p) for p in refs]
 
     if progress is not None:
         progress["stage"] = "generating"
-    d = _post(_KIE_CREATE,
-              {"model": "nano-banana-pro",
-               # NOT image_urls — that is poyo's name for it. kie calls the
-               # reference array image_input, and silently generates without
-               # references if you send the wrong key.
-               "input": {"prompt": prompt, "image_input": urls,
-                         "aspect_ratio": aspect, "resolution": resolution,
-                         "output_format": "png"}},
-              key)
+    inp = {"prompt": prompt, spec["refs_key"]: urls, "aspect_ratio": aspect,
+           spec["res_key"]: spec["res_map"].get(resolution, resolution),
+           **spec["extra"]}
+    d = _post(_KIE_CREATE, {"model": spec["model"], "input": inp}, key)
     if d.get("code") != 200:
         raise ProviderError(f"kie createTask: {d.get('msg')}")
     task = d["data"]["taskId"]
@@ -170,6 +289,11 @@ def kie_generate(*, prompt: str, refs: list[Path], aspect: str, resolution: str,
             url = json.loads(st["resultJson"])["resultUrls"][0]
             return {"images": [{"url": url}],
                     "credits": st.get("creditsConsumed"),
+                    # Which model actually rendered, recorded on the run. Without
+                    # it a shot from a non-default model is indistinguishable
+                    # from a nano one later, and every comparison built on the
+                    # runs table quietly mixes renderers.
+                    "model": spec["model"],
                     "seconds": round((st.get("costTime") or 0) / 1000, 1)}
         if progress is not None and state:
             progress["stage"] = f"generating ({state})"
@@ -196,8 +320,13 @@ def poyo_key() -> str:
 
 
 def poyo_generate(*, prompt: str, refs: list[Path], aspect: str, resolution: str,
-                  progress: dict | None = None) -> dict:
+                  progress: dict | None = None, model: str | None = None) -> dict:
     """Render on poyo. Same contract as kie_generate.
+
+    `model` is accepted so the chain can pass it uniformly, but poyo only carries
+    nano-banana-pro here. A request for any other model is refused rather than
+    quietly rendered on the wrong one — falling through to the next provider is
+    the correct outcome, and a silent substitution would corrupt a comparison.
 
     poyo has NO upload endpoint of its own — it only accepts URLs — so the
     references are hosted on kie and handed over. That means poyo needs a working
@@ -209,6 +338,8 @@ def poyo_generate(*, prompt: str, refs: list[Path], aspect: str, resolution: str
     would be refused — the failure that first surfaced the limit.
     """
     key = poyo_key()
+    if model and model not in ("nano-banana-pro", "nano-banana-pro-edit"):
+        raise ProviderError(f"poyo does not carry {model!r}")
     if progress is not None:
         progress["stage"] = "uploading references"
     urls = [kie_upload(p) for p in refs]

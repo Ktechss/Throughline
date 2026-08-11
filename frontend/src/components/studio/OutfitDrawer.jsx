@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { X, Loader2, Wand2, Sparkles, ImagePlus, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DETAIL_FIELDS, OUTFIT_PICKERS, WARDROBE_CATEGORIES } from "@/api/throughline";
+import ModelPicker from "@/components/ModelPicker";
 
 // Right-side drawer — the outfit builder. Upload a reference photo (Claude
 // describes it) OR type an idea + pick attributes (Claude writes it), then
@@ -10,6 +11,7 @@ export default function OutfitDrawer({
   open, onClose, imageUrl,
   describing, onDescribe,
   outfitText, setOutfitText, details, onDetail,
+  model, setModel,
   idea, setIdea, pickers, onPicker, enriching, onEnrich,
   creating, onGenerate,
   outfitPreview, onSave, onDiscard, categories = [],
@@ -146,8 +148,11 @@ export default function OutfitDrawer({
               <button onClick={onDiscard} className="rounded-lg ring-1 ring-white/10 px-4 py-2.5 text-[13px] text-zinc-300 hover:bg-white/5">Discard</button>
             </div>
           ) : (
+            <>
+            <ModelPicker value={model} onChange={setModel} className="mb-3" />
             <button onClick={onGenerate} disabled={describing || !!creating || !outfitText.trim()}
               className="w-full rounded-lg bg-white text-black py-2.5 text-[13px] font-medium hover:bg-zinc-200 disabled:opacity-40 flex items-center justify-center gap-2"><Wand2 className="h-4 w-4" /> Generate outfit</button>
+            </>
           )}
         </div>
       </aside>

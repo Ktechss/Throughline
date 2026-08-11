@@ -39,6 +39,11 @@ export function useStudio(charParam) {
   // came back slimmer than the body it was generated from. This bypasses the
   // swatch and asserts the body directly.
   const [bodyRef, setBodyRef] = useState(false);
+  // Which model renders. null follows the project default (/api/models), so a
+  // shot and the wardrobe it wears can be made on different renderers without
+  // either one changing the default for everything else.
+  const [model, setModel] = useState(null);
+  const [outfitModel, setOutfitModel] = useState(null);
   // A COLLABORATION: the other character whose face rides as @image2.
   const [withChar, setWithChar] = useState(null);
   const [castable, setCastable] = useState([]);   // others who have a master face
@@ -175,6 +180,7 @@ export function useStudio(charParam) {
     resolution, face_accessories: faceAcc, body_ref: bodyRef,
     pov, shot_type: pov ? "pov" : "candid",
     with_character: withChar?.id || null,
+    model,
   });
 
   const [shotPreview, setShotPreview] = useState(null);
@@ -257,7 +263,8 @@ export function useStudio(charParam) {
     setDrawerOpen(false);   // generation state lives in the Shoot panel, not the closable drawer
     setCreating("starting…"); setErr(null); setOutfitPreview(null);
     try {
-      const { job } = await api.send("/api/wardrobe/create", "POST", { outfit: mergeOutfit(outfitText, details) });
+      const { job } = await api.send("/api/wardrobe/create", "POST",
+        { outfit: mergeOutfit(outfitText, details), model: outfitModel });
       for (;;) {
         await new Promise((r) => setTimeout(r, 1500));
         if (mine !== epoch.current) return;
@@ -429,7 +436,7 @@ export function useStudio(charParam) {
     const mine = epoch.current;
     setBodyBusy("starting…"); setErr(null); setBodyPreview(null);
     try {
-      const body = {}; if (shapeRef) body.shape_ref = shapeRef; if (shape) body.shape = shape;
+      const body = { model }; if (shapeRef) body.shape_ref = shapeRef; if (shape) body.shape = shape;
       const { job } = await api.send("/api/bio/body-ref/create", "POST", body);
       for (;;) {
         await new Promise((r) => setTimeout(r, 1500));
@@ -484,7 +491,7 @@ export function useStudio(charParam) {
   const generateFaces = async (count) => {
     setErr(null);
     try {
-      const { jobs } = await api.send("/api/calibrate/faces", "POST", { count });
+      const { jobs } = await api.send("/api/calibrate/faces", "POST", { count, model });
       setCalibCands((cs) => [...jobs.map((j) => ({ jid: j.job, angle: j.angle, running: true, sel: false })), ...cs]);
       jobs.forEach((j) => pollCalib(j.job));
     } catch (e) { fail(e); }
@@ -531,6 +538,7 @@ export function useStudio(charParam) {
     selectedNail, setSelectedNail, nails, saveNail, deleteNail, updateNail, bulkDeleteNails,
     home, homeBusy, saveHome, uploadCorner, generateCorner, deleteCorner,
     gens, onGenerate, shotPreview, bodyRef, setBodyRef,
+    model, setModel, outfitModel, setOutfitModel,
     // outfit designer
     drawerOpen, openDesigner, closeDesigner, outfitText, setOutfitText, outfitImageUrl,
     details, setDetailField, idea, setIdea, pickers, setPicker, describing, enriching, creating,

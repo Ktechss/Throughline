@@ -178,6 +178,7 @@ export default function Studio() {
                 faceAcc={s.faceAcc} setFaceAcc={s.setFaceAcc}
                 pov={s.pov} setPov={s.setPov}
                 bodyRef={s.bodyRef} setBodyRef={s.setBodyRef}
+                model={s.model} setModel={s.setModel}
                 withChar={s.withChar} setWithChar={s.setWithChar} castable={s.castable}
                 selectedOutfit={s.selectedOutfit} setSelectedOutfit={s.setSelectedOutfit}
                 selectedPose={s.selectedPose} setSelectedPose={s.setSelectedPose}
@@ -236,6 +237,7 @@ export default function Studio() {
         idea={s.idea} setIdea={s.setIdea} pickers={s.pickers} onPicker={s.setPicker}
         enriching={s.enriching} onEnrich={s.enrichOutfit}
         creating={s.creating} onGenerate={s.createOutfit}
+        model={s.outfitModel} setModel={s.setOutfitModel}
         outfitPreview={s.outfitPreview} onSave={s.saveOutfit} onDiscard={s.discardOutfit}
         categories={s.outfitCategories}
       />

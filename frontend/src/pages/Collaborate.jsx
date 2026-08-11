@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 import CastRow from "@/components/collab/CastRow";
 import Picker from "@/components/collab/Picker";
 import BrowsePicker from "@/components/collab/BrowsePicker";
+import ModelPicker from "@/components/ModelPicker";
 
 // COLLABORATOR STUDIO — compose a photograph of one or more of them.
 //
@@ -83,6 +84,9 @@ export default function Collaborate() {
   const member = (cid) => members[cid] || EMPTY_MEMBER;
   const framingOrder = lib?.framing?.findIndex((f) => f.id === framing) + 1 || 0;
 
+  // null follows the project default; set per scene without changing it.
+  const [model, setModel] = useState(null);
+
   const body = useMemo(() => ({
     prompt, place, activity, interaction, holder, flaws, shot_type: shotType,
     framing, aspect, resolution, lighting, time_of_day: timeOfDay, weather, season,
@@ -95,8 +99,9 @@ export default function Collaborate() {
     accessories: Object.fromEntries(
       Object.entries(members).map(([k, v]) => [k, v.accessories || []]).filter(([, v]) => v.length)),
     as_image: Object.fromEntries(Object.entries(modes).map(([k, v]) => [k, v !== "text"])),
+    model,
   }), [prompt, place, activity, interaction, holder, flaws, shotType, framing, aspect,
-       resolution, lighting, timeOfDay, weather, season, faceAcc, allowCrowd, seed, draft, members, modes]);
+       resolution, lighting, timeOfDay, weather, season, faceAcc, allowCrowd, seed, draft, members, modes, model]);
 
   // The right column renders what the SERVER will actually do, not a guess.
   useEffect(() => {
@@ -399,6 +404,8 @@ export default function Collaborate() {
               {err} <button onClick={() => setErr(null)} className="ml-1 underline">dismiss</button>
             </div>
           )}
+
+          <ModelPicker value={model} onChange={setModel} className="mb-3" />
 
           <button onClick={generate} disabled={!ready || !!busy}
             className="w-full rounded-lg bg-white text-black px-5 py-2.5 text-[13px] font-medium hover:bg-zinc-200 disabled:opacity-40 flex items-center justify-center gap-2">

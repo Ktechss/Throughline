@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { api } from "@/api/throughline";
 import { ArrowUp, ArrowDown, Loader2, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useModels } from "@/components/ModelPicker";
 
 // PROVIDERS — who renders, in what order.
 //
@@ -18,6 +19,8 @@ import { cn } from "@/lib/utils";
 // the shot; a failure costs latency, never the generation.
 
 export default function Settings() {
+  const { models, def, saveDefault } = useModels();
+  const [modelErr, setModelErr] = useState(null);
   const [rows, setRows] = useState([]);
   const [chain, setChain] = useState([]);
   const [credits, setCredits] = useState(null);
@@ -73,6 +76,56 @@ export default function Settings() {
           {err}
         </div>
       )}
+
+      <section className="mb-9">
+        <h2 className="text-[13px] font-semibold text-zinc-300 mb-2">Default model</h2>
+        <p className="text-[11px] text-zinc-500 mb-3 leading-relaxed">
+          What renders when a generation does not pick its own. Every Shoot, outfit
+          and scene has its own picker that overrides this for one image, so the
+          wardrobe can be made on one model and the shot that wears it on another.
+        </p>
+        <p className="text-[11px] text-zinc-500 mb-3 leading-relaxed">
+          Measured on one project prompt, same references, scored on her own gallery:
+          nano-banana-pro <span className="tabular-nums text-zinc-300">0.7634</span>,
+          seedream-4.5 <span className="tabular-nums text-zinc-300">0.7724</span>,
+          5-pro <span className="tabular-nums text-zinc-300">0.7638</span>,
+          5-lite <span className="tabular-nums text-zinc-300">0.6658</span>. Identity is
+          close across all four — photorealism is not. Nano renders skin texture and
+          hand anatomy the seedream tiers do not, and the gate is blind to both, so
+          these numbers do not rank them the way your eye will.
+        </p>
+
+        {modelErr && (
+          <div className="mb-3 rounded-xl bg-rose-500/10 ring-1 ring-rose-500/30 px-3 py-2 text-[12px] text-rose-300">
+            {modelErr}
+          </div>
+        )}
+
+        <div className="space-y-2">
+          {models.map((m) => (
+            <button key={m.id}
+              onClick={() => { setModelErr(null); saveDefault(m.id).catch((e) => setModelErr(String(e))); }}
+              className={cn("w-full text-left rounded-xl ring-1 px-3 py-2.5 transition-colors",
+                m.id === def ? "bg-emerald-500/[0.08] ring-emerald-500/40" : "bg-white/[0.02] ring-white/10 hover:bg-white/[0.04]")}>
+              <div className="flex items-center gap-2">
+                <span className={cn("text-[13px]", m.id === def ? "text-zinc-100" : "text-zinc-300")}>{m.label}</span>
+                {m.id === def && (
+                  <span className="rounded-md bg-emerald-500/15 text-emerald-300 px-1.5 py-0.5 text-[10px]">default</span>
+                )}
+                {m.ceiling !== "4K" && (
+                  <span className="rounded-md bg-amber-500/15 text-amber-300 px-1.5 py-0.5 text-[10px]">
+                    {m.ceiling} max
+                  </span>
+                )}
+                <span className="ml-auto text-[11px] text-zinc-500 tabular-nums">${m.usd_4k.toFixed(3)}/4K</span>
+              </div>
+              <div className="text-[11px] text-zinc-500 mt-0.5 tabular-nums">
+                {m.model} · up to {m.max_refs} references
+              </div>
+            </button>
+          ))}
+        </div>
+      </section>
 
       <section>
         <div className="flex items-baseline justify-between mb-2">

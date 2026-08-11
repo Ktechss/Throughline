@@ -266,7 +266,8 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
              resolution: str | None = None, gated: bool = True,
              character: str | None = None,
              safety_tolerance: str | int | None = None,
-             provider: str | None = None) -> dict:
+             provider: str | None = None,
+             model: str | None = None) -> dict:
     """One generation, gated and recorded.
 
     gated=False for output that is not a photo OF her — a wardrobe turnaround is
@@ -337,7 +338,8 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
                 if progress is not None:
                     progress["stage"] = f"generating on {name}"
                 r = run_it(prompt=prompt, refs=refs, aspect=aspect,
-                           resolution=resolution or RESOLUTION, progress=progress)
+                           resolution=resolution or RESOLUTION, progress=progress,
+                           model=model)
                 use = name
                 # Refresh the cached balance now that credits have actually been
                 # spent, so the sidebar drops immediately instead of showing a
@@ -494,6 +496,7 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
             "id": rid, "session": session or new_session("ad-hoc"),
             "file": dest.name, "source_url": source_url, "endpoint": used_ep,
             "provider": use, "credits": (r or {}).get("credits"),
+            "model": (r or {}).get("model"),
             "moderation_fallback": moderation_fallback, "prompt": prompt,
             "system": system, "refs": [p.name for p in refs],
             "pose": pose_file.name if pose_file else None, "seed": seed,
@@ -530,6 +533,9 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
         # whether 0.61 came from fal at $0.30 or kie at $0.12.
         "provider": use,
         "credits": (r or {}).get("credits"),
+        # Which model rendered it — None means fal/nano. Without this every
+        # cross-renderer comparison built on the runs table silently mixes them.
+        "model": (r or {}).get("model"),
         # True = the primary endpoint refused on content_policy and this image
         # came from the fallback (scene) model instead. Identity is weaker there
         # (~0.68 vs 0.81); the flag makes that visible rather than a silent swap.
