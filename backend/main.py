@@ -4608,6 +4608,10 @@ class SceneReq(BaseModel):
     aspect: str = "3:4"
     resolution: str | None = None
     seed: int | None = None
+    # Which kie model renders this scene. None uses the project default
+    # (providers.load_model). Per-request so a scene and the wardrobe worn in it
+    # can be made on different renderers without changing the default.
+    model: str | None = None
 
 
 _FRAMING_ORDER = {k: v["order"] for k, v in framing_data.FRAMING.items()}
@@ -4738,10 +4742,6 @@ def _build_scene(req: "SceneReq") -> dict:
     roles: list[str] = []
     ledger: list[dict] = []
     face_tag: dict[str, str] = {}
-    # Which kie model renders this. None uses the project default
-    # (providers.load_model). Per-request so the wardrobe can be made on
-    # one model and the shot on another without changing the default.
-    model: str | None = None
 
     def spend(kind: str, key: str, path: Path, label: str) -> str:
         refs.append(path)
