@@ -129,6 +129,69 @@ LUSTFUL = {
     "slow-sink-crouch": "Sinking into a slow crouch with knees together and both hands sliding down her thighs, eyes forward.",
 }
 
+
+# Fine-art nude / boudoir register: implied rather than explicit. What is
+# described is where the body is and what the light and fabric do — sheets,
+# shadow, silhouette, the model's own hands and hair as covering. No sexual acts
+# and no graphic anatomy, which is both the honest line and the register this
+# genre actually shoots in.
+#
+# Practical note: Google-routed models (nano-banana-*) refuse most of this
+# outright. Seedream tiers carry it. That is a model choice at generation time,
+# not something the pose text can talk its way past.
+EROTIC = {
+    "sheet-draped-recline": "Reclining on her side with a loose sheet draped low across the hip, one arm folded under her head.",
+    "back-to-lens-bare": "Seated on the floor with her bare back to the camera, spine curved forward, head turned in soft profile.",
+    "hands-cover-chest": "Standing square to the lens with both forearms crossed over her chest, shoulders relaxed and chin level.",
+    "hair-as-cover": "Kneeling upright with her hair fallen forward over both shoulders, hands resting open on her thighs.",
+    "shadow-band-across": "Standing still while a hard band of shadow falls across her torso, only the lit edges of the body defined.",
+    "silhouette-backlit": "Standing directly in front of a bright window so the body reads only as a dark outline.",
+    "sheet-between-knees": "Lying on her front with a sheet twisted between her knees, upper back bare, chin propped on folded arms.",
+    "seated-knees-drawn": "Seated with both knees drawn tight to her chest and arms wrapped around them, chin resting on top.",
+    "prone-bare-back": "Lying face down with the whole line of her back exposed to the light, head turned to one side.",
+    "arm-across-front": "Standing in three-quarter view with one arm laid horizontally across the front of her body.",
+    "sheet-clutched-standing": "Standing beside a bed with a sheet held loosely against her front, the rest of it trailing to the floor.",
+    "side-light-contour": "Standing in profile with a single low light raking across the body to pick out only its contour.",
+    "curled-on-side": "Curled on her side with knees drawn up and both hands tucked beneath her cheek.",
+    "kneeling-sheet-pool": "Kneeling with a sheet pooled around her knees and both hands resting in her lap.",
+    "over-shoulder-bare-back": "Bare back to the camera, head turned to look over one shoulder into the lens.",
+    "steam-obscured": "Standing in heavy steam that softens and half-hides the body, one hand raised to the glass.",
+    "seated-legs-folded-away": "Seated with legs folded away to one side and both arms braced behind her, torso long.",
+    "sheet-over-shoulder": "Standing with a sheet thrown over one shoulder and gathered at the opposite hip.",
+    "lying-arms-overhead": "Lying on her back with both arms stretched above her head and a sheet across the waist.",
+    "crouched-arms-around": "Crouched low with both arms wrapped around her shins and knees pressed together.",
+    "window-light-lean": "Leaning one shoulder into a window frame with morning light falling across the front of the body.",
+    "hands-on-own-shoulders": "Standing with each hand gripping the opposite shoulder, elbows crossed over the chest.",
+    "sheet-trail-walk": "Walking slowly away from the camera with a sheet trailing from one hand along the floor.",
+    "seated-back-curve": "Seated facing away with her spine curled into a deep forward curve, shoulder blades sharp.",
+    "reclined-one-knee-up": "Reclining on her back with one knee raised and a sheet fallen across the opposite thigh.",
+    "mirror-back-reflection": "Standing with her back to the camera before a mirror, the reflection returning her face.",
+    "arm-drape-across-hip": "Lying on her side with the upper arm draped along the length of her hip and thigh.",
+    "kneel-lean-forward-cover": "Kneeling and leaning forward onto both hands with hair falling to curtain the chest.",
+    "low-light-torso-only": "Lit so low that only the torso emerges from the dark, the face left in shadow.",
+    "seated-edge-sheet": "Perched on the edge of a bed with a sheet gathered in her lap and both feet on the floor.",
+    "stretch-on-back": "Stretched full length on her back with toes pointed and both arms reaching past her head.",
+    "side-profile-standing": "Standing in exact side profile, weight even, arms hanging loose at her sides.",
+    "hair-swept-off-back": "Standing with her back to the lens and both hands lifting her hair clear of her shoulders.",
+    "sheet-wrapped-turn": "Wrapped in a sheet from the chest down, caught mid-turn toward the camera.",
+    "lying-legs-crossed-bare": "Lying on her front with ankles crossed in the air and a sheet across the lower back.",
+    "seated-arms-behind": "Seated upright with both arms reaching behind to brace, chest open, chin lifted.",
+    "doorway-lean-shadow": "Leaning in a doorway half in shadow, one shoulder and hip catching the light.",
+    "floor-stretch-diagonal": "Stretched diagonally across the floor on one side, body forming a single long line.",
+    "knees-together-seated": "Seated with knees pressed together and both hands resting flat on the thighs, back straight.",
+    "sheet-off-one-shoulder": "Standing with a sheet slipped from one shoulder and caught in the crook of the elbow.",
+    "back-arch-on-bed": "On her back across a bed with the spine arched and the sheet gathered beneath the hips.",
+    "hands-behind-back-stand": "Standing with both hands clasped behind her back and shoulders drawn open.",
+    "reclined-profile-light": "Reclining in profile with a single light behind, the body edged in a thin bright line.",
+    "sitting-turned-away": "Sitting turned three-quarters away with one hand braced on the floor behind her.",
+    "sheet-held-at-chest": "Standing holding a sheet against her chest with both hands, the fabric falling straight to the floor.",
+    "prone-legs-apart-slight": "Lying face down with legs relaxed and slightly apart, arms folded beneath her chin.",
+    "shoulder-glance-shadow": "Half in shadow, her face turned back over a bare shoulder toward the lens.",
+    "kneeling-tall-still": "Kneeling tall and completely still, arms hanging loose, gaze level with the camera.",
+    "sheet-across-eyes": "Lying back with a length of sheer fabric fallen across her eyes and the rest of the body still.",
+    "waking-tangle": "Half tangled in bedding on her side, one leg free, hair across the pillow, eyes just opening.",
+}
+
 # ------------------------------------------------------------------ cast (2+)
 #
 # NEVER open a sentence with the article "A". main.py's _validate_moments
@@ -305,12 +368,69 @@ def append_interactions(src: str, new_cats: dict) -> str:
     return src[:close + 1] + "\n".join(body) + "\n" + src[close + 1:]
 
 
+
+# Two bodies, same register: intimate couples work as it is actually shot —
+# proximity, contact, entanglement, implied intimacy. No sexual acts.
+EROTIC_CAST = {
+    "entwined-lying": "A and B lie facing one another with legs loosely entwined and a sheet drawn over both.",
+    "embrace-full-length": "The two stand pressed together full length, arms around each other, faces turned to the same side.",
+    "back-to-chest-sheet": "B leans back against A's chest with a shared sheet across them both, A's arms around her middle.",
+    "foreheads-eyes-closed": "Kneeling face to face with foreheads resting together and both sets of eyes closed.",
+    "one-lying-one-over": "B lies on her back and A leans over her on both forearms, their faces very close.",
+    "tangled-legs-sheet": "Both on their backs with legs tangled together beneath a shared sheet, heads turned toward each other.",
+    "arms-around-waist-close": "Standing chest to chest with each holding the other's waist, hips touching.",
+    "spooned-side-lying": "Lying on their sides one behind the other, A's arm draped over B's waist.",
+    "shoulder-kiss-behind": "A stands behind B and lowers her face to B's bare shoulder, B's head tipped away.",
+    "seated-facing-close": "Seated facing one another with legs interlocked and both leaning in, hands on each other's hips.",
+    "hair-curtain-shared": "Leaning in close enough that their hair falls together and hides the space between their faces.",
+    "one-kneeling-embrace": "A kneels and wraps both arms around B's waist, B's hands resting in A's hair.",
+    "backs-pressed-standing": "Standing back to back with bare shoulders pressed, both heads tipped back until they touch.",
+    "lying-head-on-chest": "B lies with her head resting on A's chest, A's hand at the back of her head.",
+    "profile-pair-close": "Both in tight profile facing each other, noses almost touching, neither moving.",
+    "shared-sheet-standing": "Standing wrapped together inside a single sheet, only their shoulders and faces clear of it.",
+    "arm-across-both-chests": "A stands behind and lays one arm across B's collarbones, drawing her back against her.",
+    "seated-lap-facing": "B sits facing A across her lap with both arms looped behind A's neck.",
+    "hands-on-each-waist-lean": "Facing one another, each with both hands at the other's waist, leaning back from the hips.",
+    "cheek-to-shoulder-rest": "B rests her cheek against A's bare shoulder with her eyes closed, A looking down at her.",
+    "lying-face-to-face-close": "Lying on their sides face to face with knees touching and one hand on the other's hip.",
+    "one-behind-hands-stomach": "A stands close behind B with both hands flat on B's stomach, B leaning back into her.",
+    "kneel-pair-embrace": "Both kneeling and folded into a close embrace, faces turned into each other's necks.",
+    "leg-hooked-over": "Lying together with B's top leg hooked over A's hip, both facing one another.",
+    "shoulder-blades-touch": "Seated back to back on the floor with bare shoulder blades pressed and heads tipped apart.",
+    "arms-raised-together": "Standing chest to chest with all four arms raised and hands clasped above their heads.",
+    "one-lifting-other-close": "A lifts B slightly against her body, B's arms around A's neck and legs relaxed.",
+    "close-dance-bare-shoulders": "Held in a slow close dance with bare shoulders touching and faces a breath apart.",
+    "sheet-between-bodies": "Standing with a sheer sheet caught between their bodies, both hands pressed to it.",
+    "lying-arms-overhead-pair": "Both lying on their backs side by side with arms stretched overhead, hands overlapping.",
+    "chin-on-shoulder-behind": "A rests her chin on B's bare shoulder from behind, both looking toward the camera.",
+    "seated-legs-over-lap": "B sits with her legs draped across A's lap and leans back onto her elbows.",
+    "hands-on-each-face-close": "Each holds the other's face in both hands with foreheads touching and eyes shut.",
+    "one-arched-into-other": "B arches backward into A, who supports her at the waist and leans over the arch.",
+    "curled-together-side": "Curled together on one side, B tucked inside the curve of A's body, both still.",
+    "shoulder-to-shoulder-bare": "Sitting shoulder to shoulder with bare arms touching, both looking straight ahead.",
+    "reaching-around-behind": "A reaches around B from behind with both hands meeting at B's front, cheeks touching.",
+    "lying-crosswise-pair": "One lies across the other at the waist, both relaxed, heads at opposite edges of the frame.",
+    "close-standing-still": "Standing bare-shouldered a hand's width apart, perfectly still, holding each other's eyes.",
+    "one-over-shoulder-look": "A wraps B from behind while B looks back over her own shoulder at A.",
+    "knees-drawn-together": "Seated close with both pairs of knees drawn up and touching, arms around their own shins.",
+    "sheet-pulled-between": "Each holding an end of the same sheet and drawing it taut between their bodies.",
+    "lying-hands-clasped": "Lying side by side on their backs with hands clasped in the space between them.",
+    "leaning-into-neck": "A leans in toward B's neck without touching it, B's chin lifting away.",
+    "hip-to-hip-bare": "Standing hip to hip with bare shoulders and outside arms hanging loose, heads tipped together.",
+    "seated-behind-wrapped": "A sits behind B with legs either side and both arms wrapped around her middle.",
+    "faces-turned-together": "Both lying on their fronts with faces turned toward one another on folded arms.",
+    "standing-forehead-rest": "Standing close with A's forehead resting against B's temple, both looking down.",
+    "close-pair-shadowed": "Standing wrapped together in low light so the two bodies read as one shadowed mass.",
+    "waking-pair-tangle": "Half tangled in bedding together, one arm thrown across the other, both just waking.",
+}
+
+
 if __name__ == "__main__":
     # --- single body
     groups = {c: g for c, g in poses_data.POSE_GROUPS.items()
-              if c not in ("Exotic", "Lustful")}
+              if c not in ("Exotic", "Lustful", "Erotic")}
     seen = {k for g in groups.values() for k in g}
-    for cat, items in (("Exotic", EXOTIC), ("Lustful", LUSTFUL)):
+    for cat, items in (("Exotic", EXOTIC), ("Lustful", LUSTFUL), ("Erotic", EROTIC)):
         dupes = seen & set(items)
         if dupes:
             raise SystemExit(f"{cat}: id collision {sorted(dupes)}")
@@ -323,16 +443,16 @@ if __name__ == "__main__":
 
     # --- cast
     inter = {c: g for c, g in interactions_data.INTERACTIONS.items()
-             if c not in ("Exotic", "Lustful")}
+             if c not in ("Exotic", "Lustful", "Erotic")}
     seen_i = {k for g in inter.values() for k in g}
-    for cat, items in (("Exotic", EXOTIC_CAST), ("Lustful", LUSTFUL_CAST)):
+    for cat, items in (("Exotic", EXOTIC_CAST), ("Lustful", LUSTFUL_CAST), ("Erotic", EROTIC_CAST)):
         dupes = seen_i & set(items)
         if dupes:
             raise SystemExit(f"{cat}: id collision {sorted(dupes)}")
         assert len(items) == 50, f"{cat}: {len(items)} entries, want 50"
         inter[cat] = {k: {"text": v, "min_cast": 2} for k, v in items.items()}
         seen_i |= set(items)
-    add = {c: inter[c] for c in ("Exotic", "Lustful")}
+    add = {c: inter[c] for c in ("Exotic", "Lustful", "Erotic")}
     src = (PROJ / "backend" / "interactions_data.py").read_text()
     (PROJ / "backend" / "interactions_data.py").write_text(append_interactions(src, add))
     print(f"interactions_data.py: {sum(len(g) for g in inter.values())} entries "
