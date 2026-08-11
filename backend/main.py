@@ -3625,7 +3625,39 @@ def put_timeline(payload: dict = Body(...)):
 _OUTFIT_TEXT_CAP = 600
 
 
+# A shot has no framing picker — the brief carries it in words. This reads them
+# back so the preview can say which side of the 400px plateau a shot will land
+# on. Deliberately crude: it exists to catch "full body" before it costs a
+# generation, not to predict a pixel count. Longest phrases first so
+# "head and shoulders" is not eaten by "head".
+_FRAMING_WORDS = [
+    ("head_shoulders", ("head and shoulders", "head & shoulders", "headshot",
+                        "head shot")),
+    ("close_up", ("close-up", "close up", "tight crop", "extreme close")),
+    ("chest_up", ("chest up", "chest-up", "bust shot")),
+    ("waist_up", ("waist up", "waist-up", "waist level", "from the waist")),
+    ("knee_up", ("knee up", "knee-up", "three-quarter length")),
+    ("full_body", ("full body", "full-body", "head to toe", "head-to-toe",
+                   "full length", "full-length")),
+    ("wide", ("wide shot", "wide angle", "environmental portrait")),
+    ("from_behind", ("from behind", "back view")),
+    ("over_shoulder", ("over the shoulder", "over-the-shoulder")),
+]
+
+
+def _framing_from_brief(brief: str) -> str:
+    b = (brief or "").lower()
+    for key, phrases in _FRAMING_WORDS:
+        if any(p in b for p in phrases):
+            return key
+    return ""
+
+
 class ShotReq(BaseModel):
+    # Compose everything and return it INSTEAD of generating. Same request shape
+    # as a real shot on purpose: the only honest preview of a prompt is the
+    # prompt, produced by the code that would have sent it.
+    preview: bool = False
     brief: str = ""              # the ONLY thing the user writes
     prompt: str | None = None    # AI-written (Claude) prompt, edited by the user;
                                  # used VERBATIM when present instead of the template
@@ -4102,6 +4134,44 @@ def shot(req: ShotReq):
     # POV framing is phone-portrait; use 4:5 unless the caller set a non-default aspect.
     # No face to gate, so the 4K-for-face-pixels rationale (config) doesn't apply — 2K is fine.
     aspect = ("4:5" if req.pov and req.aspect in (None, "", "3:4") else req.aspect)
+
+    # PREVIEW returns from inside the real path, deliberately.
+    #
+    # There was already a /api/shot/preview, and it lied by omission: it called
+    # compose_tagged alone and never saw the outfit styling, the nail line, the
+    # place line, the timeline clause or the body-reference directive. So it
+    # reported ~880 characters for a prompt that shipped at 4,517 — it would
+    # have told the owner the street brief was fine, right before it wasn't.
+    #
+    # A preview assembled by a second code path drifts from the first. This one
+    # cannot, because it IS the first: same references, same demotions, same
+    # sanitiser report, same string. The cost of that is one early return.
+    #
+    # `share` is the number the failure actually turned on. A brief that is 20%
+    # of its own prompt does not get rendered; the wardrobe boilerplate does.
+    if getattr(req, "preview", False):
+        brief_chars = len(req.brief.strip())
+        return {
+            "prompt": text,
+            "chars": len(text),
+            "brief_chars": brief_chars,
+            "brief_share": round(brief_chars / max(len(text), 1), 3),
+            "references": [{"tag": f"@image{i + 1}", "file": p.name}
+                           for i, p in enumerate(refs)],
+            "demoted": demoted,
+            "sanitised": sanitised,
+            "aspect": aspect,
+            "resolution": req.resolution or RESOLUTION,
+            # A shot has no framing PICKER (that is a scene axis), so the size is
+            # estimated from the brief's own words. Rough on purpose — the point
+            # is to show which side of the 400px plateau this lands on before
+            # paying, not to predict a number.
+            "face_px": framing_data.estimate_face_px(
+                _framing_from_brief(req.brief), max(len(cast), 1), aspect,
+                req.resolution or RESOLUTION),
+            "plateau_px": gate.FACE_PLATEAU_PX,
+            "cast": cast,
+        }
 
     def run(job: dict) -> dict:
         return generate.generate(
@@ -4902,26 +4972,20 @@ def scene(req: SceneReq):
             "cast": cast, "references": len(refs)}
 
 
-class ShotPreviewReq(BaseModel):
-    brief: str = ""
-    wardrobe_id: str | None = None
-    pose_id: str | None = None
-    shot_type: str = "candid"
-
-
 @app.post("/api/shot/preview")
-def shot_preview(req: ShotPreviewReq):
-    pose_text = promptlib.POSES_LIBRARY.get(req.pose_id or "", "")
-    text, sanitised = promptlib.compose_tagged(
-        req.brief, pose_text=pose_text, has_wardrobe=bool(req.wardrobe_id),
-        build_text=promptlib.build_clause(_load_parts()), shot_type=req.shot_type)
-    tags = ["@image1 = face"]
-    if req.wardrobe_id:
-        tags.append(f"@image2 = outfit ({req.wardrobe_id})")
-    else:
-        tags.append("@image2 = body/build")
-    return {"prompt": text, "chars": len(text), "reference": _bio_ref(),
-            "image_tags": tags, "sanitised": sanitised}
+def shot_preview(req: ShotReq):
+    """The exact prompt this shot will send, and what it spent to get there.
+
+    This used to compose its OWN approximation with compose_tagged and nothing
+    else — no outfit styling, no nail line, no place line, no timeline clause, no
+    body-reference directive. It reported ~880 characters for a prompt that
+    shipped at 4,517, so the one time a preview would have earned its keep it
+    said everything was fine.
+
+    Now it runs the real path with preview=True and returns before generating.
+    The prompt shown is the prompt sent, because it is the same string.
+    """
+    return shot(ShotReq(**{**req.dict(), "preview": True}))
 
 
 # ------------------------------------------------------ learning from approvals
