@@ -1704,7 +1704,8 @@ def get_providers():
     return {"providers": rows, "chain": providers.chain(),
             # kie's balance is the one that silently decides whether the cheap
             # path works at all: 24 credits per 4K edit, and an empty account
-            # falls through to fal at full price without complaining.
+            # falls through to fal at full price without complaining. Cached 60s
+            # server-side because the sidebar polls this on every open tab.
             "kie_credits": providers.kie_credits()}
 
 

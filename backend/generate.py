@@ -339,6 +339,14 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
                 r = run_it(prompt=prompt, refs=refs, aspect=aspect,
                            resolution=resolution or RESOLUTION, progress=progress)
                 use = name
+                # Refresh the cached balance now that credits have actually been
+                # spent, so the sidebar drops immediately instead of showing a
+                # stale figure for up to a minute after the shot it paid for.
+                if name == "kie":
+                    try:
+                        providers.kie_credits(force=True)
+                    except Exception:                       # noqa: BLE001
+                        pass
                 break
             except providers.ProviderError as exc:
                 _prov_error = f"{name}: {exc}"

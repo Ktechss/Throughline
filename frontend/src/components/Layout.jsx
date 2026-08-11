@@ -1,6 +1,7 @@
 import { Link, useLocation, Outlet } from "react-router-dom";
 import { Users, Users2, Clapperboard, ChevronLeft, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
+import ProviderBalance from "@/components/ProviderBalance";
 
 const NAV = [
   { to: "/", label: "Characters", icon: Users },
@@ -67,10 +68,10 @@ export default function Layout() {
           )}
         </nav>
         <div className="px-3 py-4 border-t border-white/5 space-y-0.5">
-          <button className="w-full flex items-center gap-3 rounded-lg px-3 py-2 text-[13px] text-zinc-400 hover:text-zinc-100 hover:bg-white/[0.03] transition-colors">
-            <Settings className="h-4 w-4" strokeWidth={1.5} />
-            Settings
-          </button>
+          {/* Replaced a Settings button that did nothing — /settings is a real
+              nav entry now. What belongs here is the number that decides what
+              the next shot costs. */}
+          <ProviderBalance />
           <div className="flex items-center gap-2.5 px-3 pt-3">
             <div className="h-8 w-8 rounded-full bg-zinc-700 overflow-hidden flex items-center justify-center text-[11px] font-medium">
               D

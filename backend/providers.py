@@ -38,6 +38,13 @@ import time
 import urllib.request
 from pathlib import Path
 
+# Importing config runs load_dotenv(.env), and every key below is read from the
+# environment. Without this the module imports fine, finds no keys, reports every
+# provider unavailable and quietly renders everything on fal at full price — a
+# failure with no error message anywhere. Caught in a bare `from backend import
+# providers`, which is exactly how a script or a test would reach it.
+from . import config  # noqa: F401
+
 # A browser UA, because kie's upload endpoint refuses anything else.
 _UA = "Mozilla/5.0"
 _KIE_UPLOAD = "https://kieai.redpandaai.co/api/file-base64-upload"
@@ -75,13 +82,29 @@ def kie_key() -> str:
     return k
 
 
-def kie_credits() -> float | None:
+_CREDIT_CACHE: tuple[float, float | None] = (0.0, None)
+CREDIT_TTL = 60          # seconds
+
+
+def kie_credits(force: bool = False) -> float | None:
     """Remaining balance, or None if it cannot be read. 24 credits per 4K edit,
-    so this is roughly 'generations left times 24'."""
+    so this is roughly 'generations left, times 24'.
+
+    Cached for a minute because the sidebar polls it: every call is a round trip
+    to kie, and a balance that moves only when a shot is taken does not need
+    asking about once per open tab per interval. A generation bypasses the cache
+    (force) so the number visibly drops right after it is spent.
+    """
+    global _CREDIT_CACHE
+    age, val = _CREDIT_CACHE
+    if not force and val is not None and (time.time() - age) < CREDIT_TTL:
+        return val
     try:
-        return float(_get(_KIE_CREDIT, kie_key())["data"])
+        val = float(_get(_KIE_CREDIT, kie_key())["data"])
     except Exception:                                     # noqa: BLE001
-        return None
+        return _CREDIT_CACHE[1]      # last known beats nothing
+    _CREDIT_CACHE = (time.time(), val)
+    return val
 
 
 def kie_upload(path: Path) -> str:
@@ -256,7 +279,6 @@ _SETTINGS = None            # set by config at import; kept out of this module's
 
 
 def settings_path():
-    from . import config
     return config.ROOT / "data" / "providers.json"
 
 
