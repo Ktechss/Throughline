@@ -2859,7 +2859,26 @@ def wardrobe_create(req: OutfitCreateReq):
         '"FRONT VIEW" | "SIDE VIEW" | "BACK VIEW" | "THREE-QUARTER VIEW". '
         "Panel 1 front-facing, panel 2 exact side profile, panel 3 facing "
         "directly away, panel 4 at a 45-degree three-quarter angle.\n\n"
-        f"{identity_clause} {build_clean} Identical outfit, proportions, stance and lighting "
+        f"{identity_clause} {build_clean} "
+        # THE ANTI-SLIM CLAUSE, which this path was missing and body_ref_create
+        # has always had. Naming the build is not enough: main.py's own picker
+        # comment says text alone regresses toward slim, which is why
+        # _BUILD_FIGURE ends in "distinctly full-figured, not slim".
+        #
+        # Measured here. Ethnic1's turnaround was generated from
+        # body-canonical (curvy athlete full) with the proportions clause already
+        # present, and came back a standard slim fashion-model physique wearing
+        # the saree. Every shot in that outfit then inherited the flattened
+        # figure, because a shot takes its body from the wardrobe sheet — so this
+        # one regression propagates to everything she wears.
+        #
+        # Nothing caught it: a turnaround is gated=False by design (a garment
+        # swatch is not a photo of her), so no number was watching this step.
+        "Her FIGURE is as important as the garment here: render her build "
+        "faithfully and prominently exactly as @image2 shows it — the same "
+        "bust-to-waist-to-hip ratio and the same curves — never slimming her "
+        "down and never substituting a generic slim fashion-model physique. "
+        f"Identical outfit, proportions, stance and lighting "
         f"across all four panels.\n\nShe is wearing: {outfit}. Change ONLY the clothing "
         "to this outfit.\n\nPhotorealistic RAW photograph quality, real skin "
         "texture, ultra-sharp detail.")
