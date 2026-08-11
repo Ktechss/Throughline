@@ -1,5 +1,5 @@
-import React from "react";
-import { X, Check, Ban, Shirt, PersonStanding, Copy, AlertTriangle } from "lucide-react";
+import React, { useState } from "react";
+import { X, Check, Ban, Shirt, PersonStanding, Copy, AlertTriangle, Maximize2, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import VerdictChip from "./VerdictChip";
 import { ep, refUrl, apiCharacter } from "@/api/throughline";
@@ -7,6 +7,12 @@ import { ep, refUrl, apiCharacter } from "@/api/throughline";
 // image = a runView/genView object; image.raw is the real run row (full metadata).
 export default function ImageDetail({ image, wardrobe = [], onClose, onMark, onToWardrobe, onToPoseRef, onUsePose }) {
   const run = image.raw || {};
+  // Upscaled DELIVERY copy. Deliberately not re-scored: measured at x2, face_px
+  // went 169 -> 338 while similarity moved -0.0055, because ArcFace embeds a
+  // 112x112 crop either way. Bigger pixels, same signal — so this is an export,
+  // never an input to the gate.
+  const [hires, setHires] = useState(null);   // null | "busy" | "ready" | error string
+
   const meta = run.meta || {};
   const mark = image.mark || run.mark;
   const face = (meta.bio_references || [])[0];
@@ -19,6 +25,9 @@ export default function ImageDetail({ image, wardrobe = [], onClose, onMark, onT
     ...(meta.body ? [["body type", meta.body]] : []),
     ["seed", run.seed ?? "random"],
     ["aspect", run.aspect],
+    // Measured, not requested. A silent default-shaped image used to leave no
+    // trace: the row said 3:4 / 4K while the file was 1024x768.
+    ...(run.width && run.height ? [["pixels", `${run.width} x ${run.height}`]] : []),
     ...(run.seconds ? [["gen time", `${run.seconds}s`]] : []),
     ["created", (run.created || "").replace("T", " ")],
   ];
@@ -137,6 +146,16 @@ export default function ImageDetail({ image, wardrobe = [], onClose, onMark, onT
           <button onClick={() => onMark(run.id, "approve")} className={cn("rounded-lg px-4 py-2 text-[12px] flex items-center gap-1.5 ring-1", mark === "approve" ? "bg-emerald-500/25 text-emerald-200 ring-emerald-500/40" : "bg-emerald-500/10 text-emerald-300 ring-emerald-500/25 hover:bg-emerald-500/20")}><Check className="h-3.5 w-3.5" /> approve</button>
           <button onClick={() => onMark(run.id, "reject")} className={cn("rounded-lg px-4 py-2 text-[12px] flex items-center gap-1.5 ring-1", mark === "reject" ? "bg-rose-500/25 text-rose-200 ring-rose-500/40" : "bg-rose-500/10 text-rose-300 ring-rose-500/25 hover:bg-rose-500/20")}><Ban className="h-3.5 w-3.5" /> reject</button>
           <div className="flex-1" />
+          {run.file && (
+            <a href={`/api/images/${run.file}/hires?factor=2`} target="_blank" rel="noreferrer"
+              onClick={() => { setHires("busy"); setTimeout(() => setHires("ready"), 1200); }}
+              title="Upscaled 2x on topaz for delivery. Not re-scored — the verdict above stays measured on the original."
+              className="rounded-lg ring-1 ring-white/10 px-4 py-2 text-[12px] text-zinc-300 hover:bg-white/5 flex items-center gap-1.5">
+              {hires === "busy"
+                ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> upscaling…</>
+                : <><Maximize2 className="h-3.5 w-3.5" /> export 2x</>}
+            </a>
+          )}
           <button onClick={() => onToWardrobe(run.id)} className="rounded-lg ring-1 ring-white/10 px-4 py-2 text-[12px] text-zinc-300 hover:bg-white/5 flex items-center gap-1.5"><Shirt className="h-3.5 w-3.5" /> → wardrobe</button>
           <button onClick={() => onToPoseRef(run.id)} className="rounded-lg ring-1 ring-white/10 px-4 py-2 text-[12px] text-zinc-300 hover:bg-white/5 flex items-center gap-1.5"><PersonStanding className="h-3.5 w-3.5" /> → pose ref</button>
         </div>

@@ -178,6 +178,10 @@ KIE_MODELS: dict[str, dict] = {
     },
     "seedream-5-lite": {
         "model": "seedream/5-lite-image-to-image", "label": "Seedream 5 Lite", "refs_key": "image_urls",
+        # basic=2K, high=3K, ultra=4K — there is NO 1K tier, so a 1K request
+        # renders at 2K. Measured: asked for 1K, got 1728x2304. The row's new
+        # width/height is what makes that visible; `resolution` alone still says
+        # "1K" because that is what was asked for, not what arrived.
         "res_key": "quality", "res_map": {"1K": "basic", "2K": "basic", "4K": "ultra"},
         "max_refs": 14, "extra": {}, "usd_4k": 0.0275,
     },
@@ -298,6 +302,85 @@ def kie_generate(*, prompt: str, refs: list[Path], aspect: str, resolution: str,
         if progress is not None and state:
             progress["stage"] = f"generating ({state})"
     raise ProviderError(f"kie: task {task} did not finish in {POLL_TIMEOUT}s")
+
+
+
+# ------------------------------------------------------------------- upscale
+#
+# DELIVERY ONLY. This never runs before the gate and its output is never the
+# file a verdict is computed from.
+#
+# Measured 2026-08-12 on the 5-pro rooftop shot, topaz x2:
+#
+#     face_px      169 -> 338      (x2.00)
+#     similarity   0.6417 -> 0.6363  (-0.0055)
+#
+# The pixels double; the identity signal does not move. That is expected and it
+# is the whole reason this is quarantined: insightface detects at a fixed
+# det_size=(640,640) and ArcFace embeds a 112x112 aligned crop, so a 169px face
+# is already downsampled twice on its way in. Upscaling feeds the embedder an
+# interpolated crop while face_px — a raw bbox width in on-disk pixel space —
+# doubles.
+#
+# So an upscaled file scored by the gate would clear MIN_FACE_PX (160) and the
+# FACE_PLATEAU_PX (400) band on manufactured confidence, and would silently join
+# a corpus of 207 shots calibrated at native resolution. gate.py's own framing:
+# "Face pixels are a gradient, not a cliff." The gradient is about how much
+# detail the GENERATOR rendered; interpolation adds none of it.
+#
+# What it does buy is real: fabric weave and surface grain are visibly crisper,
+# which is worth having on a deliverable.
+_TOPAZ_MAX_MB = 10          # topaz refuses larger inputs outright
+
+
+def kie_upscale(path: Path, factor: str = "2", *,
+                progress: dict | None = None) -> dict:
+    """Upscale one image on topaz. Same response shape as kie_generate.
+
+    `factor` is topaz's own enum — "1", "2" or "4" — passed through as a string
+    because that is what the schema declares; sending an int is rejected.
+    """
+    factor = str(factor)
+    if factor not in ("1", "2", "4"):
+        raise ProviderError(f"upscale factor must be 1, 2 or 4 — got {factor!r}")
+    mb = path.stat().st_size / 1e6
+    if mb >= _TOPAZ_MAX_MB:
+        # Worth naming rather than letting topaz return an opaque failure: a 4K
+        # PNG straight off the CDN is ~20MB, while the archived WebP this is
+        # meant to read is under 1.5MB.
+        raise ProviderError(f"{path.name} is {mb:.1f}MB, over topaz's "
+                            f"{_TOPAZ_MAX_MB}MB input cap")
+
+    key = kie_key()
+    if progress is not None:
+        progress["stage"] = "uploading"
+    url = kie_upload(path)
+
+    if progress is not None:
+        progress["stage"] = f"upscaling x{factor}"
+    d = _post(_KIE_CREATE,
+              {"model": "topaz/image-upscale",
+               "input": {"image_url": url, "upscale_factor": factor}}, key)
+    if d.get("code") != 200:
+        raise ProviderError(f"kie createTask: {d.get('msg')}")
+    task = d["data"]["taskId"]
+
+    t0 = time.time()
+    while time.time() - t0 < POLL_TIMEOUT:
+        time.sleep(POLL_EVERY)
+        st = (_get(f"{_KIE_POLL}?taskId={task}", key).get("data") or {})
+        state = st.get("state")
+        if state == "fail":
+            raise ProviderError(f"kie upscale: {st.get('failMsg') or 'failed'} "
+                                f"({st.get('failCode')})")
+        if state == "success":
+            return {"images": [{"url": json.loads(st["resultJson"])["resultUrls"][0]}],
+                    "credits": st.get("creditsConsumed"),
+                    "model": "topaz/image-upscale",
+                    "seconds": round((st.get("costTime") or 0) / 1000, 1)}
+        if progress is not None and state:
+            progress["stage"] = f"upscaling ({state})"
+    raise ProviderError(f"kie upscale: task {task} did not finish in {POLL_TIMEOUT}s")
 
 
 # --------------------------------------------------------------------- poyo

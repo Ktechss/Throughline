@@ -1825,6 +1825,48 @@ def image_thumb(name: str):
     return _serve_thumb(IMAGES, name)
 
 
+@app.get("/api/images/{name}/hires")
+def image_hires(name: str, factor: str = "2"):
+    """A DELIVERY copy, upscaled on topaz and cached beside the original.
+
+    Derived on demand into a hidden sibling dir, exactly like .thumbs/ and
+    .outfitcrops/, and keyed on the source's mtime. That ordering is the point:
+    the archived file stays the single source of truth, the recorded verdict is
+    never recomputed, and nothing that scores images can reach this path.
+
+    It must stay that way. Measured on the 5-pro rooftop shot at x2:
+
+        face_px      169 -> 338     (x2.00)
+        similarity   0.6417 -> 0.6363  (-0.0055)
+
+    The pixels double and the identity signal does not, because insightface
+    detects at det_size=(640,640) and ArcFace embeds a 112x112 crop — a 169px
+    face is already downsampled twice before it is read. An upscaled file scored
+    by the gate would therefore clear MIN_FACE_PX and the FACE_PLATEAU_PX band on
+    manufactured confidence, and would join a corpus of 207 shots calibrated at
+    native resolution. This endpoint exists so that never happens by accident:
+    upscaling is something you EXPORT, not something you generate.
+    """
+    src = IMAGES / Path(name).name
+    if not src.exists():
+        raise HTTPException(404, name)
+    cache_dir = IMAGES / ".hires"
+    cache_dir.mkdir(exist_ok=True)
+    cache = cache_dir / f"{Path(name).stem}@{factor}x.png"
+    if not cache.exists() or cache.stat().st_mtime < src.stat().st_mtime:
+        try:
+            r = providers.kie_upscale(src, factor)
+        except providers.ProviderError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        try:
+            # PNG on purpose: a delivery asset should not be re-compressed,
+            # and _pull_to_disk only re-encodes when the name says .webp.
+            _pull_to_disk(r["images"][0]["url"], cache)
+        except Exception as exc:                          # noqa: BLE001
+            raise HTTPException(502, f"upscale downloaded failed: {exc}") from exc
+    return FileResponse(cache)
+
+
 @app.get("/api/wardrobe/{name}/thumb")
 def wardrobe_thumb(name: str):
     return _serve_thumb(WARDROBE, name, (256, 384))

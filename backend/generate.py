@@ -514,6 +514,24 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
         progress["stage"] = "leveling & gating"
     leveled = auto_level(dest)   # deterministic tilt correction, before gating
 
+    # The MEASURED size of what actually arrived, not the size that was asked
+    # for. The row already carries `aspect` and `resolution`, but those are the
+    # REQUEST — and the request is not the picture. config.py records the
+    # incident: nano returned a 1024x768 landscape master face with a 306px
+    # subject and "the run row recorded aspect 3:4 / 4K, so nothing looked
+    # wrong". A silent default-shaped image currently leaves no trace anywhere.
+    #
+    # It is also what makes a native row distinguishable from an upscaled file
+    # later: face_px is a raw bbox width in the pixel space of whatever was
+    # scored, so it is only comparable against the corpus alongside the
+    # dimensions it was measured in.
+    try:
+        from PIL import Image as _PILImage
+        with _PILImage.open(dest) as _im:
+            img_w, img_h = _im.size
+    except Exception:                                     # noqa: BLE001
+        img_w = img_h = None      # never lose a generated shot to bookkeeping
+
     row = {
         "id": rid,
         # Every image belongs to exactly one session. Defaulting to a fresh one
@@ -533,6 +551,8 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
         # whether 0.61 came from fal at $0.30 or kie at $0.12.
         "provider": use,
         "credits": (r or {}).get("credits"),
+        # Measured, not requested — see the comment at the Image.open above.
+        "width": img_w, "height": img_h,
         # Which model rendered it — None means fal/nano. Without this every
         # cross-renderer comparison built on the runs table silently mixes them.
         "model": (r or {}).get("model"),
