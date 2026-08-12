@@ -20,7 +20,14 @@ export default function ImageDetail({ image, wardrobe = [], onClose, onMark, onT
   const sanitised = meta.sanitised || [];
 
   const kv = [
-    ["model", ep(run.endpoint)],
+    // run.model is what ACTUALLY rendered; run.endpoint is a legacy label from
+    // the fal-era path and reads "kie/nano-banana-pro" no matter which kie model
+    // ran. Showing endpoint under the word "model" is how a seedream shot billed
+    // at 14.5 credits displayed as nano-banana-pro and looked like the picker was
+    // being ignored. Prefer the real field; fall back only for older rows.
+    ["model", run.model || ep(run.endpoint)],
+    ...(run.provider ? [["provider", run.provider]] : []),
+    ...(run.credits ? [["credits", run.credits]] : []),
     ["prompt by", meta.ai_prompt ? "AI / Claude" : "template"],
     ...(meta.body ? [["body type", meta.body]] : []),
     ["seed", run.seed ?? "random"],

@@ -1633,6 +1633,37 @@ def _sweep_missing() -> int:
     # the reseller's 24h URL window while the sweep looked elsewhere. That is
     # also why /api/runs/missing did not list the tea-shop shot.
     for row in db.runs_all_everywhere():
+        # A task we stopped waiting on is the other way an image goes missing,
+        # and it needs resolving BEFORE the source_url branch: there is no URL to
+        # pull yet, only a task id. poyo is the slow provider this exists for —
+        # its work finishes and bills after we have given up, so without this the
+        # picture is paid for and unreachable.
+        if row.get("pending_tasks") and row.get("file"):
+            found = db.runs_owner(row["id"])
+            if found:
+                _, pcid = found
+                pdest = config.char_base(pcid) / "images" / row["file"]
+                if not pdest.exists():
+                    for task in (row.get("pending_tasks") or []):
+                        try:
+                            got = providers.reclaim(task.get("provider"),
+                                                    task.get("task_id"))
+                        except Exception:                   # noqa: BLE001
+                            continue          # still failing; try again next sweep
+                        if not got:
+                            continue          # still running; leave it parked
+                        try:
+                            _pull_to_disk(got["images"][0]["url"], pdest)
+                        except Exception:                   # noqa: BLE001
+                            continue
+                        row["source_url"] = got["images"][0]["url"]
+                        row["provider"] = task.get("provider")
+                        row["credits"] = got.get("credits")
+                        row["pending_tasks"] = None
+                        db.runs_update(row["id"], row)
+                        healed += 1
+                        break
+
         url = row.get("source_url")
         if not url or not row.get("file"):
             continue
@@ -1748,6 +1779,47 @@ def put_model(req: ModelReq):
                 "models": providers.model_rows()}
     except providers.ProviderError as exc:
         raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/runs/reclaim")
+def reclaim_run(req: RefetchReq):
+    """Finish a shot whose provider was still working when we stopped waiting.
+
+    The sibling of /api/runs/refetch. That one recovers a run whose URL we had
+    and whose DOWNLOAD failed; this one recovers a run we abandoned BEFORE a URL
+    existed, because polling ran out its budget. poyo is the slow one and the
+    case this was built for: the task keeps running, finishes, and bills, and
+    without the parked task id there is no handle left on the picture that was
+    paid for.
+    """
+    doc, cid = _run_and_owner(req.run_id)      # same lookup refetch uses
+    pending = doc.get("pending_tasks") or []
+    if not pending:
+        raise HTTPException(400, "no parked provider task on this run")
+
+    errors = []
+    for task in pending:
+        try:
+            r = providers.reclaim(task.get("provider"), task.get("task_id"))
+        except providers.ProviderError as exc:
+            errors.append(f"{task.get('provider')}: {exc}")
+            continue
+        if r is None:
+            errors.append(f"{task.get('provider')}: still running")
+            continue
+        dest = config.char_base(cid) / "images" / doc["file"]
+        _pull_to_disk(r["images"][0]["url"], dest)
+        doc["source_url"] = r["images"][0]["url"]
+        doc["provider"] = task.get("provider")
+        doc["credits"] = r.get("credits")
+        doc["pending_tasks"] = None
+        doc["verdict"] = {"status": "reclaimed",
+                          "reason": "recovered from a parked provider task; "
+                                    "not re-scored"}
+        db.runs_update(req.run_id, doc)
+        return {"ok": True, "file": doc["file"], "provider": task.get("provider"),
+                "credits": r.get("credits")}
+    raise HTTPException(409, "; ".join(errors) or "nothing to reclaim")
 
 
 @app.post("/api/runs/refetch")

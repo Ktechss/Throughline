@@ -327,7 +327,23 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
     else:
         chain = providers.chain()
 
+    # Resolve the model to a CONCRETE name before walking the chain.
+    #
+    # It used to be resolved inside kie_generate, which meant a project DEFAULT
+    # (providers.load_model) never reached the other providers: generate() passed
+    # a bare None, poyo's "do I carry this?" guard is `if model and ...`, so None
+    # sailed straight past it and poyo rendered nano-banana-pro. With poyo first
+    # in the chain the owner set the default to seedream, watched 35 credits a
+    # shot leave the account, and got nano — the dearest route, and not the model
+    # they picked. Resolving here means every provider is asked about the model
+    # that was actually requested, and the ones that do not carry it decline and
+    # fall through instead of silently substituting.
+    model = model or providers.load_model()
+
     r, use, _prov_error = None, "fal", None
+    # Tasks we stopped waiting on. They are still running, still billing, and
+    # recoverable via providers.reclaim() — see /api/runs/reclaim.
+    _pending: list[dict] = []
     if refs:
         for name in chain:
             run_it = providers.RUNNERS.get(name)
@@ -350,6 +366,18 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
                     except Exception:                       # noqa: BLE001
                         pass
                 break
+            except providers.ProviderTimeout as exc:
+                # NOT a failure — the task is still running and will finish and
+                # bill. Falling through now pays a second provider for the same
+                # picture and abandons the first, which is the expensive half of
+                # this. Park the id so it can be reclaimed, then carry on so the
+                # owner still gets a shot.
+                _pending.append({"provider": exc.provider, "task_id": exc.task_id,
+                                 "model": model})
+                _prov_error = f"{name}: {exc}"
+                if progress is not None:
+                    progress["stage"] = f"{name} slow — parked, trying next"
+                continue
             except providers.ProviderError as exc:
                 _prov_error = f"{name}: {exc}"
                 if progress is not None:
@@ -551,6 +579,9 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
         # whether 0.61 came from fal at $0.30 or kie at $0.12.
         "provider": use,
         "credits": (r or {}).get("credits"),
+        # Providers we abandoned mid-flight; each is a paid-for image still
+        # reachable by task id until its result expires.
+        "pending_tasks": _pending or None,
         # Measured, not requested — see the comment at the Image.open above.
         "width": img_w, "height": img_h,
         # Which model rendered it — None means fal/nano. Without this every

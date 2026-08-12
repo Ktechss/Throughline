@@ -55,10 +55,36 @@ _KIE_CREDIT = "https://api.kie.ai/api/v1/chat/credit"
 POLL_EVERY = 6          # seconds; kie reports 110-220s for a 4K edit
 POLL_TIMEOUT = 1200     # a 4K three-reference edit has taken 274s at worst
 
+# poyo is measurably the slowest of the three and gets a longer leash. Giving up
+# on a task that is still running is not free: the image finishes, is BILLED, and
+# is then abandoned while generate() falls through and pays a second provider for
+# the same shot.
+POLL_TIMEOUT_BY_PROVIDER = {"poyo": 2400}
+
 
 class ProviderError(RuntimeError):
     """A provider refused or failed. Carries the provider's own message so a
     content refusal still reads as a content refusal to generate()'s retry."""
+
+
+class ProviderTimeout(ProviderError):
+    """Polling gave up while the task was still RUNNING — not a failure.
+
+    Carries the provider and task id, because the image is very probably
+    finishing right now and that id is the only handle left on it. The
+    source_url parking in generate.py cannot help here: there is no URL yet, so
+    without this the paid-for task becomes unreachable the moment we stop
+    waiting, and the chain pays a second provider for the same picture.
+    """
+
+    def __init__(self, message: str, *, provider: str, task_id: str):
+        super().__init__(message)
+        self.provider = provider
+        self.task_id = task_id
+
+
+def poll_budget(name: str) -> int:
+    return POLL_TIMEOUT_BY_PROVIDER.get(name, POLL_TIMEOUT)
 
 
 def _post(url: str, body: dict, key: str, timeout: int = 300) -> dict:
@@ -279,7 +305,8 @@ def kie_generate(*, prompt: str, refs: list[Path], aspect: str, resolution: str,
     task = d["data"]["taskId"]
 
     t0 = time.time()
-    while time.time() - t0 < POLL_TIMEOUT:
+    budget = poll_budget("kie")
+    while time.time() - t0 < budget:
         time.sleep(POLL_EVERY)
         st = (_get(f"{_KIE_POLL}?taskId={task}", key).get("data") or {})
         state = st.get("state")
@@ -301,7 +328,8 @@ def kie_generate(*, prompt: str, refs: list[Path], aspect: str, resolution: str,
                     "seconds": round((st.get("costTime") or 0) / 1000, 1)}
         if progress is not None and state:
             progress["stage"] = f"generating ({state})"
-    raise ProviderError(f"kie: task {task} did not finish in {POLL_TIMEOUT}s")
+    raise ProviderTimeout(f"kie: task {task} still running after {budget}s",
+                          provider="kie", task_id=task)
 
 
 
@@ -402,6 +430,39 @@ def poyo_key() -> str:
     return k
 
 
+
+# poyo carries seedream too — its own catalogue, its own spelling. The adapter
+# used to hard-refuse anything but nano, which made "provider poyo + model
+# seedream-5-pro" impossible even though poyo sells exactly that.
+#
+#   our key          poyo model string          ceiling
+#   nano-banana-pro  nano-banana-pro-edit       4K
+#   seedream-4.5     seedream-4.5-edit          4K
+#   seedream-5-pro   seedream-5.0-pro-edit      2K  (size AND resolution required)
+#   seedream-5-lite  seedream-5.0-lite-edit     3K
+#
+# nano-banana-2 is absent from poyo's catalogue, so a request for it declines and
+# falls through rather than quietly rendering something else.
+POYO_MODELS: dict[str, dict] = {
+    "nano-banana-pro": {"model": "nano-banana-pro-edit", "max_res": "4K"},
+    "seedream-4.5":    {"model": "seedream-4.5-edit",    "max_res": "4K"},
+    "seedream-5-pro":  {"model": "seedream-5.0-pro-edit", "max_res": "2K"},
+    "seedream-5-lite": {"model": "seedream-5.0-lite-edit", "max_res": "3K"},
+}
+_RES_ORDER = ["1K", "2K", "3K", "4K"]
+
+
+def poyo_model(name: str | None) -> dict:
+    n = (name or load_model()).strip()
+    spec = POYO_MODELS.get(n)
+    if spec is None:
+        for k, s in POYO_MODELS.items():
+            if s["model"] == n:
+                return s
+        raise ProviderError(f"poyo does not carry {n!r}")
+    return spec
+
+
 def poyo_generate(*, prompt: str, refs: list[Path], aspect: str, resolution: str,
                   progress: dict | None = None, model: str | None = None) -> dict:
     """Render on poyo. Same contract as kie_generate.
@@ -421,8 +482,12 @@ def poyo_generate(*, prompt: str, refs: list[Path], aspect: str, resolution: str
     would be refused — the failure that first surfaced the limit.
     """
     key = poyo_key()
-    if model and model not in ("nano-banana-pro", "nano-banana-pro-edit"):
-        raise ProviderError(f"poyo does not carry {model!r}")
+    spec = poyo_model(model)          # raises -> chain falls through, never substitutes
+    # Clamp rather than fail: 5.0-pro has no 4K tier, and a request for one is a
+    # resolution the caller cannot have rather than a shot they cannot take.
+    res = resolution
+    if _RES_ORDER.index(res) > _RES_ORDER.index(spec["max_res"]):
+        res = spec["max_res"]
     if progress is not None:
         progress["stage"] = "uploading references"
     urls = [kie_upload(p) for p in refs]
@@ -430,19 +495,22 @@ def poyo_generate(*, prompt: str, refs: list[Path], aspect: str, resolution: str
     if progress is not None:
         progress["stage"] = "generating"
     d = _post(_POYO_SUBMIT,
-              {"model": "nano-banana-pro-edit",
+              {"model": spec["model"],
                # image_urls here, image_input on kie. Same model, same idea,
                # different spelling — send the wrong one and it generates with no
-               # references at all rather than erroring.
+               # references at all rather than erroring. poyo needs BOTH size and
+               # resolution on the seedream tiers; omitting either silently
+               # defaults to 1:1 at 1K.
                "input": {"prompt": prompt, "image_urls": urls, "size": aspect,
-                         "resolution": resolution, "n": 1, "output_format": "png"}},
+                         "resolution": res, "n": 1, "output_format": "png"}},
               key)
     task = (d.get("data") or {}).get("task_id") or d.get("task_id")
     if not task:
         raise ProviderError(f"poyo submit: {json.dumps(d)[:200]}")
 
     t0 = time.time()
-    while time.time() - t0 < POLL_TIMEOUT:
+    budget = poll_budget("poyo")
+    while time.time() - t0 < budget:
         time.sleep(POLL_EVERY)
         st = (_get(f"{_POYO_STATUS}/{task}", key).get("data") or {})
         state = st.get("status")
@@ -450,10 +518,12 @@ def poyo_generate(*, prompt: str, refs: list[Path], aspect: str, resolution: str
             raise ProviderError(f"poyo: {st.get('error_message') or 'failed'}")
         if state == "finished":
             return {"images": [{"url": st["files"][0]["file_url"]}],
+                    "model": spec["model"],
                     "credits": st.get("credits_amount")}
         if progress is not None and state:
             progress["stage"] = f"generating ({state})"
-    raise ProviderError(f"poyo: task {task} did not finish in {POLL_TIMEOUT}s")
+    raise ProviderTimeout(f"poyo: task {task} still running after {budget}s",
+                          provider="poyo", task_id=task)
 
 
 # ------------------------------------------------------------------ registry
@@ -543,3 +613,36 @@ def chain() -> list[str]:
     picked = [r["name"] for r in load_order()
               if r["enabled"] and available(r["name"])]
     return picked or ["fal"]
+
+
+def reclaim(provider: str, task_id: str) -> dict | None:
+    """Re-poll a task polling gave up on. Returns the same shape as the runners,
+    or None if it is still running.
+
+    This is the counterpart to source_url parking: that recovers a shot whose URL
+    we had and whose DOWNLOAD failed; this recovers one we stopped waiting for
+    before a URL existed. Both exist so a generation that was paid for is never
+    silently lost.
+    """
+    provider = (provider or "").lower()
+    if provider == "kie":
+        st = (_get(f"{_KIE_POLL}?taskId={task_id}", kie_key()).get("data") or {})
+        state = st.get("state")
+        if state == "fail":
+            raise ProviderError(f"kie: {st.get('failMsg') or 'failed'}")
+        if state != "success":
+            return None
+        return {"images": [{"url": json.loads(st["resultJson"])["resultUrls"][0]}],
+                "credits": st.get("creditsConsumed"),
+                "seconds": round((st.get("costTime") or 0) / 1000, 1)}
+    if provider == "poyo":
+        st = (_get(f"{_POYO_STATUS}/{task_id}", poyo_key()).get("data") or {})
+        state = st.get("status")
+        if state == "failed":
+            raise ProviderError(f"poyo: {st.get('error_message') or 'failed'}")
+        if state != "finished":
+            return None
+        return {"images": [{"url": st["files"][0]["file_url"]}],
+                "credits": st.get("credits_amount"),
+                "seconds": None}
+    raise ProviderError(f"cannot reclaim a {provider!r} task")
