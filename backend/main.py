@@ -18,6 +18,8 @@ import threading
 from contextlib import asynccontextmanager
 import tempfile
 import time
+import uuid
+from urllib.parse import urlparse
 
 from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -1570,6 +1572,14 @@ class RefetchReq(BaseModel):
     run_id: str
 
 
+class ImportReq(BaseModel):
+    url: str
+    character: str | None = None
+    brief: str = ""
+    provider: str = ""
+    model: str = ""
+
+
 def _pull_to_disk(url: str, dest: Path) -> int:
     """Download one result URL to `dest`, in the format the row's name promises.
 
@@ -1781,6 +1791,287 @@ def put_model(req: ModelReq):
         raise HTTPException(400, str(exc)) from exc
 
 
+class VideoReq(BaseModel):
+    run_id: str                  # the APPROVED still to animate, OR a video run
+                                 # when continue_from is set
+    prompt: str = ""             # what should move
+    provider: str = "poyo"       # "poyo" | "kie"
+    model: str | None = None     # a key from that provider's video catalogue
+    duration: int = 5
+    resolution: str = "1080p"
+    # The LAST frame, on models that take one (kling-3.0). The clip is then
+    # interpolated between two approved stills instead of wandering out from
+    # one, which is the strongest identity anchor this pipeline can give a clip.
+    end_run_id: str | None = None
+    # Animate a still the gate did NOT keep. Off by default because a clip
+    # inherits the identity of its first frame, so this buys 15 seconds whose
+    # identity was never established. On when the owner has looked at the shot
+    # and wants it anyway — the run records that it was an explicit choice
+    # rather than an oversight.
+    allow_ungated: bool = False
+    # Continue from the LAST FRAME of an existing clip, so a sequence can run
+    # past the model's own duration cap (Kling stops at 10s). The last frame
+    # becomes the next clip's first frame, which is the only way to chain
+    # image-to-video without a visible jump.
+    #
+    # Identity compounds here: every link starts from a generated frame rather
+    # than an approved still, so drift accumulates. The frame scores on each
+    # clip are what make that visible instead of assumed.
+    continue_from: bool = False
+
+
+@app.get("/api/video/models")
+def video_models():
+    return {"catalogue": providers.video_catalogue(),
+            "models": providers.video_rows(),
+            "default": providers.DEFAULT_VIDEO_MODEL}
+
+
+@app.post("/api/video")
+def make_video(req: VideoReq):
+    """Animate a still that already passed the gate.
+
+    The refusal below is the design, not a safety rail: a clip inherits the
+    identity of its first frame, so animating an UNGATED still would produce a
+    video whose identity was never established at any point — five seconds of
+    unverified claim. Animating a kept shot inherits a number that already
+    exists.
+    """
+    row, cid = _run_and_owner(req.run_id)
+    src = config.char_base(cid) / "images" / row["file"]
+    if not src.exists():
+        raise HTTPException(404, f"{row['file']} is not on disk — refetch it first")
+
+    is_video = (row.get("kind") or "") == "video"
+    if req.continue_from:
+        if not is_video:
+            raise HTTPException(400, "continue_from expects a video run to continue")
+        still = _last_frame(src)
+    else:
+        if is_video:
+            raise HTTPException(400, "that run is already a video — pass "
+                                     "continue_from to extend it")
+        still = src
+
+    v = row.get("verdict") or {}
+    ungated = v.get("status") not in ("kept", "reclaimed")
+    if req.continue_from:
+        ungated = True            # a generated frame was never gated by definition
+    elif ungated and not req.allow_ungated:
+        raise HTTPException(
+            409, f"that still is '{v.get('status')}' — animate a shot the gate kept, "
+                 f"or pass allow_ungated to accept a clip whose identity was "
+                 f"never established")
+
+    # The end frame gets the SAME gate check as the start frame. A clip is only
+    # as anchored as its weakest anchor: interpolating from a kept still to an
+    # ungated one hands the model a destination whose identity was never
+    # established, and the clip will faithfully arrive there.
+    end_still = None
+    if req.end_run_id:
+        if not providers.video_supports_end_frame(req.provider, req.model):
+            raise HTTPException(
+                400, f"{req.provider}/{req.model or providers.DEFAULT_VIDEO_MODEL} takes a "
+                     f"start frame only — pick a model that accepts an end frame")
+        erow, ecid = _run_and_owner(req.end_run_id)
+        if (erow.get("kind") or "") == "video":
+            raise HTTPException(400, "the end frame must be a still, not a clip")
+        if erow["id"] == row["id"]:
+            raise HTTPException(400, "the end frame must be a different shot "
+                                     "than the start frame")
+        end_still = config.char_base(ecid) / "images" / erow["file"]
+        if not end_still.exists():
+            raise HTTPException(404, f"{erow['file']} is not on disk — refetch it first")
+        ev = (erow.get("verdict") or {}).get("status")
+        if ev not in ("kept", "reclaimed") and not req.allow_ungated:
+            raise HTTPException(
+                409, f"the end frame is '{ev}' — animating toward a shot the gate "
+                     f"did not keep gives the clip an unverified destination. "
+                     f"Pass allow_ungated to accept that.")
+
+    owner = cid
+    def run(job: dict) -> dict:
+        return generate.generate_video(
+            end_still=end_still,
+            still=still, prompt=req.prompt or "Gentle natural motion, the camera "
+                                             "almost still, her expression unchanged.",
+            model=req.model, duration=req.duration, resolution=req.resolution,
+            provider=req.provider,
+            character=owner, progress=job, source_run=req.run_id,
+            session=generate.new_session(f"video: {req.run_id}"),
+            meta={"brief": req.prompt,
+                  # Recorded so an unscoreable clip is legible later as a
+                  # decision, not an accident.
+                  "source_status": v.get("status"),
+                  "ungated_source": ungated,
+                  "end_run": req.end_run_id,
+                  "continued_from": req.run_id if req.continue_from else None})
+
+    return {"job": generate.start_job(f"video: {req.run_id}", run)}
+
+
+class MotionSuggestReq(BaseModel):
+    run_id: str                  # the still to read, OR a clip when continuing
+    duration: int = 5            # what the suggestions have to fit inside
+    idea: str = ""               # the owner steering: "she laughs and looks away"
+    end_run_id: str | None = None  # read BOTH frames and direct the journey
+    continue_from: bool = False  # read the clip's last frame, not the clip
+    # Which model will render it. Only used to bound the duration Claude may
+    # recommend — a suggestion of 12s is useless if the chosen model caps at 10.
+    provider: str = "kie"
+    model: str | None = None
+
+
+@app.post("/api/video/suggest")
+def suggest_motion(req: MotionSuggestReq):
+    """Read the shot and propose what should move in it.
+
+    Claude sees the FRAME, not the prompt that made it — so it can direct motion
+    against what actually landed (how tight the crop is, where her hands are,
+    what is behind her) rather than against what was asked for. Those diverge
+    often enough that the run's own brief is passed as context rather than as
+    the source of truth.
+
+    Costs a Claude call and nothing else: this proposes text for the box. No
+    video is rendered until the owner picks one and presses animate.
+    """
+    row, cid = _run_and_owner(req.run_id)
+    src = config.char_base(cid) / "images" / row["file"]
+    if not src.exists():
+        raise HTTPException(404, f"{row['file']} is not on disk — refetch it first")
+
+    is_video = (row.get("kind") or "") == "video"
+    if req.continue_from or is_video:
+        if not is_video:
+            raise HTTPException(400, "continue_from expects a video run")
+        frame = _last_frame(src)
+    else:
+        frame = src
+
+    # The brief is what the shot was FOR. A motion suggestion that fights it —
+    # animating a considered portrait into a walk-and-talk — is wasted, so it
+    # rides along even though the frame is the primary evidence.
+    meta = row.get("meta") or {}
+    bits = [meta.get("brief") or "", meta.get("pose_id") or "",
+            f"wearing {meta['wardrobe']}" if meta.get("wardrobe") else ""]
+    context = " · ".join(b for b in bits if b)
+
+    # With an end frame the question changes from "what could move here?" to
+    # "how does it get from this to that?", so both images go to Claude.
+    end_bytes, end_media = None, "image/png"
+    if req.end_run_id:
+        erow, ecid = _run_and_owner(req.end_run_id)
+        epath = config.char_base(ecid) / "images" / erow["file"]
+        if not epath.exists():
+            raise HTTPException(404, f"{erow['file']} is not on disk — refetch it first")
+        end_bytes = epath.read_bytes()
+        end_media = describe.media_type(epath.name, None)
+
+    # Resolved from the catalogue rather than trusted from the client, so the
+    # recommendation is always a length the provider will actually accept.
+    allowed = None
+    try:
+        table = providers.KIE_VIDEO if req.provider == "kie" else providers.POYO_VIDEO
+        spec = table.get((req.model or providers.DEFAULT_VIDEO_MODEL).strip())
+        if spec:
+            allowed = list(spec["durations"])
+    except Exception:                                   # noqa: BLE001
+        allowed = None
+
+    try:
+        out = describe.suggest_motion(
+            frame.read_bytes(),
+            describe.media_type(frame.name, None),
+            duration=req.duration,
+            context=context,
+            idea=req.idea,
+            end_bytes=end_bytes,
+            end_media=end_media,
+            allowed_durations=allowed,
+            continuing=bool(req.continue_from or is_video),
+        )
+    except describe.DescribeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return out
+
+
+@app.post("/api/runs/import")
+def import_run(req: ImportReq):
+    """Adopt an orphaned provider URL into a real run.
+
+    The third recovery sibling. /refetch re-pulls a run whose URL we kept and
+    whose download failed; /reclaim finishes one we stopped waiting for; this one
+    rescues a generation that never got a ROW AT ALL — the case where something
+    threw between "task submitted" and "row inserted", so none of the parking
+    logic ever ran and the only trace left is a URL in the provider's dashboard.
+
+    That happened on 2026-08-14: five /api/shot calls, four rows, one finished
+    and billed poyo image reachable only by hand. Recovering it should not
+    require a script.
+    """
+    url = (req.url or "").strip()
+    if not url.startswith(("http://", "https://")):
+        raise HTTPException(400, "need an http(s) URL")
+    cid = req.character or config.get_active()
+    if not db.chars_get(cid):
+        raise HTTPException(404, f"no such character: {cid}")
+
+    rid = uuid.uuid4().hex[:10]
+    # Keep the provider's own extension. _pull_to_disk only re-encodes when the
+    # name says .webp, so a .png lands byte-for-byte as served.
+    ext = Path(urlparse(url).path).suffix.lower() or ".png"
+    if ext not in (".png", ".jpg", ".jpeg", ".webp"):
+        raise HTTPException(400, f"unsupported image type {ext!r}")
+    dest = config.char_base(cid) / "images" / f"{rid}{ext}"
+    try:
+        size = _pull_to_disk(url, dest)
+    except Exception as exc:                                # noqa: BLE001
+        raise HTTPException(502, f"could not fetch: {str(exc)[:160]}") from None
+
+    width = height = None
+    try:
+        from PIL import Image
+        with Image.open(dest) as im:
+            width, height = im.size
+    except Exception:                                       # noqa: BLE001
+        dest.unlink(missing_ok=True)
+        raise HTTPException(400, "that URL did not return a readable image")
+
+    # Scored like any other shot. A recovered image is still a photo of her, and
+    # exempting it would put an unmeasured row in a table whose whole point is
+    # that every row carries a number.
+    # Score against THIS character's gallery, not whoever happens to be active —
+    # the same reason refUrl carries ?character=. config.scope_active is the
+    # project's own per-request pin.
+    token = config.scope_active(cid)
+    try:
+        verdict = gate.check(dest).dict()
+    except Exception as exc:                                # noqa: BLE001
+        verdict = {"status": "error", "reason": str(exc)[:200]}
+    finally:
+        config.unscope_active(token)
+
+    db.runs_insert({
+        "id": rid, "session": generate.new_session("recovered"),
+        "file": dest.name, "source_url": url,
+        "endpoint": "", "provider": req.provider or "unknown",
+        "model": req.model or None, "credits": None,
+        "width": width, "height": height,
+        "prompt": "", "system": "", "refs": [], "pose": None, "seed": None,
+        "aspect": "", "resolution": "", "seconds": 0,
+        "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "auto_leveled": 0.0, "mark": None,
+        "meta": {"brief": req.brief or "recovered from a provider URL",
+                 # Provenance, so this row is never mistaken for a normal
+                 # generation when the corpus is read back.
+                 "recovered": True, "recovered_from": url},
+        "verdict": verdict,
+    }, character_id=cid)
+    return {"ok": True, "id": rid, "file": dest.name, "character": cid,
+            "bytes": size, "width": width, "height": height,
+            "verdict": verdict}
+
+
 @app.post("/api/runs/reclaim")
 def reclaim_run(req: RefetchReq):
     """Finish a shot whose provider was still working when we stopped waiting.
@@ -1877,6 +2168,9 @@ def image(name: str):
 # ~433 MB) and decodes each to a huge bitmap in the browser — it sinks the UI.
 # Grids request this cached ~512px JPEG thumbnail instead; the full image is only
 # fetched in a detail view.
+VIDEO_SUFFIXES = {".mp4", ".webm", ".mov"}
+
+
 def _serve_thumb(src_dir: Path, name: str, box: tuple[int, int] = (512, 512)):
     src = src_dir / Path(name).name
     if not src.exists():
@@ -1886,7 +2180,12 @@ def _serve_thumb(src_dir: Path, name: str, box: tuple[int, int] = (512, 512)):
     cache = cache_dir / f"{Path(name).stem}.jpg"
     if not cache.exists() or cache.stat().st_mtime < src.stat().st_mtime:
         from PIL import Image
-        im = Image.open(src).convert("RGB")
+        # A clip has no still for PIL to open — it would raise, and since the
+        # review grid asks for a thumbnail per row, every video would 500 the
+        # tile it lives in. Frame one is the honest poster anyway: for an
+        # animated still it IS the approved shot the clip started from.
+        poster = _first_frame(src) if src.suffix.lower() in VIDEO_SUFFIXES else src
+        im = Image.open(poster).convert("RGB")
         im.thumbnail(box)
         im.save(cache, "JPEG", quality=80)
     return FileResponse(cache)
@@ -1895,6 +2194,54 @@ def _serve_thumb(src_dir: Path, name: str, box: tuple[int, int] = (512, 512)):
 @app.get("/api/images/{name}/thumb")
 def image_thumb(name: str):
     return _serve_thumb(IMAGES, name)
+
+
+def _first_frame(video: Path) -> Path:
+    """Frame one of a clip, cached beside it — the poster the grid shows.
+
+    Cheap on purpose: the same cv2 read as _last_frame, keyed on mtime like every
+    other derivative here, so a grid of clips costs one decode each and never
+    re-decodes.
+    """
+    import cv2
+    cache = video.parent / ".frames"
+    cache.mkdir(exist_ok=True)
+    out = cache / f"{video.stem}-first.jpg"
+    if out.exists() and out.stat().st_mtime >= video.stat().st_mtime:
+        return out
+    cap = cv2.VideoCapture(str(video))
+    ok, frame = cap.read()
+    cap.release()
+    if not ok:
+        raise HTTPException(422, f"could not read a first frame from {video.name}")
+    cv2.imwrite(str(out), frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
+    return out
+
+
+def _last_frame(video: Path) -> Path:
+    """The final frame of a clip, written as a JPEG the video models accept.
+
+    Chaining image-to-video is the only way past a model's duration cap, and it
+    needs the previous clip's last frame as the next one's first. Cached beside
+    the clip on mtime, like every other derivative here.
+    """
+    import cv2
+    cache = video.parent / ".frames"
+    cache.mkdir(exist_ok=True)
+    out = cache / f"{video.stem}-last.jpg"
+    if out.exists() and out.stat().st_mtime >= video.stat().st_mtime:
+        return out
+    cap = cv2.VideoCapture(str(video))
+    n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    # Two frames back, not the very last: encoders often leave the final frame
+    # duplicated or slightly degraded.
+    cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, n - 2))
+    ok, frame = cap.read()
+    cap.release()
+    if not ok:
+        raise HTTPException(422, f"could not read a last frame from {video.name}")
+    cv2.imwrite(str(out), frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
+    return out
 
 
 @app.get("/api/images/{name}/hires")
@@ -5351,8 +5698,16 @@ def shot_preview(req: ShotReq):
 #      the frozen gate.
 
 def _shots() -> list[dict]:
-    """Runs that are actual shots (have a brief) — not calibration/body/outfit gen."""
-    return [r for r in generate.all_runs() if "brief" in (r.get("meta") or {})]
+    """Runs that are actual shots (have a brief) — not calibration/body/outfit gen.
+
+    Clips are excluded even though they carry a brief. A video is `ungated` by
+    construction — frame scoring is Phase 2 — so counting one here would move
+    keep-rate without anything about her having changed, which is exactly the
+    kind of manufactured number the gate exists to prevent. Same reasoning as the
+    wardrobe turnaround: not gateable is not the same as not kept.
+    """
+    return [r for r in generate.all_runs()
+            if "brief" in (r.get("meta") or {}) and (r.get("kind") or "") != "video"]
 
 
 @app.get("/api/stats")
@@ -5536,10 +5891,13 @@ def images_cleanup():
     if intermediate:
         generate.delete_runs(set(intermediate))
 
-    # Stale thumbnails whose source image no longer exists.
+    # Stale thumbnails whose source image no longer exists. Clips count as live
+    # sources here even though they are never scanned for deletion above — their
+    # poster lands in the same .thumbs/ dir, and leaving them out of this set
+    # deleted (and re-decoded) every video poster on every cleanup.
     if thumbs.exists():
         live = {p.stem for p in IMAGES.iterdir()
-                if p.is_file() and p.suffix.lower() in exts}
+                if p.is_file() and p.suffix.lower() in (*exts, *VIDEO_SUFFIXES)}
         for t in thumbs.glob("*.jpg"):
             if t.stem not in live:
                 t.unlink(missing_ok=True); counts["stale_thumbs"] += 1

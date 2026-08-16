@@ -454,7 +454,10 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
                 break
             except Exception as exc:  # noqa: BLE001
                 last = exc
-                if "content_policy" in str(exc):
+                # Was `"content_policy" in str(exc)` — fal's wording and nobody
+                # else's. Shared with the clip path now, so a provider that says
+                # "sensitive" or "flagged" still earns its retries.
+                if providers.is_content_refusal(exc):
                     # Surface the retry so it reads as "retrying", not a silent
                     # hang — the confusion the user hit before.
                     if progress is not None:
@@ -737,3 +740,146 @@ def all_jobs() -> list[dict]:
         })
     out.sort(key=lambda x: x["elapsed"])   # shortest-running first; oldest last
     return out
+
+
+# ------------------------------------------------------------------- video
+#
+# Deliberately NOT routed through generate(). That function has "one still" wired
+# in at six points — the .png destination, the num_images/output_format request
+# args, the r["images"][0]["url"] unpack, the PIL archive, the PIL dimension
+# probe and the gate call — and branching all six to carry a clip would put the
+# still path, which works, at risk for the sake of the one that does not exist
+# yet.
+#
+# What IS shared is everything that turned out to be format-agnostic: the
+# download loop, source_url parking, the runs row, session grouping and the job
+# threading. Those are reused as-is.
+DOWNLOAD_TIMEOUT_VIDEO = 900   # a 10s 1080p clip is far larger than a 4K still
+
+
+def generate_video(*, still: Path, prompt: str, model: str | None = None,
+                   duration: int = 5, resolution: str = "1080p",
+                   provider: str = "poyo", end_still: Path | None = None,
+                   character: str | None = None, session: dict | None = None,
+                   progress: dict | None = None, meta: dict | None = None,
+                   source_run: str | None = None) -> dict:
+    """Animate an already-approved still. Returns the run row.
+
+    `still` must be a shot that already carries a verdict — see /api/video, which
+    refuses an ungated one. That refusal is the whole design: the approved image
+    becomes frame one, so identity is inherited rather than re-argued.
+    """
+    from . import providers
+
+    owner = character or config.get_active()
+    rid = uuid.uuid4().hex[:10]
+    dest = config.char_base(owner) / "images" / f"{rid}.mp4"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    t0 = time.time()
+    session = session or new_session("video")
+
+    if providers.VIDEO_RUNNERS.get(provider) is None:
+        raise RuntimeError(f"no video runner for {provider!r} — "
+                           f"have {sorted(providers.VIDEO_RUNNERS)}")
+
+    # The motion prompt gets the SAME sanitiser as a shot prompt. It did not
+    # before, which left a hole exactly where one was least expected: the still
+    # path neutralises "sensual/seductive/cleavage" upstream in compose_shot,
+    # while a clip's prompt is typed (or now AI-written) and went to the provider
+    # untouched. Reported on the row, so a rewrite is never silent.
+    from . import prompt as promptlib
+    prompt, sanitised = promptlib.sanitise(prompt)
+
+    # A content refusal is worth retrying: the classifiers sit near a stochastic
+    # boundary (measured on stills — 3/3 refused then 4/4 accepted on byte-
+    # identical text), and kie and poyo run DIFFERENT ones in front of the same
+    # Kling weights. So try again here, then try whoever else carries this model.
+    # An outage still falls through immediately; only refusals earn the retries.
+    plan = [(provider, model, CONTENT_RETRIES)]
+    plan += [(p, m, 1) for p, m in providers.video_alternates(
+        provider, model, need_end_frame=end_still is not None)]
+
+    r, refusals, tried = None, [], []
+    for prov, mod, tries in plan:
+        run_it = providers.VIDEO_RUNNERS[prov]
+        for attempt in range(tries):
+            try:
+                if progress is not None and (prov != provider or attempt):
+                    progress["stage"] = (f"{prov} declined the content — "
+                                         f"{'retrying' if prov == provider else f'trying {prov}'}")
+                r = run_it(prompt=prompt, image=still, model=mod,
+                           duration=duration, resolution=resolution,
+                           end_image=end_still, progress=progress)
+                provider, model = prov, mod      # whoever actually rendered it
+                break
+            except providers.ProviderError as exc:
+                if prov not in tried:
+                    tried.append(prov)
+                if not providers.is_content_refusal(exc):
+                    raise            # an outage, a bad key, a rejected duration
+                refusals.append(f"{prov}: {exc}")
+        if r is not None:
+            break
+
+    if r is None:
+        # Say what was actually tried. "Blocked" reads as a bug the owner can
+        # fix in the prompt; naming the providers that all declined the same
+        # frame is what points at the STILL instead — every one of these runs a
+        # classifier on the uploaded first frame too, not only on the words.
+        raise RuntimeError(
+            f"every provider refused this clip on content ({', '.join(tried)}). "
+            f"The wording was already sanitised, so the first frame itself is the "
+            f"likely trigger — try a different still, or a different model. "
+            f"Last: {refusals[-1] if refusals else 'no detail'}")
+
+    source_url = (r.get("video") or {}).get("url")
+    if not source_url:
+        raise RuntimeError("provider returned no video URL")
+
+    row = {
+        "id": rid, "session": session, "file": dest.name,
+        "source_url": source_url, "endpoint": "", "provider": provider,
+        "model": r.get("model"), "credits": r.get("credits"),
+        # `kind` is what every consumer branches on — the runs table is an opaque
+        # JSON blob so this needs no migration, and without it the review grid
+        # would hand an mp4 to PIL and 500.
+        "kind": "video", "duration": r.get("duration", duration),
+        "resolution": resolution, "aspect": "",
+        "width": None, "height": None,
+        # Both anchors are references — the clip is derived from each of them,
+        # and a start+end row that recorded only its opening frame would lose
+        # half of what produced it.
+        "prompt": prompt, "system": "",
+        "refs": [still.name] + ([end_still.name] if end_still else []),
+        "pose": None, "seed": None, "auto_leveled": 0.0, "mark": None,
+        "seconds": r.get("seconds"),
+        "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        # `sanitised` is the same contract the shot detail already renders, so a
+        # rewritten motion prompt shows up in the UI with no frontend change.
+        "meta": {**(meta or {}), "video": True, "from_run": source_run,
+                 "still": still.name, "sanitised": sanitised,
+                 "end_still": end_still.name if end_still else None,
+                 "refused_by": tried if r is not None and tried else None},
+        # Frame scoring is Phase 2. Until then a clip is honestly unmeasured
+        # rather than falsely clean — and its verdict must never be confused with
+        # a still's, which is why the reason says so.
+        "verdict": {"status": "ungated",
+                    "reason": "video — frame scoring not yet applied"},
+    }
+
+    if progress is not None:
+        progress["stage"] = "downloading the clip"
+    try:
+        _download(source_url, dest, rid)
+    except Exception as exc:                                # noqa: BLE001
+        # Same parking contract as a still: the clip exists and is paid for, so
+        # the row keeps its URL and /api/runs/refetch can finish the job.
+        row["verdict"] = {"status": "error",
+                          "reason": f"{exc} — clip is on {provider}, refetch to recover"}
+        db.runs_insert(row, character_id=owner)
+        raise RuntimeError(f"{exc}; the clip was generated and its URL is saved "
+                           f"— recover it from Review > missing ({rid})")
+
+    row["seconds"] = round(time.time() - t0, 1)
+    db.runs_insert(row, character_id=owner)
+    return row

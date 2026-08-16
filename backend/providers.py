@@ -646,3 +646,490 @@ def reclaim(provider: str, task_id: str) -> dict | None:
                 "credits": st.get("credits_amount"),
                 "seconds": None}
     raise ProviderError(f"cannot reclaim a {provider!r} task")
+
+
+# --------------------------------------------------------------------- video
+#
+# Phase 1: animate a still that ALREADY PASSED THE GATE. The approved image
+# becomes frame one, so identity is preserved by construction rather than
+# re-argued per frame — which is the entire reason image-to-video leads and
+# text-to-video is out of scope.
+#
+# The reference key differs per family and, as everywhere else in this module,
+# sending the wrong one does not error — it generates an unanchored clip and
+# bills for it:
+#
+#   kling-2.1/standard|pro     start_image_url   (a bare string)
+#   wan2.5-image-to-video      image_urls        (an array)
+#
+# Prices are not published for video any more than for images. Read
+# credits_amount off the status response; do not assume.
+POYO_VIDEO: dict[str, dict] = {
+    "kling-2.1": {
+        "model": "kling-2.1/standard", "image_key": "start_image_url",
+        "array": False, "durations": (5, 10), "resolutions": (),
+        "label": "Kling 2.1 Standard",
+    },
+    "kling-2.1-pro": {
+        "model": "kling-2.1/pro", "image_key": "start_image_url",
+        "array": False, "durations": (5, 10), "resolutions": (),
+        "label": "Kling 2.1 Pro",
+    },
+    # Fixed 2K output — the highest of any video model wired here, which matters
+    # more than it sounds: face pixels are the binding constraint on whether a
+    # clip can be scored at all.
+    "hailuo-03": {
+        "model": "hailuo-03", "image_key": "image_urls",
+        "array": True, "durations": tuple(range(5, 16)), "resolutions": (),
+        "label": "Hailuo 03 (2K)",
+    },
+    "runway-4.5": {
+        "model": "runway-gen-4.5", "image_key": "image_urls",
+        "array": True, "durations": (5, 10), "resolutions": (), "aspect": True,
+        "label": "Runway Gen-4.5",
+    },
+    "seedance-2.5": {
+        "model": "seedance-2.5", "image_key": "image_urls",
+        "array": True, "durations": (5, 10), "resolutions": ("480p", "720p"),
+        "label": "Seedance 2.5",
+    },
+    # 4/8/12/16/20s, one reference image, sized by aspect_ratio rather than a
+    # resolution enum.
+    "sora-2": {
+        "model": "sora-2-official", "image_key": "image_urls",
+        "array": True, "durations": (4, 8, 12, 16, 20),
+        "resolutions": (), "aspect": True,
+        "label": "Sora 2",
+    },
+}
+
+# WAN IS REJECTED FOR THIS PROJECT — owner's decision, 2026-08-14, after seeing
+# it beside Kling 2.1 on the same two stills. Not a cost or plumbing problem: the
+# clips generated fine and were the cheapest of anything tested ($0.10 per 5s).
+# It was rejected on how the footage LOOKS, which is the axis the gate cannot
+# measure and therefore the one the owner decides. Left out of the catalogues so
+# it cannot be selected by accident; the runners still understand the model
+# strings if the decision is ever revisited.
+DEFAULT_VIDEO_MODEL = "kling-2.1"
+
+# Video renders in minutes, not seconds. The image budget would abandon a clip
+# that is merely working, and abandoning a running task is the expensive
+# failure — it finishes, it bills, and nobody fetches it.
+POLL_TIMEOUT_BY_PROVIDER["poyo-video"] = 3600
+
+
+# Every provider words a content refusal differently, and the difference is not
+# cosmetic: generate() decides whether to RETRY (the classifier is stochastic
+# near its boundary) or to give up, and it used to make that decision on the
+# single substring "content_policy" — which is fal's wording and nobody else's.
+#
+#   fal   ... content_policy ...
+#   kie   "Generation failed as the content includes sensitive information"
+#
+# So a kie refusal read as a hard failure: no retry, no fallback, dead job. One
+# list, used by both the still and the clip path, so the next provider's phrasing
+# joins it here instead of silently disabling recovery again.
+_REFUSAL_MARKERS = (
+    "content_policy", "sensitive", "moderation", "nsfw", "safety",
+    "prohibited", "inappropriate", "flagged", "violat", "policy",
+)
+
+
+def is_content_refusal(exc: object) -> bool:
+    """Did the provider refuse this on CONTENT, as opposed to being down?
+
+    The distinction drives everything downstream — a refusal is worth sanitising
+    and retrying, an outage is worth falling through fast — and it is also what
+    the progress line tells the owner, who otherwise reads 'kie unavailable' for
+    a shot that kie was perfectly available to decline.
+    """
+    s = str(exc).lower()
+    return any(m in s for m in _REFUSAL_MARKERS)
+
+
+def video_supports_end_frame(provider: str, model: str | None) -> bool:
+    """Can this (provider, model) take a last frame at all?
+
+    Asked by the endpoint so a start+end request against a start-only model is
+    refused before a job is started, rather than failing minutes later inside
+    the worker where the owner has already walked away from the screen.
+    """
+    table = KIE_VIDEO if provider == "kie" else POYO_VIDEO
+    spec = table.get((model or DEFAULT_VIDEO_MODEL).strip())
+    return bool(spec and spec.get("end_frame"))
+
+
+def video_alternates(provider: str, model: str | None,
+                     need_end_frame: bool = False) -> list[tuple[str, str]]:
+    """Other (provider, model) pairs that render the SAME video model.
+
+    kie and poyo both resell Kling and Seedance, and they run different content
+    classifiers in front of them — so a clip one refuses is often one the other
+    renders unchanged. Returns [] when the model is single-sourced, which is the
+    honest answer for Sora, Runway and the Hailuo tiers.
+
+    `need_end_frame` drops any alternate that cannot take a last frame. Without
+    it a refused start+end clip would "recover" onto a model that ignores the end
+    frame entirely, and hand back a clip that goes somewhere else — a worse
+    outcome than the refusal, because it looks like success.
+    """
+    key = (model or DEFAULT_VIDEO_MODEL).strip()
+    out: list[tuple[str, str]] = []
+    for name, table in (("kie", KIE_VIDEO), ("poyo", POYO_VIDEO)):
+        if name == provider or key not in table:
+            continue
+        if need_end_frame and not table[key].get("end_frame"):
+            continue
+        out.append((name, key))
+    return out
+
+
+def video_model(name: str | None) -> dict:
+    n = (name or DEFAULT_VIDEO_MODEL).strip()
+    if n in POYO_VIDEO:
+        return POYO_VIDEO[n]
+    for spec in POYO_VIDEO.values():
+        if spec["model"] == n:
+            return spec
+    raise ProviderError(f"unknown video model {n!r} — known: {sorted(POYO_VIDEO)}")
+
+
+def video_rows() -> list[dict]:
+    return [{"id": k, "model": s["model"], "label": s["label"],
+             "durations": list(s["durations"]),
+             "resolutions": list(s["resolutions"]),
+             # The UI shows the end-frame slot only where it is real, so the
+             # capability has to travel with the catalogue rather than being a
+             # hardcoded model name in the frontend.
+             "end_frame": bool(s.get("end_frame"))}
+            for k, s in POYO_VIDEO.items()]
+
+
+def poyo_video(*, prompt: str, image: Path, model: str | None = None,
+               duration: int = 5, resolution: str = "1080p",
+               aspect: str = "9:16", end_image: Path | None = None,
+               progress: dict | None = None) -> dict:
+    """Animate one still on poyo. Returns a VIDEO envelope, not an image one.
+
+    generate() has always unpacked r["images"][0]["url"]; a clip is deliberately
+    not squeezed into that shape, because pretending a video is an image is how
+    the .png destination and the PIL archive step would silently corrupt it.
+    """
+    key = poyo_key()
+    spec = video_model(model)
+    if duration not in spec["durations"]:
+        raise ProviderError(f"{spec['label']} supports {spec['durations']}s, not {duration}")
+    # None of poyo's catalogue takes an end frame. Refused rather than dropped —
+    # see kie_video for why a silently ignored end frame is the expensive shape.
+    if end_image is not None:
+        raise ProviderError(f"poyo's {spec['label']} takes a start frame only; "
+                            f"kie's kling-3.0 is the end-frame model")
+
+    if progress is not None:
+        progress["stage"] = "uploading the still"
+    # Reference hosting is kie's uploader, exactly as the image path does —
+    # poyo takes URLs only.
+    url = kie_upload(_video_safe_still(image))
+
+    inp = {"prompt": prompt, "duration": duration}
+    inp[spec["image_key"]] = [url] if spec["array"] else url
+    if spec["resolutions"]:
+        if resolution not in spec["resolutions"]:
+            raise ProviderError(f"{spec['label']} supports {spec['resolutions']}")
+        inp["resolution"] = resolution
+    if spec.get("aspect"):
+        # Sora sizes by ratio, not by a resolution enum.
+        inp["aspect_ratio"] = aspect
+
+    if progress is not None:
+        progress["stage"] = f"rendering {duration}s on {spec['label']}"
+    d = _post(_POYO_SUBMIT, {"model": spec["model"], "input": inp}, key)
+    task = (d.get("data") or {}).get("task_id") or d.get("task_id")
+    if not task:
+        raise ProviderError(f"poyo video submit: {json.dumps(d)[:200]}")
+
+    t0 = time.time()
+    budget = poll_budget("poyo-video")
+    while time.time() - t0 < budget:
+        time.sleep(POLL_EVERY)
+        try:
+            st = (_get(f"{_POYO_STATUS}/{task}", key).get("data") or {})
+        except Exception:                                   # noqa: BLE001
+            # A blip must not kill a paid-for render — the budget still bounds
+            # the wait, and a real outage ends as a ProviderTimeout carrying the
+            # task id rather than a bare URLError that loses it.
+            continue
+        state = st.get("status")
+        if state == "failed":
+            raise ProviderError(f"poyo video: {st.get('error_message') or 'failed'}")
+        if state == "finished":
+            f = (st.get("files") or [{}])[0]
+            return {"video": {"url": f.get("file_url")},
+                    "credits": st.get("credits_amount"),
+                    "model": spec["model"], "duration": duration,
+                    "seconds": round(time.time() - t0, 1)}
+        if progress is not None and state:
+            progress["stage"] = f"rendering ({state})"
+    raise ProviderTimeout(f"poyo video: task {task} still running after {budget}s",
+                          provider="poyo", task_id=task)
+
+
+# ------------------------------------------------------------- video on kie
+#
+# kie carries video too, with its own spellings and its own trap: `duration` is
+# a STRING here ('5'|'10'|'15'), not the integer poyo takes. Sending an int is
+# rejected, and sending image_url instead of image_urls generates an unanchored
+# clip — the same silent-failure shape as the still models.
+KIE_VIDEO: dict[str, dict] = {
+    # A THIRD spelling for the reference: not image_urls, not image_url, but
+    # first_frame_url — and a string, not an array. Same silent failure if it is
+    # wrong. duration is a free integer here (2-30s), unusually generous.
+    "seedance-2.5": {
+        "model": "bytedance/seedance-2-5", "image_key": "first_frame_url",
+        "array": False, "durations": tuple(range(2, 31)),
+        "resolutions": ("480p", "720p"), "duration_str": False,
+        "label": "Seedance 2.5 (kie)",
+    },
+    # Kling on kie — the owner's preferred look, moved off poyo because poyo is
+    # nearly out of credits and kie carries more Kling variants anyway.
+    # image_url is a STRING here, and duration is a STRING too.
+    "kling-2.1": {
+        "model": "kling/v2-1-standard", "image_key": "image_url",
+        "array": False, "durations": (5, 10), "resolutions": (),
+        "duration_str": True, "label": "Kling 2.1 Standard (kie)",
+    },
+    "kling-2.1-pro": {
+        "model": "kling/v2-1-pro", "image_key": "image_url",
+        "array": False, "durations": (5, 10), "resolutions": (),
+        "duration_str": True, "label": "Kling 2.1 Pro (kie)",
+    },
+    # Hailuo on kie. Its resolution enum is UPPERCASE — 768P / 1080P — while
+    # every other model here takes lowercase. res_map exists for exactly this:
+    # sending "1080p" is rejected, and there is no hint in the error which field
+    # was wrong.
+    "hailuo-2.3": {
+        "model": "hailuo/2-3-image-to-video-standard", "image_key": "image_url",
+        "array": False, "durations": (6, 10),
+        "resolutions": ("768p", "1080p"),
+        "res_map": {"768p": "768P", "1080p": "1080P",
+                    "720p": "768P", "480p": "768P"},
+        "duration_str": True, "label": "Hailuo 2.3 (kie)",
+    },
+    "hailuo-2.3-pro": {
+        "model": "hailuo/2-3-image-to-video-pro", "image_key": "image_url",
+        "array": False, "durations": (6, 10),
+        "resolutions": ("768p", "1080p"),
+        "res_map": {"768p": "768P", "1080p": "1080P",
+                    "720p": "768P", "480p": "768P"},
+        "duration_str": True, "label": "Hailuo 2.3 Pro (kie)",
+    },
+    "kling-2.5-turbo-pro": {
+        "model": "kling/v2-5-turbo-image-to-video-pro", "image_key": "image_url",
+        "array": False, "durations": (5, 10), "resolutions": (),
+        "duration_str": True, "label": "Kling 2.5 Turbo Pro",
+    },
+    # The only model wired here that takes an END frame as well as a start one.
+    # `image_urls` is positional: index 0 is the first frame, index 1 the last,
+    # and the model interpolates between them. Two anchors instead of one is
+    # strictly better for identity — the clip cannot drift away and stay away,
+    # because it has to arrive somewhere specific.
+    #
+    # aspect_ratio is deliberately NOT sent. The schema makes it optional once
+    # image_urls is present and adapts to the uploaded frames, and its enum
+    # (16:9 / 9:16 / 1:1) has no 3:4 — which is every still this project shoots.
+    # Sending the nearest one would letterbox or crop her.
+    #
+    # sound/mode/multi_shots/multi_prompt are required at the input level even in
+    # plain single-shot mode, so they are pinned here rather than left out.
+    "kling-3.0": {
+        "model": "kling-3.0/video", "image_key": "image_urls",
+        "array": True, "durations": tuple(range(3, 16)), "resolutions": (),
+        "duration_str": True, "end_frame": True,
+        "extra": {"sound": False, "mode": "std",
+                  "multi_shots": False, "multi_prompt": []},
+        "label": "Kling 3.0 (start + end frame)",
+    },
+}
+
+
+def _video_safe_still(path: Path) -> Path:
+    """A copy of the still in a format every video model accepts.
+
+    Stills are archived as WebP, and kie's Kling rejects that outright with
+    "File type not supported" — no mention of which file or which field. Image
+    models take WebP happily, so this only bites on the video path.
+
+    JPEG rather than PNG, and not merely for tidiness: a 3584x4800 still is 1.0MB
+    as WebP, 10.6MB as PNG and 1.9MB as JPEG. kie_upload sends base64, adding
+    33%, so the PNG would arrive as 14.1MB against JPEG's 2.6MB — and poyo
+    enforces a 10MB input ceiling. PNG would have silently started failing on
+    the larger stills.
+
+    The original archive is never touched.
+    """
+    if path.suffix.lower() in (".jpg", ".jpeg", ".png"):
+        return path
+    import tempfile
+    from PIL import Image
+    out = Path(tempfile.gettempdir()) / f"vidsrc-{path.stem}.jpg"
+    if not out.exists() or out.stat().st_mtime < path.stat().st_mtime:
+        with Image.open(path) as im:
+            im.convert("RGB").save(out, "JPEG", quality=92)
+    return out
+
+def kie_video_model(name: str | None) -> dict:
+    n = (name or "seedance-2.5").strip()
+    if n in KIE_VIDEO:
+        return KIE_VIDEO[n]
+    for spec in KIE_VIDEO.values():
+        if spec["model"] == n:
+            return spec
+    raise ProviderError(f"kie has no video model {n!r} — known: {sorted(KIE_VIDEO)}")
+
+
+def kie_video(*, prompt: str, image: Path, model: str | None = None,
+              duration: int = 5, resolution: str = "1080p",
+              end_image: Path | None = None,
+              progress: dict | None = None) -> dict:
+    """Animate one still on kie. Same video envelope as poyo_video.
+
+    `end_image` is the LAST frame, on the models that take one. Passing it to a
+    model that does not is refused rather than dropped: a silently ignored end
+    frame renders a perfectly ordinary clip that simply does not arrive where it
+    was told to, and bills in full for it — the same silent-substitution shape
+    this module keeps designing around.
+    """
+    key = kie_key()
+    spec = kie_video_model(model)
+    if duration not in spec["durations"]:
+        raise ProviderError(f"{spec['label']} supports {spec['durations']}s, not {duration}")
+    if end_image is not None and not spec.get("end_frame"):
+        raise ProviderError(
+            f"{spec['label']} takes a start frame only — "
+            f"{sorted(k for k, s in KIE_VIDEO.items() if s.get('end_frame'))} take an end frame")
+
+    if progress is not None:
+        progress["stage"] = "uploading the end frame" if end_image else "uploading the still"
+    urls = [kie_upload(_video_safe_still(image))]
+    if end_image is not None:
+        # Order is the contract: index 0 is where the clip starts, index 1 is
+        # where it has to end up. Reversing them runs the motion backwards.
+        urls.append(kie_upload(_video_safe_still(end_image)))
+
+    inp = {"prompt": prompt,
+           "duration": str(duration) if spec["duration_str"] else duration}
+    inp[spec["image_key"]] = urls if spec["array"] else urls[0]
+    if spec["resolutions"]:
+        if resolution not in spec["resolutions"]:
+            raise ProviderError(f"{spec['label']} supports {spec['resolutions']}")
+        # Some models spell the tier differently (Hailuo wants 1080P, not 1080p).
+        inp["resolution"] = (spec.get("res_map") or {}).get(resolution, resolution)
+    inp.update(spec.get("extra") or {})     # fields kie marks required
+
+    if progress is not None:
+        progress["stage"] = f"rendering {duration}s on {spec['label']}"
+    d = _post(_KIE_CREATE, {"model": spec["model"], "input": inp}, key)
+    if d.get("code") != 200:
+        raise ProviderError(f"kie video createTask: {d.get('msg')}")
+    task = d["data"]["taskId"]
+
+    t0 = time.time()
+    budget = poll_budget("poyo-video")      # video budgets are about video, not vendor
+    while time.time() - t0 < budget:
+        time.sleep(POLL_EVERY)
+        try:
+            st = (_get(f"{_KIE_POLL}?taskId={task}", key).get("data") or {})
+        except Exception:                                   # noqa: BLE001
+            continue                        # a blip must not abandon a paid render
+        state = st.get("state")
+        if state == "fail":
+            raise ProviderError(f"kie video: {st.get('failMsg') or 'failed'} "
+                                f"({st.get('failCode')})")
+        if state == "success":
+            urls = json.loads(st["resultJson"])["resultUrls"]
+            return {"video": {"url": urls[0]},
+                    "credits": st.get("creditsConsumed"),
+                    "model": spec["model"], "duration": duration,
+                    "seconds": round((st.get("costTime") or 0) / 1000, 1)}
+        if progress is not None and state:
+            progress["stage"] = f"rendering ({state})"
+    raise ProviderTimeout(f"kie video: task {task} still running after {budget}s",
+                          provider="kie", task_id=task)
+
+
+VIDEO_RUNNERS = {"poyo": poyo_video, "kie": kie_video}
+
+
+def video_catalogue() -> dict:
+    return {"poyo": video_rows(),
+            "kie": [{"id": k, "model": s["model"], "label": s["label"],
+                     "durations": list(s["durations"]),
+                     "resolutions": list(s["resolutions"]),
+                     "end_frame": bool(s.get("end_frame"))}
+                    for k, s in KIE_VIDEO.items()]}
+
+
+# ---------------------------------------------------- kie runway (legacy API)
+#
+# Runway is NOT a /market/ model on kie — it lives on its own older API with its
+# own base path, camelCase fields and its own poll endpoint. Nothing about the
+# createTask/recordInfo shape applies, which is why it gets its own runner
+# rather than another row in KIE_VIDEO.
+_KIE_RUNWAY_GEN = "https://api.kie.ai/api/v1/runway/generate"
+_KIE_RUNWAY_POLL = "https://api.kie.ai/api/v1/runway/record-detail"
+
+
+def kie_runway_video(*, prompt: str, image: Path, model: str | None = None,
+                     duration: int = 5, resolution: str = "720p",
+                     end_image: Path | None = None,
+                     progress: dict | None = None) -> dict:
+    """Runway on kie's legacy endpoint. Same video envelope as the others."""
+    key = kie_key()
+    if duration not in (5, 10):
+        raise ProviderError(f"runway supports 5 or 10s, not {duration}")
+    if end_image is not None:
+        raise ProviderError("runway here takes a start frame only; "
+                            "kie's kling-3.0 is the end-frame model")
+    quality = resolution if resolution in ("720p", "1080p") else "720p"
+
+    if progress is not None:
+        progress["stage"] = "uploading the still"
+    url = kie_upload(_video_safe_still(image))
+
+    if progress is not None:
+        progress["stage"] = f"rendering {duration}s on Runway"
+    body = {"prompt": prompt, "imageUrl": url, "duration": duration,
+            "quality": quality, "aspectRatio": "vertical", "waterMark": ""}
+    d = _post(_KIE_RUNWAY_GEN, body, key)
+    if d.get("code") != 200:
+        raise ProviderError(f"kie runway: {d.get('msg')}")
+    task = (d.get("data") or {}).get("taskId")
+    if not task:
+        raise ProviderError(f"kie runway: no taskId in {json.dumps(d)[:160]}")
+
+    t0 = time.time()
+    budget = poll_budget("poyo-video")
+    while time.time() - t0 < budget:
+        time.sleep(POLL_EVERY)
+        try:
+            st = (_get(f"{_KIE_RUNWAY_POLL}?taskId={task}", key).get("data") or {})
+        except Exception:                                   # noqa: BLE001
+            continue
+        flag = st.get("successFlag")
+        if flag in (2, 3, "2", "3"):
+            raise ProviderError(f"kie runway: {st.get('errorMessage') or 'failed'}")
+        if flag in (1, "1"):
+            info = st.get("response") or st
+            vurl = info.get("videoUrl") or (info.get("resultUrls") or [None])[0]
+            if not vurl:
+                raise ProviderError(f"kie runway: finished with no url {json.dumps(st)[:160]}")
+            return {"video": {"url": vurl}, "credits": st.get("creditsConsumed"),
+                    "model": "runway-gen-4.5 (kie)", "duration": duration,
+                    "seconds": round(time.time() - t0, 1)}
+        if progress is not None:
+            progress["stage"] = f"rendering (runway {flag})"
+    raise ProviderTimeout(f"kie runway: task {task} still running after {budget}s",
+                          provider="kie", task_id=task)
+
+
+VIDEO_RUNNERS["kie-runway"] = kie_runway_video
