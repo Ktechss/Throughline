@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { ChevronDown, Download, Trash2, Check, X, Eraser } from "lucide-react";
+import { ChevronDown, Download, Trash2, Check, X, Eraser, Film } from "lucide-react";
 import { cn } from "@/lib/utils";
 import VerdictChip from "./VerdictChip";
 import BulkBar, { TileCheckbox } from "./BulkBar";
@@ -128,6 +128,13 @@ function ShotCard({ shot, selected, selecting, onToggleSelect, onOpen, onApprove
       <button onClick={selecting ? onToggleSelect : onOpen} className="relative block w-full aspect-[4/5] overflow-hidden bg-zinc-900">
         <TileCheckbox checked={selected} active={selecting} onChange={onToggleSelect} />
         <img src={shot.thumb} alt={shot.brief} className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]" />
+        {/* A clip's thumb is its first frame, so without this it is indistinguishable
+            from the still it was animated from. */}
+        {shot.kind === "video" && (
+          <div className="absolute top-2 left-2 flex items-center gap-1 rounded-md bg-black/70 px-1.5 py-0.5 text-[9px] font-medium text-zinc-200 ring-1 ring-white/15">
+            <Film className="h-2.5 w-2.5" />{shot.duration ? `${shot.duration}s` : "clip"}
+          </div>
+        )}
         <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-2.5">
           <VerdictChip status={shot.status} pov={shot.pov} similarity={shot.similarity} yaw={shot.yaw} facePx={shot.facePx} />
         </div>

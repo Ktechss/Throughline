@@ -73,6 +73,15 @@ _SANITISE = [
     # between a campaign image and something else, and it costs nothing to keep.
     (r"\b(?:seductive|sultry|provocative|sensual|alluring)\b", "relaxed",
      "sexualised mood word"),
+    # The ADVERB form needs its own rule, and an adverb replacement. `\bsensual\b`
+    # does not match "sensually" — the boundary fails against the "ly" — so every
+    # inflected form of the rule above sailed through untouched, which is exactly
+    # the shape a motion prompt takes ("she moves sensually") rather than a shot
+    # prompt ("a sensual portrait"). Swapping in "relaxed" here would ship "she
+    # moves relaxed" — broken English, the same trap the nude rule below
+    # documents — so the replacement is an adverb.
+    (r"\b(?:seductively|sultrily|provocatively|sensually|alluringly)\b", "slowly",
+     "sexualised mood word"),
     # UNDRESS — still neutralised. A garment category is a garment; this is the
     # absence of one, and that distinction is the whole of the rule below.
     (r"\b(?:topless|naked|bare-?chested|unclothed|undressed)\b",

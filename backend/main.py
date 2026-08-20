@@ -4290,6 +4290,61 @@ def put_timeline(payload: dict = Body(...)):
 # characters of saree description overrode its own reference print.
 _OUTFIT_TEXT_CAP = 600
 
+# A selfie is cropped at the waist at the very most, so most of a garment
+# description names things the frame physically cannot contain — the hem, the
+# slit, the shoes. Left in, that text does not just waste room, it FIGHTS the
+# crop: the model widens out to fit the outfit it was told to show, which is why
+# a selfie came back full-length with the phone visible as a prop.
+#
+# Measured on the failing shot: 406 characters of selfie direction against 2,626
+# of wardrobe and body catalogue — 87%. Trimmed harder here than the normal cap,
+# because "the picture already carries it" and "the picture cannot show it" are
+# different problems and the second one is worse.
+_SELFIE_TEXT_CAP = 220
+
+
+# In water, hair is the tell — and the pipeline was actively causing it.
+#
+# The identity lock says "her face, skin, HAIR, features and identity come only
+# from @image1" (prompter.py) and "skin and hair come only from @image1"
+# (the body-reference line below). @image1 is her calibration reference: dry,
+# styled, soft waves. So a pool shot carried an absolute instruction to copy dry
+# hair from a photograph, against a pose merely mentioning water — and the
+# absolute instruction won. Every pool generation came back with a bone-dry head
+# on a wet body, which is the single clearest AI tell there is.
+#
+# The resolution is that hair COLOUR and LENGTH are identity; hair STATE is not.
+# This clause frees the state and leaves identity untouched.
+_WET_HAIR = (
+    " Her hair and skin are WET in this shot. Her hair is soaked through — "
+    "darkened, heavier, clinging to her scalp, neck and shoulders in ropes, "
+    "NOT the dry styled waves of @image1: take its colour and length from "
+    "@image1 but never its dry styling. Water beads and runs on her face, "
+    "shoulders and arms, her lashes are wet and clumped, and any fabric on her "
+    "is darkened and clinging. Nothing about her is dry.")
+
+
+def _is_wet_pose(pose_id: str | None, brief: str = "") -> bool:
+    """True when the scene puts her in water, so the dry-hair lock must be lifted.
+
+    Reads the Pool & Water category rather than matching a prefix, so a renamed
+    id cannot silently stop being wet, and also catches a brief that describes
+    water without a pose being picked.
+    """
+    if pose_id and pose_id in (promptlib.POSE_GROUPS.get("Pool & Water") or {}):
+        return True
+    return bool(re.search(r"\b(pool|swim|swimming|underwater|sea|ocean|beach|"
+                          r"shower|rain|soaked|drenched|jacuzzi|hot tub)\b",
+                          brief or "", re.I))
+
+
+def _is_selfie_pose(pose_id: str | None) -> bool:
+    """True for the handheld selfie poses, read from the library rather than a
+    prefix match, so a renamed id cannot silently stop being a selfie."""
+    if not pose_id:
+        return False
+    return pose_id in (promptlib.POSE_GROUPS.get("Selfie (Handheld)") or {})
+
 
 # A shot has no framing picker — the brief carries it in words. This reads them
 # back so the preview can say which side of the 400px plateau a shot will land
@@ -4734,11 +4789,18 @@ def shot(req: ShotReq):
         # eyewear — and stops re-describing fabric the picture is already holding.
         # With no image (a collaboration demotes it) the full text stays, because
         # then words are all there is.
-        if desc and has_wardrobe and len(desc) > _OUTFIT_TEXT_CAP:
-            cut = desc[:_OUTFIT_TEXT_CAP]
+        # A selfie crop overrides the normal cap — see _SELFIE_TEXT_CAP. This
+        # applies whether or not an outfit image is attached, because the limit
+        # here is the FRAME, not what the reference already carries.
+        selfie = _is_selfie_pose(req.pose_id)
+        cap = _SELFIE_TEXT_CAP if selfie else _OUTFIT_TEXT_CAP
+        if desc and (has_wardrobe or selfie) and len(desc) > cap:
+            cut = desc[:cap]
             desc = cut[:cut.rfind(".") + 1] or cut
-            demoted.append(f"outfit description trimmed to {len(desc)} chars "
-                           f"(@image2 carries the garment)")
+            demoted.append(
+                f"outfit description trimmed to {len(desc)} chars "
+                + ("(a selfie crop cannot show most of it)" if selfie
+                   else "(@image2 carries the garment)"))
         # Only point at @image2 when @image2 IS the outfit. On a collaboration
         # that tag holds the guest's FACE, and telling the model to take garments
         # from it is worse than saying nothing — the description alone carries
@@ -4819,6 +4881,16 @@ def shot(req: ShotReq):
         if when_line:
             sanitised += _extra
             text = f"{text} {when_line}"
+
+    # LAST, deliberately, and after both prompt branches have converged.
+    #
+    # It was first added to the AI-prompt branch alone, which meant a template
+    # shot — the common case — never got it and came back dry-headed anyway.
+    # Placing it here also puts it after the two clauses that cause the problem:
+    # the body-reference line above and the outfit styling below both say hair
+    # comes only from @image1, and the later line is the one that wins.
+    if _is_wet_pose(req.pose_id, req.brief):
+        text = f"{text}{_WET_HAIR}"
 
     label = req.brief.strip()[:60] or "untitled shot"
     session = generate.new_session(label)

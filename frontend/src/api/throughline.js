@@ -65,9 +65,16 @@ export const STAGE = {
 // A finished run -> the flat shape the new UI cards/verdict chip use.
 export function runView(r) {
   const v = r.verdict || {}
+  // `kind` is what every consumer branches on. A clip is served from the same
+  // /api/images path (FileResponse types it by extension and honours Range, so
+  // <video> can seek), and its thumb is a poster frame the backend decodes —
+  // the grid asks for both exactly as it does for a still.
+  const video = (r.kind || "") === "video"
   return {
     id: r.id,
     running: false,
+    kind: video ? "video" : "image",
+    duration: video ? (r.duration ?? null) : null,
     url: `/api/images/${r.file}`,
     thumb: `/api/images/${r.file}/thumb`,
     status: v.status || "ungated",

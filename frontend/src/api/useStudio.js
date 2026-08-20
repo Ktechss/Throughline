@@ -67,6 +67,11 @@ export function useStudio(charParam) {
   const [creating, setCreating] = useState(null);
   const [outfitPreview, setOutfitPreview] = useState(null);
 
+  // video — the catalogue is per-install, not per-character, so it is fetched
+  // once rather than on every character switch.
+  const [videoCat, setVideoCat] = useState(null);
+  const [animating, setAnimating] = useState({});   // { runId: stage label }
+
   // calibrate + body previews
   const [calibCands, setCalibCands] = useState([]);
   const [bodyPreview, setBodyPreview] = useState(null);
@@ -148,6 +153,7 @@ export function useStudio(charParam) {
   }, [charParam, refresh]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { api.get("/api/video/models").then(setVideoCat).catch(() => {}); }, []);
 
   // ------------------------------------------------------------------ shoot
   const pollGen = (jid) => {
@@ -373,6 +379,50 @@ export function useStudio(charParam) {
     catch (e) { fail(e); }
   };
 
+  // ------------------------------------------------------------------ animate
+  // Turn an approved still into a clip. The still becomes frame one, so identity
+  // is inherited rather than re-argued — which is why the server refuses an
+  // ungated source unless allow_ungated says the owner looked and wants it.
+  //
+  // Polled at 3s, not the 1.5s the still path uses: a clip renders in MINUTES
+  // (the server's own budget is an hour), so a faster tick is a hundred wasted
+  // round trips per render and no sooner an answer.
+  const animate = async (runId, opts = {}) => {
+    const mine = epoch.current;
+    setAnimating((a) => ({ ...a, [runId]: "starting…" })); setErr(null);
+    try {
+      const { job } = await api.send("/api/video", "POST", { run_id: runId, ...opts });
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 3000));
+        if (mine !== epoch.current) return null;
+        const st = await api.get(`/api/jobs/${job}`);
+        if (mine !== epoch.current) return null;
+        setAnimating((a) => ({ ...a, [runId]: STAGE[st.stage] || st.stage || "rendering…" }));
+        if (st.done) {
+          if (st.error) { setErr(st.error); return null; }
+          await refresh();
+          return st.run;
+        }
+      }
+    } catch (e) {
+      if (mine === epoch.current) fail(e);
+      return null;
+    } finally {
+      if (mine === epoch.current) setAnimating((a) => { const n = { ...a }; delete n[runId]; return n; });
+    }
+  };
+
+  // Ask Claude what should move in a shot. Costs one vision call and renders
+  // nothing — the owner picks a suggestion and presses animate themselves.
+  const suggestMotion = async (runId, opts = {}) => {
+    try {
+      return await api.send("/api/video/suggest", "POST", { run_id: runId, ...opts });
+    } catch (e) {
+      fail(e);
+      return null;
+    }
+  };
+
   // ------------------------------------------------- bulk + CRUD (multi-select)
   const bulkDeleteRuns = async (ids) => {
     if (!ids.length || !window.confirm(`Delete ${ids.length} image${ids.length > 1 ? "s" : ""} permanently?`)) return;
@@ -546,6 +596,8 @@ export function useStudio(charParam) {
     outfitCategories, deleteOutfit, updateOutfit, bulkDeleteOutfits,
     // review
     shots, mark, deleteRun, exportGold, purgeRejected, cleanupImages, bulkDeleteRuns, bulkMarkRuns,
+    // video
+    videoCat, animating, animate, suggestMotion,
     // bio
     setBioRef, deleteRef, toGallery, importRef, uploadRef, savePart, resetParts, bulkDeleteRefs,
     uploadShape, createBody, saveBody, discardBody, selectBody, deleteBody, renameBody, bodyPreview, bodyBusy,

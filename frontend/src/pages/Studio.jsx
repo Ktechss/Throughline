@@ -1,14 +1,15 @@
 import React, { useState } from "react";
 import { useSearchParams, Link } from "react-router-dom";
-import { ShieldCheck, ShieldAlert, Lock, ChevronLeft, Camera, IdCard, Sliders, GalleryHorizontal } from "lucide-react";
+import { ShieldCheck, ShieldAlert, Lock, ChevronLeft, Camera, IdCard, Sliders, GalleryHorizontal, Film } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { api } from "@/api/throughline";
+import { api, runView } from "@/api/throughline";
 import { useStudio } from "@/api/useStudio";
 import FacePicker from "@/components/studio/FacePicker";
 import ShootTab from "@/components/studio/ShootTab";
 import BioTab from "@/components/studio/BioTab";
 import CalibrateTab from "@/components/studio/CalibrateTab";
 import ReviewTab from "@/components/studio/ReviewTab";
+import MotionTab from "@/components/studio/MotionTab";
 import ImageDetail from "@/components/studio/ImageDetail";
 import OutfitDrawer from "@/components/studio/OutfitDrawer";
 
@@ -16,6 +17,7 @@ const TABS = [
   { id: "shoot", label: "Shoot", icon: Camera },
   { id: "bio", label: "Bio", icon: IdCard },
   { id: "calibrate", label: "Calibrate", icon: Sliders },
+  { id: "motion", label: "Motion", icon: Film },
   { id: "review", label: "Review", icon: GalleryHorizontal },
 ];
 
@@ -68,6 +70,14 @@ export default function Studio() {
     setTab("shoot");
   };
   const markDetail = (id, decision) => { s.mark(id, decision); setDetail((d) => (d && d.id === id ? { ...d, mark: decision } : d)); };
+  // The modal stays open on the SOURCE still while a clip renders, which is the
+  // wrong thing to be looking at once it exists — so the finished run takes over
+  // the detail view. It goes through runView like every other card, so the
+  // swapped-in clip needs no special-casing anywhere downstream.
+  const animate = async (id, opts) => {
+    const run = await s.animate(id, opts);
+    if (run) setDetail(runView(run));
+  };
 
   // GATE: a character with no master face has no working studio — every shot
   // 400s on the missing reference — so choosing one is not optional here. This
@@ -211,6 +221,12 @@ export default function Studio() {
                 onRemoveGallery={s.removeGalleryEntry}
               />
             )}
+            {tab === "motion" && (
+              <MotionTab
+                shots={s.shots} videoCat={s.videoCat} animating={s.animating}
+                onAnimate={s.animate} onSuggest={s.suggestMotion}
+              />
+            )}
             {tab === "review" && (
               <ReviewTab
                 stats={reviewStats} shots={s.shots} onOpenDetail={setDetail}
@@ -227,6 +243,15 @@ export default function Studio() {
         <ImageDetail
           image={detail} wardrobe={s.wardrobe} onClose={() => setDetail(null)}
           onMark={markDetail} onToWardrobe={toWardrobe} onToPoseRef={toPoseRef} onUsePose={usePose}
+          videoCat={s.videoCat} animating={s.animating} onAnimate={animate} onSuggest={s.suggestMotion}
+          // Candidates for the END frame: every still except the one open. The
+          // gate's verdict rides on each tile instead of hiding the option —
+          // the API still refuses an ungated end frame until allow_ungated.
+          stills={s.shots.filter((x) => x.id !== detail.id && x.kind !== "video")}
+          source={detail.raw?.meta?.from_run
+            ? s.shots.find((x) => x.id === detail.raw.meta.from_run) || null
+            : null}
+          onOpenSource={setDetail}
         />
       )}
 
