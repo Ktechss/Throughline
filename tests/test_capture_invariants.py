@@ -143,3 +143,11 @@ def test_grooming_state_that_costs_similarity_says_so():
     """just-woken moves the landmarks ArcFace reads. A low score there is the
     intended outcome, and the row has to know that before it is read as drift."""
     assert promptlib.GROOMING_STATE["just-woken"]["expected_low"] is True
+
+
+def test_no_appended_clause_says_bare():
+    """"bare" beside a lingerie description and a bed reads to a content checker
+    as undress, not as no-makeup — fal refused a whole generation over it."""
+    for table in (promptlib.OPTICS, promptlib.EXPOSURE, promptlib.GROOMING_STATE):
+        for k, v in table.items():
+            assert "bare" not in v["text"].lower(), f"{k} uses a moderation trigger"

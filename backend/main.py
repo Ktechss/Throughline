@@ -5034,12 +5034,22 @@ def shot(req: ShotReq):
     # every prompt) and hair.base ("soft waves"). OPTICS contradicts whatever
     # focal length Claude wrote into an AI prompt. Both contradictions are
     # deliberate and both are only WON by arriving last.
+    #
+    # ⚠ And they go through sanitise(). Everything appended after the branches
+    # converge skips the moderation pass that ran inside them, which is a hole
+    # _WET_HAIR happens to sit in safely because of how it is worded. These do
+    # not: "her face is bare", next to a lingerie description and a bed, read to
+    # fal's content checker as undress rather than as no-makeup, and it refused
+    # the whole generation. The wording is fixed, and the pass runs anyway so the
+    # next clause added here is covered by default rather than by luck.
     for _txt in (
             (promptlib.OPTICS.get(optics_id) or {}).get("text", ""),
             (promptlib.EXPOSURE.get(req.exposure) or {}).get("text", ""),
             (promptlib.GROOMING_STATE.get(groom_id) or {}).get("text", "")):
         if _txt:
-            text = f"{text} {_txt}"
+            _clean, _extra = promptlib.sanitise(_txt)
+            sanitised += _extra
+            text = f"{text} {_clean}"
 
     label = req.brief.strip()[:60] or "untitled shot"
     session = generate.new_session(label)

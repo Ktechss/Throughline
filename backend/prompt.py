@@ -748,14 +748,19 @@ GROOMING_STATE = {
     "": {"label": "As styled", "expected_low": False, "text": ""},
     "just-woken": {
         "label": "Just woken", "expected_low": True,
+        # "Her face is bare" was the first wording and it is a moderation
+        # trigger waiting to happen: "bare" beside a lingerie description and a
+        # bed reads to a content checker as undress, not as no-makeup. Say the
+        # thing itself. sanitise() does not catch it — its rule is "bare-chested".
         "text": "She has just woken up and has not touched her face or hair. Her "
                 "hair is slept-on — crushed flat on the side she lay on, lifting "
                 "and frizzing on the other, flyaways everywhere, the roots a "
-                "little oily and the waves broken rather than styled. Her face "
-                "is bare: no makeup at all, eyes puffy and slightly narrowed, "
-                "faint creases pressed into one cheek by the pillow, under-eyes "
-                "shadowed and a little swollen, lips dry and pale. Skin is "
-                "uneven and slightly shiny at the nose and forehead."},
+                "little oily and the waves broken rather than styled. She is "
+                "wearing no makeup at all, her eyes are puffy and slightly "
+                "narrowed, faint creases are pressed into one cheek by the "
+                "pillow, her under-eyes are shadowed and a little swollen and "
+                "her lips are dry and pale. Skin is uneven and slightly shiny at "
+                "the nose and forehead."},
     "end-of-day": {
         "label": "End of a long day", "expected_low": False,
         "text": "It is the end of a long day and her look has worn down: makeup "
