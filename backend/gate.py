@@ -181,10 +181,30 @@ class Verdict:
         return out or ["drift"]
 
     @property
+    def crowd(self) -> bool:
+        """More than one face in frame, so the score is a MAX over candidates.
+
+        Not a confound — a confound depresses a score and this inflates one,
+        which is why it needs saying separately and why it must be said on a
+        KEPT shot too. `confounds` deliberately returns nothing unless the
+        verdict is rejected, so until now the dangerous case was the silent one:
+        measured over 613 runs, 26 were scored out of a crowd and **7 of those
+        were kept with an empty diagnosis** — 0.6435 chosen from four faces,
+        0.635 from six. Nothing in the row said the number was a maximum.
+        """
+        return self.faces_in_frame > 1
+
+    @property
     def diagnosis(self) -> str:
-        """The confounds as one tag: "small-face+off-frontal+tilted", or "drift"
-        when nothing explains the score but her."""
-        return "+".join(self.confounds)
+        """Everything needed to read this number, as one tag.
+
+        "crowd+small-face", "off-frontal+tilted", "drift" when nothing explains
+        the score but her, or "crowd" alone on a kept shot picked out of several
+        faces. The crowd tag leads because it changes what the number MEANS
+        rather than merely why it is low.
+        """
+        tags = (["crowd"] if self.crowd else []) + self.confounds
+        return "+".join(tags)
 
     @property
     def reason(self) -> str:
@@ -255,7 +275,7 @@ class Verdict:
                 "source_yaw": None if self.source_yaw is None else round(self.source_yaw, 1),
                 "pose_delta": None if self.pose_delta is None else round(self.pose_delta, 1),
                 "pose_mismatch": self.pose_mismatch,
-                "faces_in_frame": self.faces_in_frame,
+                "faces_in_frame": self.faces_in_frame, "crowd": self.crowd,
                 "diagnosis": self.diagnosis, "confounds": self.confounds,
                 "reason": self.reason}
 

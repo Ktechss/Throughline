@@ -4210,6 +4210,42 @@ _SELFIE_GROUPS = ("Selfie (Handheld)", "Selfie (Mirror)", "Selfie (Car)")
 # this one tuple.
 PHONE_REGISTERS = ("candid", "street", "pov")
 
+# NOBODY ELSE IN FRAME, unless the brief asked for someone.
+#
+# The scene path has had this since the nightclub shot came back with NINE faces.
+# The shot path never got it, and the shot path is where nearly every image is
+# made. Measured over 613 runs: 26 were scored out of a crowd — one of them out
+# of EIGHTEEN faces — and 7 of those were KEPT.
+#
+# It matters more than set dressing because of how `gate.check` picks a subject.
+# It scores the face that best matches the gallery, which is the right rule (the
+# largest face is whoever stood nearest the lens, not necessarily her) and it
+# makes every extra person an extra chance to score a stranger and call it her.
+# A max over four candidates is not the same measurement as a score.
+#
+# Suppressed by DEFAULT and lifted by the brief, not the other way round: of 347
+# solo briefs, 284 never mention another person and 63 explicitly want one. A
+# blanket suppression would fight the briefs that ask for a club or a market;
+# a blanket allowance is what produced the eighteen faces.
+_WANTS_PEOPLE = re.compile(
+    r"\bcrowd\w*\b|\bpeople\b|\bbystander\w*\b|\bpassers?[- ]?by\b|"
+    r"\bstranger\w*\b|\bfriends?\b|\bguests?\b|\bpatrons?\b|\bdancers?\b|"
+    r"\bcouple\b|\bgroup\b|\bqueue\b|\bwedding\b|\bmarriage\b|\bconcert\b|"
+    r"\bcelebrat\w*\b|\bbirthday\b|\bparty\b|\bwith her (mother|sister|friend)\b",
+    re.I)
+
+_NO_CROWD = (
+    " Exactly one person is in this photograph — her, alone. No other faces, no "
+    "bystanders, no crowd, no background people and no reflections of other "
+    "people, not even blurred, out of focus or in the far distance. A busy place "
+    "is conveyed with lighting, furniture, glassware, signage and depth of "
+    "field, never with other human beings.")
+
+
+def _wants_people(brief: str, allow: bool) -> bool:
+    """True when someone other than her may be in frame."""
+    return bool(allow or _WANTS_PEOPLE.search(brief or ""))
+
 
 def _is_selfie_pose(pose_id: str | None, brief: str = "",
                     camera_holder: str = "") -> bool:
@@ -4390,6 +4426,9 @@ class ShotReq(BaseModel):
                                      # Also a face-size lever — see CAMERA_HOLDERS
     flaws: str = ""                  # "" | subtle | snapshot. Deliberate imperfection;
                                      # "snapshot" is expected to score low, by design
+    allow_crowd: bool = False        # let other people into a solo shot. Inferred
+                                     # from the brief when it names them; see
+                                     # _WANTS_PEOPLE for why the default suppresses
     optics: str = ""                 # "" | phone-deep | phone-front | portrait
     exposure: str = ""               # "" | blown-window | dark-face | phone-hdr | low-light
     grooming_state: str = ""         # "" | just-woken | end-of-day | unmaintained |
@@ -4894,6 +4933,17 @@ def shot(req: ShotReq):
     if _is_wet_pose(req.pose_id, req.brief):
         text = f"{text}{_WET_HAIR}"
 
+    # NOBODY ELSE IN FRAME — see _NO_CROWD. Only on a SOLO shot: a collaboration
+    # is about the second woman, and collab_clause has already said how many
+    # people there are and that they are different people.
+    #
+    # Last, with the others, because a scene description earlier in the prompt
+    # ("a busy night market", "the club behind her") implies people, and the
+    # later line is the one that wins.
+    if not cast and not _wants_people(req.brief, req.allow_crowd):
+        text = f"{text}{_NO_CROWD}"
+        demoted.append("no other people in frame (say so in the brief to allow them)")
+
     # Optics, exposure and grooming state — here for the same reason _WET_HAIR is
     # here, and it is the whole reason they work at all.
     #
@@ -5001,6 +5051,9 @@ def shot(req: ShotReq):
                   "camera_holder": holder_id, "flaws": flaws_id,
                   "optics": optics_id, "exposure": req.exposure,
                   "grooming_state": groom_id,
+                  # Recorded because it changes what the gate's number MEANS: a
+                  # frame with other people in it is scored as a max over faces.
+                  "allow_crowd": _wants_people(req.brief, req.allow_crowd),
                   # A deliberately imperfect frame is EXPECTED to score low —
                   # motion blur and a half-caught expression degrade the very
                   # geometry ArcFace reads. Recording it here is what keeps that

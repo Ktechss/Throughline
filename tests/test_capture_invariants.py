@@ -176,3 +176,55 @@ def test_one_predicate_gates_every_register_decision():
     assert set(PHONE_REGISTERS) == {"candid", "street", "pov"}
     for pro in ("editorial", "luxury", "commercial"):
         assert pro not in PHONE_REGISTERS
+
+
+# ── nobody else in frame ─────────────────────────────────────────────────────
+
+def test_crowd_is_suppressed_by_default_on_a_solo_brief():
+    """26 of 613 runs were scored out of a crowd — one out of eighteen faces —
+    because the shot path had no crowd clause while the scene path did."""
+    from backend.main import _wants_people
+    assert not _wants_people("she just woke up yawning in her bed", False)
+    assert not _wants_people("photo shoot in the studio", False)
+
+
+def test_a_brief_that_asks_for_people_gets_them():
+    from backend.main import _wants_people
+    for brief in ("selfi night resto bar people around her the crowd is huge",
+                  "she is at a local tea shop with her friend",
+                  "at a birthday party laughing"):
+        assert _wants_people(brief, False), brief
+
+
+def test_word_boundaries_are_real():
+    """Written through a non-raw string once, which turned every \\b into a
+    literal backspace and made the pattern match nothing. Substrings must not."""
+    from backend.main import _wants_people
+    assert not _wants_people("regrouping the steamy coupled team", False)
+
+
+def test_explicit_allow_crowd_wins():
+    from backend.main import _wants_people
+    assert _wants_people("she just woke up", True)
+
+
+def test_crowd_shows_in_diagnosis_even_when_kept():
+    """confounds only fires on rejection, so a KEPT shot picked out of four
+    faces carried an empty diagnosis. 7 runs did exactly that."""
+    from backend import gate
+
+    class _F:
+        yaw = pitch = roll = 0.0
+        width = 500
+        pose_class = "frontal"
+        tilted = False
+
+    kept = gate.Verdict(0.70, "front", 0.58, _F(), source_yaw=0.0, faces_in_frame=4)
+    assert kept.status == "kept"
+    assert kept.crowd is True
+    assert "crowd" in kept.diagnosis
+    assert kept.dict()["crowd"] is True
+
+    alone = gate.Verdict(0.70, "front", 0.58, _F(), source_yaw=0.0, faces_in_frame=1)
+    assert alone.crowd is False
+    assert alone.diagnosis == ""
