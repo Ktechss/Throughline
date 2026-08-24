@@ -4172,13 +4172,6 @@ _SELFIE_TEXT_CAP = 220
 #
 # The resolution is that hair COLOUR and LENGTH are identity; hair STATE is not.
 # This clause frees the state and leaves identity untouched.
-_WET_HAIR = (
-    " Her hair and skin are WET in this shot. Her hair is soaked through — "
-    "darkened, heavier, clinging to her scalp, neck and shoulders in ropes, "
-    "NOT the dry styled waves of @image1: take its colour and length from "
-    "@image1 but never its dry styling. Water beads and runs on her face, "
-    "shoulders and arms, her lashes are wet and clumped, and any fabric on her "
-    "is darkened and clinging. Nothing about her is dry.")
 
 
 def _is_wet_pose(pose_id: str | None, brief: str = "") -> bool:
@@ -4234,12 +4227,6 @@ _WANTS_PEOPLE = re.compile(
     r"\bcelebrat\w*\b|\bbirthday\b|\bparty\b|\bwith her (mother|sister|friend)\b",
     re.I)
 
-_NO_CROWD = (
-    " Exactly one person is in this photograph — her, alone. No other faces, no "
-    "bystanders, no crowd, no background people and no reflections of other "
-    "people, not even blurred, out of focus or in the far distance. A busy place "
-    "is conveyed with lighting, furniture, glassware, signage and depth of "
-    "field, never with other human beings.")
 
 
 def _wants_people(brief: str, allow: bool) -> bool:
@@ -4433,7 +4420,8 @@ class ShotReq(BaseModel):
     exposure: str = ""               # "" | blown-window | dark-face | phone-hdr | low-light
     grooming_state: str = ""         # "" | just-woken | end-of-day | unmaintained |
                                      # post-workout. Overrides the standing grooming
-                                     # line, so it is appended after it — see _WET_HAIR
+                                     # line, so it is appended after it — see
+                                     # promptlib.late_clauses
 
 
 class AiPromptReq(BaseModel):
@@ -4930,43 +4918,30 @@ def shot(req: ShotReq):
     # Placing it here also puts it after the two clauses that cause the problem:
     # the body-reference line above and the outfit styling below both say hair
     # comes only from @image1, and the later line is the one that wins.
-    if _is_wet_pose(req.pose_id, req.brief):
-        text = f"{text}{_WET_HAIR}"
-
-    # NOBODY ELSE IN FRAME — see _NO_CROWD. Only on a SOLO shot: a collaboration
-    # is about the second woman, and collab_clause has already said how many
-    # people there are and that they are different people.
+    # THE SHARED TAIL. Every clause here contradicts something earlier on
+    # purpose, which is why it is a tail — see promptlib.late_clauses for the
+    # order and what each one has to arrive after.
     #
-    # Last, with the others, because a scene description earlier in the prompt
-    # ("a busy night market", "the club behind her") implies people, and the
-    # later line is the one that wins.
-    if not cast and not _wants_people(req.brief, req.allow_crowd):
-        text = f"{text}{_NO_CROWD}"
+    # It lives in promptlib rather than here because /api/scene needs the same
+    # set and had none of it: a pool scene came back dry-headed because the fix
+    # for exactly that was written on this path only. One implementation now.
+    #
+    # ⚠ Everything appended AFTER the two prompt branches converge skips the
+    # sanitise() that ran inside them. _WET_HAIR sat in that hole safely by luck
+    # of wording; "her face is bare" did not, and fal refused a whole generation
+    # over it. The pass runs here so the next clause added is covered by default.
+    suppress_crowd = not cast and not _wants_people(req.brief, req.allow_crowd)
+    if suppress_crowd:
         demoted.append("no other people in frame (say so in the brief to allow them)")
 
-    # Optics, exposure and grooming state — here for the same reason _WET_HAIR is
-    # here, and it is the whole reason they work at all.
-    #
-    # GROOMING_STATE contradicts carry_clause ("nails clean and even", asserted in
-    # every prompt) and hair.base ("soft waves"). OPTICS contradicts whatever
-    # focal length Claude wrote into an AI prompt. Both contradictions are
-    # deliberate and both are only WON by arriving last.
-    #
-    # ⚠ And they go through sanitise(). Everything appended after the branches
-    # converge skips the moderation pass that ran inside them, which is a hole
-    # _WET_HAIR happens to sit in safely because of how it is worded. These do
-    # not: "her face is bare", next to a lingerie description and a bed, read to
-    # fal's content checker as undress rather than as no-makeup, and it refused
-    # the whole generation. The wording is fixed, and the pass runs anyway so the
-    # next clause added here is covered by default rather than by luck.
-    for _txt in (
-            (promptlib.OPTICS.get(optics_id) or {}).get("text", ""),
-            (promptlib.EXPOSURE.get(req.exposure) or {}).get("text", ""),
-            (promptlib.GROOMING_STATE.get(groom_id) or {}).get("text", "")):
-        if _txt:
-            _clean, _extra = promptlib.sanitise(_txt)
-            sanitised += _extra
-            text = f"{text} {_clean}"
+    for _txt in promptlib.late_clauses(
+            optics=optics_id, exposure=req.exposure, grooming_state=groom_id,
+            wet=_is_wet_pose(req.pose_id, req.brief),
+            suppress_crowd=suppress_crowd,
+            subjects=len(cast) + 1 if cast else 1):
+        _clean, _extra = promptlib.sanitise(_txt)
+        sanitised += _extra
+        text = f"{text} {_clean}"
 
     label = req.brief.strip()[:60] or "untitled shot"
     session = generate.new_session(label)
@@ -5179,6 +5154,10 @@ class SceneReq(BaseModel):
     # and street briefs that genuinely want life behind the subject, and expect
     # faces_in_frame to rise with it.
     allow_crowd: bool = False
+    # The tail axes, same vocabulary as a shot. See promptlib.late_clauses.
+    optics: str = ""
+    exposure: str = ""
+    grooming_state: str = ""
     prompt_override: str | None = None     # a written prompt used VERBATIM in
                                            # place of everything assembled here —
                                            # same contract as ShotReq.prompt
@@ -5512,14 +5491,11 @@ def _build_scene(req: "SceneReq") -> dict:
         ptext = promptlib.POSES_LIBRARY.get(pid) or pid
         parts.append(f"{face_tag[cid]}: {ptext}")
 
-    distinct_clause = ""
-    if len(cast) > 1:
-        names = ", ".join(rows[c]["name"] for c in cast)
-        distinct_clause = (f"There are {len(cast)} DIFFERENT women in this photograph "
-                           f"({names}). Render them as distinct individuals who do not "
-                           f"resemble each other. Keep each face exactly as its own "
-                           f"reference shows it — do NOT blend, merge or average their "
-                           f"features, and never give two of them the same face.")
+    # One wording, shared with the shot path, which had its own. See
+    # promptlib.distinct_clause — this directive existed three separate times for
+    # one measured failure (gate.check_cast's `blended`).
+    distinct_clause = promptlib.distinct_clause([rows[c]["name"] for c in cast])
+    if distinct_clause:
         parts.append(distinct_clause)
 
     # NOBODY ELSE IN FRAME. A brief that says "blurred crowd behind" gets one:
@@ -5531,10 +5507,7 @@ def _build_scene(req: "SceneReq") -> dict:
     # for the venue and street briefs that genuinely want background life.
     crowd_clause = ""
     if cast and not req.allow_crowd:
-        crowd_clause = (f"Exactly {len(cast)} "
-                        f"{'person is' if len(cast) == 1 else 'people are'} in this "
-                        f"photograph. No other faces, no bystanders, no crowd, and "
-                        f"no reflections of other people.")
+        crowd_clause = promptlib.no_crowd_clause(len(cast)).strip()
         parts.append(crowd_clause)
 
     # WHEN AND WHAT THE AIR IS DOING. Every one of these emits nothing at all
@@ -5556,8 +5529,47 @@ def _build_scene(req: "SceneReq") -> dict:
     if flaw:
         parts.append(flaw)
 
+    # HER BUILD, PER PERSON. The shot path has carried build_clause and
+    # carry_clause since they were written; a scene carried neither, so a
+    # collaboration described nobody's figure and nobody's standing manicure —
+    # the two things meant to be constant across every photograph she is in.
+    #
+    # Tagged per cast member rather than stated once, because with two women an
+    # untagged "a 30-inch waist" is a description looking for someone to land on.
+    # Same shape the pose lines above already use. Parts are per-character, so
+    # each build comes from that character's own tree.
+    for _cid in cast:
+        _cparts = _load_parts(_cid)
+        _who = face_tag.get(_cid, "")
+        for _t in (promptlib.build_clause(_cparts), promptlib.carry_clause(_cparts)):
+            if _t:
+                parts.append(f"{_who}: {_t}" if _who and len(cast) > 1 else _t)
+
+    # THE DOCTRINE, which this path never had. Every word of photographic
+    # realism in the project lives in the camera/skin/constraints parts, and
+    # until now a scene got one sentence ("Photorealistic, real skin texture")
+    # while a shot got the whole part tree. Gated on the register for the same
+    # reason it is on the shot path: telling an "Editorial photo" that it is
+    # never a professional camera is an argument, not a directive.
+    if req.shot_type in PHONE_REGISTERS:
+        cap = promptlib.capture_clause(_load_parts())
+        if cap:
+            parts.append(cap)
     parts.append("Photorealistic, real skin texture, natural light, sharp focus "
                  "on every face.")
+
+    # THE SHARED TAIL — same clauses, same order, same implementation as the
+    # shot path. A pool scene used to come back with dry hair because the
+    # wet-hair lock was written on the other path and never crossed over.
+    #
+    # `_is_wet_pose` reads the brief as well as the pose id, so a scene that
+    # says "in the pool" gets it whether or not anyone picked a Pool & Water
+    # pose for a cast member.
+    parts.extend(promptlib.late_clauses(
+        optics=req.optics, exposure=req.exposure,
+        grooming_state=req.grooming_state,
+        wet=_is_wet_pose(None, req.prompt or ""),
+        subjects=max(1, len(cast))))
 
     assembled = " ".join(x for x in parts if x)
 

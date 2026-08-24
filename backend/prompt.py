@@ -1075,3 +1075,117 @@ def lint(parts: list[Part], *, has_reference: bool = False) -> list[dict]:
                         "msg": "Dropped automatically: a reference image is in play, "
                                "and describing her measured 0.834 vs 0.860 terse."})
     return out
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# THE SHARED TAIL
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# /api/shot and /api/scene are two generation paths that share almost no code,
+# and every fix has had to be applied twice — or, more often, once. Measured
+# on 2026-08-24, the scene path was missing ALL of: the photographic doctrine
+# (capture_clause), her build, her standing grooming, the wet-hair lock, optics,
+# exposure and grooming state. A pool scene came back with dry hair because the
+# fix for exactly that lived on the other path.
+#
+# The codebase already records this happening three times. _WET_HAIR first went
+# on the AI branch only, so template shots stayed dry. The body-reference role
+# line was fixed on shot and re-derived for scene. And the "two different women"
+# directive existed in THREE independent wordings for one measured failure.
+#
+# So these live here, once, and both paths call them. The ordering is not
+# cosmetic — see each clause for what it has to arrive after.
+
+
+def distinct_clause(labels: list[str]) -> str:
+    """Say that N subjects are N DIFFERENT people. One wording, was three.
+
+    `labels` are whatever identifies them in this prompt — reference tags on a
+    shot ("@image1", "@image2"), names on a scene ("Kiara", "Sonam"). The
+    failure this prevents is the model averaging two references into one face,
+    which `gate.check_cast` measures as `blended`.
+    """
+    if len(labels) < 2:
+        return ""
+    named = ", ".join(labels[:-1]) + " and " + labels[-1]
+    return (f"There are {len(labels)} DIFFERENT women in this photograph "
+            f"({named}). Render them as distinct individuals who do not resemble "
+            f"each other. Keep each face exactly as its own reference shows it — "
+            f"do NOT blend, merge or average their features, and never give two "
+            f"of them the same face.")
+
+
+def wet_clause(subjects: int = 1) -> str:
+    """Hair and skin are wet.
+
+    ⚠ Must arrive AFTER every clause that claims hair comes from @image1 — the
+    body-reference role line and the outfit styling both say so, and this
+    deliberately contradicts them on styling while keeping colour and length.
+    A contradiction is resolved by whichever the model read last.
+
+    Written out twice rather than assembled from pronouns: splicing "her"/"their"
+    into one template produced "Every person in frame — her hair", and a clause
+    that reads as broken English is a clause the model half-applies.
+    """
+    if subjects < 2:
+        return ("Her hair and skin are WET in this shot. Her hair is soaked "
+                "through — darkened, heavier, clinging to her scalp, neck and "
+                "shoulders in ropes, NOT the dry styled waves of her reference: "
+                "take its colour and length from the reference but never its dry "
+                "styling. Water beads and runs on her face, shoulders and arms, "
+                "her lashes are wet and clumped, and any fabric on her is "
+                "darkened and clinging. Nothing about her is dry.")
+    return ("Everyone in this photograph is WET. Their hair is soaked through — "
+            "darkened, heavier, clinging to scalp, neck and shoulders in ropes, "
+            "NOT the dry styled waves of their references: take colour and length "
+            "from each reference but never its dry styling. Water beads and runs "
+            "on their faces, shoulders and arms, their lashes are wet and "
+            "clumped, and any fabric is darkened and clinging. Nobody is dry.")
+
+
+def no_crowd_clause(subjects: int = 1) -> str:
+    """Nobody in frame but the subjects.
+
+    ⚠ Must arrive AFTER the scene description, which routinely implies people
+    ("a busy night market", "the club behind her") and would otherwise win.
+
+    This is an identity control, not set dressing. `gate.check` scores the face
+    that best matches the gallery, so every extra person is another draw: 26 of
+    613 runs were scored out of a crowd, one out of eighteen faces, and seven of
+    those were kept.
+    """
+    n = max(1, subjects)
+    who = "one person is" if n == 1 else f"{n} people are"
+    return (f" Exactly {who} in this photograph. No other faces, no bystanders, "
+            f"no crowd, no background people and no reflections of other people, "
+            f"not even blurred, out of focus or in the far distance. A busy place "
+            f"is conveyed with lighting, furniture, glassware, signage and depth "
+            f"of field, never with other human beings.")
+
+
+def late_clauses(*, optics: str = "", exposure: str = "", grooming_state: str = "",
+                 wet: bool = False, suppress_crowd: bool = False,
+                 subjects: int = 1) -> list[str]:
+    """The tail both generation paths append, in the order that makes it work.
+
+    Everything here contradicts something earlier on purpose, which is the whole
+    reason it is a tail rather than a section:
+
+        optics          overrules whatever focal length an AI prompt invented
+        exposure        overrules the evenly-lit scene the model would default to
+        wet             overrules "hair comes only from @image1"
+        grooming_state  overrules carry_clause's "nails clean and even" and
+                        hair.base's "soft waves" — so it goes LAST of the four
+        crowd           overrules a scene description that implies people
+
+    Returns a list so the caller joins it with whatever separator it already
+    uses. Empty entries are dropped.
+    """
+    out = [
+        (OPTICS.get(optics) or {}).get("text", ""),
+        (EXPOSURE.get(exposure) or {}).get("text", ""),
+        wet_clause(subjects) if wet else "",
+        (GROOMING_STATE.get(grooming_state) or {}).get("text", ""),
+        no_crowd_clause(subjects).strip() if suppress_crowd else "",
+    ]
+    return [c for c in out if c]

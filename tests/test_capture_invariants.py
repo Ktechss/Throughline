@@ -228,3 +228,57 @@ def test_crowd_shows_in_diagnosis_even_when_kept():
     alone = gate.Verdict(0.70, "front", 0.58, _F(), source_yaw=0.0, faces_in_frame=1)
     assert alone.crowd is False
     assert alone.diagnosis == ""
+
+
+# ── one implementation, both paths ───────────────────────────────────────────
+
+def test_late_clauses_order_puts_grooming_after_the_rest():
+    """grooming_state contradicts carry_clause's "nails clean and even" and
+    hair.base's "soft waves". It only wins by arriving after them."""
+    out = promptlib.late_clauses(optics="phone-front", exposure="blown-window",
+                                 grooming_state="just-woken", wet=True,
+                                 suppress_crowd=True)
+    joined = " ".join(out)
+    assert joined.index("woken up") > joined.index("Depth of field is DEEP")
+    assert joined.index("woken up") > joined.index("blown to featureless white")
+
+
+def test_late_clauses_drops_empties():
+    assert promptlib.late_clauses() == []
+    assert len(promptlib.late_clauses(optics="phone-deep")) == 1
+
+
+def test_wet_clause_is_written_out_for_both_counts():
+    """Spliced pronouns produced "Every person in frame — her hair"; a clause
+    that reads as broken English is one the model half-applies."""
+    solo, cast = promptlib.wet_clause(1), promptlib.wet_clause(2)
+    assert solo.startswith("Her hair")
+    assert cast.startswith("Everyone in this photograph")
+    assert "— her hair" not in cast
+
+
+def test_distinct_clause_is_one_wording():
+    """Existed three separate times for one measured failure (check_cast's
+    `blended`). Works from reference tags or from names."""
+    assert promptlib.distinct_clause([]) == ""
+    assert promptlib.distinct_clause(["@image1"]) == ""
+    tags = promptlib.distinct_clause(["@image1", "@image2"])
+    names = promptlib.distinct_clause(["Kiara", "Sonam"])
+    assert "2 DIFFERENT women" in tags and "@image1 and @image2" in tags
+    assert "Kiara and Sonam" in names
+    assert promptlib.distinct_clause(["a", "b", "c"]).startswith("There are 3")
+
+
+def test_no_crowd_counts_the_subjects():
+    assert "Exactly one person is" in promptlib.no_crowd_clause(1)
+    assert "Exactly 2 people are" in promptlib.no_crowd_clause(2)
+
+
+def test_the_tail_lives_in_one_place():
+    """The point of the exercise: the scene path was missing all of this because
+    it was written on the shot path. If either path grows its own copy, the
+    literals come back to main.py and this fails."""
+    import pathlib
+    src = pathlib.Path("backend/main.py").read_text()
+    for gone in ("_WET_HAIR = (", "_NO_CROWD = ("):
+        assert gone not in src, f"{gone} is back in main.py — use promptlib"
