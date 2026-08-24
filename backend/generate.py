@@ -341,6 +341,12 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
     model = model or providers.load_model()
 
     r, use, _prov_error = None, "fal", None
+    # EVERY provider's complaint, not just the last one. The chain kept only the
+    # final error, so on 2026-08-25 a kie "aspect_ratio is not within the range
+    # of allowed options" and a poyo failure were both discarded and the caller
+    # was shown fal's content_policy_violation — sending the diagnosis into a
+    # moderation problem that did not exist, twice, across two models.
+    _prov_errors: list[str] = []
     # Tasks we stopped waiting on. They are still running, still billing, and
     # recoverable via providers.reclaim() — see /api/runs/reclaim.
     _pending: list[dict] = []
@@ -375,11 +381,13 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
                 _pending.append({"provider": exc.provider, "task_id": exc.task_id,
                                  "model": model})
                 _prov_error = f"{name}: {exc}"
+                _prov_errors.append(_prov_error)
                 if progress is not None:
                     progress["stage"] = f"{name} slow — parked, trying next"
                 continue
             except providers.ProviderError as exc:
                 _prov_error = f"{name}: {exc}"
+                _prov_errors.append(_prov_error)
                 if progress is not None:
                     progress["stage"] = f"{name} unavailable — trying next"
                 continue
@@ -481,7 +489,14 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
         # `last` is None only if the loop never ran, which now happens when kie
         # failed AND the fal plan was skipped — surface kie's message rather
         # than a bare TypeError.
-        raise last or RuntimeError(_prov_error or "no provider produced an image")
+        # Say what EVERY provider said. The last one to be tried is rarely the
+        # one that explains the failure.
+        if _prov_errors:
+            trail = " | ".join(_prov_errors)
+            if last is not None:
+                raise RuntimeError(f"{trail} | fal: {last}") from last
+            raise RuntimeError(trail)
+        raise last or RuntimeError("no provider produced an image")
 
     moderation_fallback = used_ep != primary
     if progress is not None:

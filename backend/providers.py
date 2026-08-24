@@ -179,28 +179,47 @@ def kie_upload(path: Path) -> str:
 # comes back with a 169px face and no explanation.
 _PASSTHROUGH = {"1K": "1K", "2K": "2K", "4K": "4K"}
 
+# WHICH ASPECT RATIOS A MODEL WILL ACTUALLY ACCEPT.
+#
+# kie refuses an unlisted one at createTask with
+#   {"code": 500, "msg": "This aspect_ratio is not within the range of allowed options"}
+# and because the chain then walks to poyo and fal, the caller is shown whatever
+# the LAST provider said. On 2026-08-25 that was a fal content_policy_violation,
+# and two models were blamed for a moderation problem that did not exist. The
+# request had simply asked seedream for 4:5.
+#
+# Measured from 200 runs rather than from documentation: nano generated at 16:9,
+# 3:4 and 4:5; seedream/5-pro generated at 16:9, 3:4 and 4:3 across 91 runs and
+# never once at 4:5. `_NEAREST` maps a refused ratio to the closest supported
+# one so a shot still renders — reported, never silent, because the frame the
+# caller asked for is not the frame they got.
+_SEEDREAM_ASPECTS = ("1:1", "3:4", "4:3", "16:9", "9:16", "2:3", "3:2")
+_NANO_ASPECTS = ("1:1", "3:4", "4:3", "4:5", "5:4", "16:9", "9:16", "2:3", "3:2", "21:9")
+
+_NEAREST = {"4:5": "3:4", "5:4": "4:3"}
+
 KIE_MODELS: dict[str, dict] = {
     "nano-banana-pro": {
         "model": "nano-banana-pro", "label": "Nano Banana Pro", "refs_key": "image_input",
-        "res_key": "resolution", "res_map": _PASSTHROUGH, "max_refs": 8,
+        "res_key": "resolution", "res_map": _PASSTHROUGH, "aspects": _NANO_ASPECTS, "max_refs": 8,
         "extra": {"output_format": "png"}, "usd_4k": 0.12,
     },
     "nano-banana-2": {
         "model": "nano-banana-2", "label": "Nano Banana 2", "refs_key": "image_input",
-        "res_key": "resolution", "res_map": _PASSTHROUGH, "max_refs": 14,
+        "res_key": "resolution", "res_map": _PASSTHROUGH, "aspects": _NANO_ASPECTS, "max_refs": 14,
         "extra": {"output_format": "png"}, "usd_4k": 0.09,
     },
     "seedream-4.5": {
         "model": "seedream/4.5-edit", "label": "Seedream 4.5", "refs_key": "image_urls",
         "res_key": "quality", "res_map": {"1K": "basic", "2K": "basic", "4K": "high"},
-        "max_refs": 14, "extra": {}, "usd_4k": 0.0325,
+        "aspects": _SEEDREAM_ASPECTS, "max_refs": 14, "extra": {}, "usd_4k": 0.0325,
     },
     "seedream-5-pro": {
         "model": "seedream/5-pro-image-to-image", "label": "Seedream 5 Pro", "refs_key": "image_urls",
         # No 4K tier exists: basic=1K, high=2K. 4K maps to the ceiling, not to
         # an error, so a caller asking for 4K still renders — at 2K.
         "res_key": "quality", "res_map": {"1K": "basic", "2K": "high", "4K": "high"},
-        "ceiling": "2K", "max_refs": 10, "extra": {}, "usd_4k": 0.075,
+        "ceiling": "2K", "aspects": _SEEDREAM_ASPECTS, "max_refs": 10, "extra": {}, "usd_4k": 0.075,
     },
     "seedream-5-lite": {
         "model": "seedream/5-lite-image-to-image", "label": "Seedream 5 Lite", "refs_key": "image_urls",
@@ -209,7 +228,7 @@ KIE_MODELS: dict[str, dict] = {
         # width/height is what makes that visible; `resolution` alone still says
         # "1K" because that is what was asked for, not what arrived.
         "res_key": "quality", "res_map": {"1K": "basic", "2K": "basic", "4K": "ultra"},
-        "max_refs": 14, "extra": {}, "usd_4k": 0.0275,
+        "aspects": _SEEDREAM_ASPECTS, "max_refs": 14, "extra": {}, "usd_4k": 0.0275,
     },
 }
 
@@ -296,6 +315,22 @@ def kie_generate(*, prompt: str, refs: list[Path], aspect: str, resolution: str,
 
     if progress is not None:
         progress["stage"] = "generating"
+    # An unsupported ratio is a 500 at createTask, not a soft failure, and the
+    # chain then blames whoever it reaches last. Substitute the nearest supported
+    # one instead — a 3:4 frame is a real answer to a 4:5 request; a
+    # content_policy_violation from a third provider is not.
+    allowed = spec.get("aspects")
+    if allowed and aspect not in allowed:
+        swapped = _NEAREST.get(aspect)
+        if swapped in allowed:
+            if progress is not None:
+                progress["aspect_swapped"] = f"{aspect} -> {swapped}"
+            aspect = swapped
+        else:
+            raise ProviderError(
+                f"kie/{spec['model']} does not accept aspect {aspect} "
+                f"(it takes {', '.join(allowed)})")
+
     inp = {"prompt": prompt, spec["refs_key"]: urls, "aspect_ratio": aspect,
            spec["res_key"]: spec["res_map"].get(resolution, resolution),
            **spec["extra"]}
