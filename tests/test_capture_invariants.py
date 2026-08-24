@@ -355,3 +355,32 @@ def test_threshold_sits_below_the_lowest_genuine_pair():
     if "min" in d and "threshold" in d:
         assert d["threshold"] <= d["min"], (
             f"floor {d['threshold']} is above the lowest genuine pair {d['min']}")
+
+
+# ── the capture band must come from real cameras ─────────────────────────────
+
+def test_calibration_refuses_generated_images():
+    """A band built from our own output makes the distance zero by construction
+    and reports nothing forever. Pointed at 873 generated images it accepted 0."""
+    import importlib.util, pathlib
+    spec = importlib.util.spec_from_file_location(
+        "calib", pathlib.Path("scripts/calibrate_capture.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    gen = pathlib.Path("data/characters/kiara/images")
+    if not gen.exists():
+        return
+    imgs = [p for p in gen.glob("*.webp")][:20]
+    assert imgs, "precondition: some generated images exist"
+    assert not any(mod.has_camera_exif(p) for p in imgs), (
+        "a generated image must never pass the camera-EXIF check")
+
+
+def test_capture_distance_is_none_without_a_band():
+    """An uncalibrated number is worse than no number — the same lesson
+    gate.load_threshold's 'Stranger floor, not a quality bar' records."""
+    from backend import capture
+    cap = capture.Capture(face_frac=0.2, edge_sharp=1.0,
+                          shadow_noise=2.8, clip_pct=1.1)
+    if not capture.load_band():
+        assert capture.distance(cap) is None
