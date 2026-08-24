@@ -325,3 +325,33 @@ def test_prompt_cap_is_below_the_known_good_length():
     from backend.config import PROMPT_CAP
     assert PROMPT_CAP < 4867, "cap must sit below a length measured to work"
     assert PROMPT_CAP > 3000, "cap so low that ordinary prompts would be cut"
+
+
+# ── calibration compares like with like ──────────────────────────────────────
+
+def test_calibration_skips_cross_pose_pairs():
+    """check() scores against the gallery entry CLOSEST IN YAW and never
+    compares a frontal shot to a profile — so calibrating over every pair
+    measured a distribution the checker does not sample. Kiara's gallery,
+    2026-08-25: all pairs std 0.098 -> floor 0.476; pose-matched std 0.036 ->
+    floor 0.682. The spread collapsed by a factor of three."""
+    import inspect
+    from backend import gate
+    src = inspect.getsource(gate.calibrate_from_gallery)
+    assert "POSE_DELTA_MAX" in src, "calibration must exclude cross-pose pairs"
+    assert "n_cross_pose_skipped" in src, "it must report how many it skipped"
+
+
+def test_threshold_sits_below_the_lowest_genuine_pair():
+    """A floor above the worst score two images of her produce against each
+    other would call her a stranger. The stored result carries `min` so this is
+    checkable without recomputing."""
+    import json
+    from backend import gate
+    p = gate.THRESHOLD_PATH
+    if not p.exists():
+        return                                  # nothing calibrated yet
+    d = json.loads(p.read_text())
+    if "min" in d and "threshold" in d:
+        assert d["threshold"] <= d["min"], (
+            f"floor {d['threshold']} is above the lowest genuine pair {d['min']}")

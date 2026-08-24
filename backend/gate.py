@@ -668,16 +668,58 @@ def calibrate_from_gallery(sigma: float = 2.0) -> dict:
     calibrate(), but reads the stored vectors instead of re-analysing files.
     """
     g = load_gallery()
-    vecs = list(g.values())
-    if len(vecs) < 3:
-        raise ValueError(f"need >=3 gallery faces to calibrate, have {len(vecs)}")
-    sims = [similarity(a, b) for a, b in itertools.combinations(vecs, 2)]
+    if len(g) < 3:
+        raise ValueError(f"need >=3 gallery faces to calibrate, have {len(g)}")
+
+    # POSE-MATCHED PAIRS ONLY, and this was wrong for as long as the function
+    # existed. check() chooses the gallery entry CLOSEST IN YAW and scores
+    # against that one — it never compares a frontal shot to a profile. So
+    # calibrating over every pair measures a distribution the checker does not
+    # sample, and cross-pose pairs are inherently low, which inflates the
+    # variance and drags the floor down.
+    #
+    # Measured on Kiara's 13-entry gallery, 2026-08-25:
+    #
+    #     all pairs      n=78  mean 0.673  std 0.098  ->  2 sigma floor 0.476
+    #     pose-matched   n=26  mean 0.754  std 0.036  ->  2 sigma floor 0.682
+    #
+    # The spread collapses by a factor of three once like is compared with like.
+    # The old number would have kept 76% of every run ever made; it was not a
+    # stranger floor, it was noise about head angle.
+    meta = load_meta()
+    names = list(g)
+    yaws = {n: (meta.get(n) or {}).get("yaw") for n in names}
+    sims, cross = [], 0
+    for a, b in itertools.combinations(names, 2):
+        ya, yb = yaws.get(a), yaws.get(b)
+        if ya is None or yb is None:
+            continue
+        if abs(ya - yb) > POSE_DELTA_MAX:
+            cross += 1
+            continue
+        sims.append(similarity(g[a], g[b]))
+    if len(sims) < 3:
+        raise ValueError(
+            f"only {len(sims)} pose-matched pairs in a {len(g)}-entry gallery — "
+            f"add entries at similar yaw before calibrating")
+
     mean, std = float(np.mean(sims)), float(np.std(sims))
+    lo = float(np.min(sims))
     result = {"threshold": round(max(0.0, mean - sigma * std), 3),
               "mean": round(mean, 3), "std": round(std, 3),
-              "min": round(float(np.min(sims)), 3),
-              "n_faces": len(vecs), "n_pairs": len(sims), "sigma": sigma,
+              "min": round(lo, 3),
+              "n_faces": len(g), "n_pairs": len(sims),
+              "n_cross_pose_skipped": cross,
+              "pose_delta_max": POSE_DELTA_MAX, "sigma": sigma,
               "warning": "Stranger floor, not a quality bar."}
+    # A floor ABOVE the lowest genuine pair would reject two images that are
+    # both, by construction, her. At small n the normal assumption behind sigma
+    # is the thing that breaks first, so say so rather than ship a floor the
+    # gallery itself fails.
+    if result["threshold"] > lo:
+        result["warning"] += (f" ⚠ floor {result['threshold']} sits ABOVE the "
+                              f"lowest genuine pair {round(lo, 3)} — at n={len(sims)} "
+                              f"the tail is not normal; consider a larger sigma.")
     THRESHOLD_PATH.parent.mkdir(parents=True, exist_ok=True)
     THRESHOLD_PATH.write_text(json.dumps(result, indent=2) + "\n")
     return result

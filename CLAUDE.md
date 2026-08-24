@@ -106,7 +106,7 @@ one links `libGL`, absent on a GUI-less server).
 
 ## Still true
 
-- **The gallery is Kiara's**, 12 entries, threshold 0.58. The seed hunt is over;
+- **The gallery is Kiara's**, 13 entries, threshold **0.646**. The seed hunt is over;
   `ungated` now means a swatch or an empty gallery, not "no her yet".
 
 ## Hard rules
