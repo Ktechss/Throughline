@@ -313,3 +313,15 @@ def test_scene_accepts_the_tail_axes():
                  exposure="low-light", grooming_state="end-of-day")
     assert (r.optics, r.exposure, r.grooming_state) == (
         "phone-deep", "low-light", "end-of-day")
+
+
+# ── the prompt budget ────────────────────────────────────────────────────────
+
+def test_prompt_cap_is_below_the_known_good_length():
+    """4,867 and 4,895 generated on 2026-08-24; 5,367 was refused by kie with
+    "The text length cannot exceed the maximum limit". The cap sits under the
+    known-good figure because finding the true ceiling costs a billed
+    generation per probe."""
+    from backend.config import PROMPT_CAP
+    assert PROMPT_CAP < 4867, "cap must sit below a length measured to work"
+    assert PROMPT_CAP > 3000, "cap so low that ordinary prompts would be cut"

@@ -214,6 +214,21 @@ SCENE_TEXT2IMG = "fal-ai/nano-banana-pro"
 # 0.547 against one crop's 0.811. Raise this only with a measurement in hand.
 REF_BUDGET = 2
 
+# HOW LONG A PROMPT MAY BE, in characters.
+#
+# kie rejects an over-long prompt at createTask with
+#   {"code": 500, "msg": "The text length cannot exceed the maximum limit"}
+# and the chain then walks to poyo and fal, so the error the caller finally sees
+# is whatever the LAST provider said — on 2026-08-25 that was fal's
+# content_policy_violation, which sent the diagnosis in entirely the wrong
+# direction. The cause was length.
+#
+# Bracketed rather than documented: 4,867 and 4,895 both generated on 2026-08-24;
+# 5,367 was refused. The true ceiling is somewhere between, and finding it
+# exactly would cost a billed generation per probe, so this sits under the known
+# good figure with room to spare. Raise it only against a measurement.
+PROMPT_CAP = 4700
+
 # --------------------------------------------------------------------------
 # How a finished image is ARCHIVED.
 # --------------------------------------------------------------------------

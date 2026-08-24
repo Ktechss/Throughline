@@ -35,7 +35,7 @@ from .scenes_data import MOMENTS
 from .config import (ARCHIVE_FORMAT, ARCHIVE_QUALITY, BODIES, BODIES_META,
                      CHARACTERS, CharPath, EDIT, GOLD, HOME_PATH,
                      IMAGES, NAILS, PLACES, POSE_REFS,
-                     REF_BUDGET, REFS, RESOLUTION, ROOT, SCENE_EDIT,
+                     PROMPT_CAP, REF_BUDGET, REFS, RESOLUTION, ROOT, SCENE_EDIT,
                      SCENE_TEXT2IMG, TEXT2IMG, TIMELINE_PATH, WARDROBE)
 
 @asynccontextmanager
@@ -4847,6 +4847,8 @@ def shot(req: ShotReq):
         # from it is worse than saying nothing — the description alone carries
         # the look in that case.
         from_ref = "from @image2 " if has_wardrobe else ""
+        styling = ""          # bound unconditionally: the prompt budget below
+                              # needs to know whether there is one to drop
         if desc and desc.strip():
             if req.face_accessories:
                 styling, _extra = promptlib.sanitise(
@@ -4946,6 +4948,7 @@ def shot(req: ShotReq):
     if suppress_crowd:
         demoted.append("no other people in frame (say so in the brief to allow them)")
 
+    tail = ""
     for _txt in promptlib.late_clauses(
             optics=optics_id, exposure=req.exposure, grooming_state=groom_id,
             wet=_is_wet_pose(req.pose_id, req.brief),
@@ -4953,7 +4956,46 @@ def shot(req: ShotReq):
             subjects=len(cast) + 1 if cast else 1):
         _clean, _extra = promptlib.sanitise(_txt)
         sanitised += _extra
-        text = f"{text} {_clean}"
+        tail = f"{tail} {_clean}" if tail else _clean
+
+    # THE PROMPT BUDGET.
+    #
+    # kie refuses an over-long prompt at createTask and the chain then walks to
+    # poyo and fal, so the caller is shown the LAST provider's complaint — on
+    # 2026-08-25 a fal content_policy_violation for a prompt whose real problem
+    # was that it ran 5,367 characters. Nothing anywhere counted them.
+    #
+    # Dropped in order of what the FRAME can least afford to lose, which is the
+    # inverse of what a prompt naturally accumulates. The body block goes first:
+    # 450 characters of bust, waist and hip measurements are worth their length
+    # in a full-length shot and worth nothing in a chest-up selfie, and it is the
+    # single largest block that is invisible at the crop the rest of the prompt
+    # asks for. Everything dropped is reported — a prompt silently shortened is
+    # the same class of failure as a reference silently dropped.
+    # ⚠ The TAIL IS NEVER TRIMMED. Every clause in it only works by arriving
+    # last — optics overrules an invented focal length, grooming_state overrules
+    # "nails clean and even" — so cutting from the end removes exactly the lines
+    # the prompt was built to let win. The first version of this budget did trim
+    # the end, and cut the crowd clause in half.
+    _room = PROMPT_CAP - len(tail) - 1
+    if len(text) > _room:
+        for _block, _why in ((build_text, "body measurements"),
+                             (carry_text, "standing grooming"),
+                             (locals().get("styling", ""), "outfit styling")):
+            if len(text) <= _room:
+                break
+            if _block and _block in text:
+                text = text.replace(f" {_block}", "").replace(_block, "")
+                demoted.append(f"dropped {_why} — prompt over {PROMPT_CAP} chars")
+        if len(text) > _room:
+            _cut = text[:_room]
+            _end = _cut.rfind(". ")
+            text = (_cut[:_end + 1] if _end > _room // 2 else _cut).rstrip()
+            demoted.append(f"prompt head truncated — still over {PROMPT_CAP} "
+                           f"after dropping what it could")
+
+    if tail:
+        text = f"{text} {tail}"
 
     label = req.brief.strip()[:60] or "untitled shot"
     session = generate.new_session(label)
