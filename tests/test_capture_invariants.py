@@ -151,3 +151,28 @@ def test_no_appended_clause_says_bare():
     for table in (promptlib.OPTICS, promptlib.EXPOSURE, promptlib.GROOMING_STATE):
         for k, v in table.items():
             assert "bare" not in v["text"].lower(), f"{k} uses a moderation trigger"
+
+
+# ── the phone doctrine must not contradict a studio register ─────────────────
+
+def test_editorial_keeps_real_skin_but_drops_the_phone():
+    """One string held two claims. Real skin belongs in every prompt — a studio
+    photograph of a person still has pores. "Shot on a phone" does not, and it
+    shipped on editorial anyway because there was no seam to cut."""
+    txt, _ = promptlib.compose_tagged("on a rooftop", shot_type="editorial", phone=False)
+    assert "visible skin pores" in txt
+    assert "Shot on a phone" not in txt
+
+
+def test_candid_still_says_shot_on_a_phone():
+    txt, _ = promptlib.compose_tagged("in a cafe", shot_type="candid", phone=True)
+    assert "Shot on a phone" in txt
+
+
+def test_one_predicate_gates_every_register_decision():
+    """capture_clause, promptlib.SYSTEM and the phone tail were gated in three
+    different places with three different opinions. They read one tuple now."""
+    from backend.main import PHONE_REGISTERS
+    assert set(PHONE_REGISTERS) == {"candid", "street", "pov"}
+    for pro in ("editorial", "luxury", "commercial"):
+        assert pro not in PHONE_REGISTERS

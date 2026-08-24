@@ -908,7 +908,8 @@ def compose_tagged(brief: str, *, pose_text: str = "", has_wardrobe: bool = Fals
                    pose_ref_tag: str = "", build_text: str = "", n_skin: int = 0,
                    shot_type: str = "candid", camera_holder: str = "",
                    flaws: str = "", carry_text: str = "", capture_text: str = "",
-                   realism: bool = True, pov: bool = False) -> tuple[str, list[dict]]:
+                   realism: bool = True, phone: bool = True,
+                   pov: bool = False) -> tuple[str, list[dict]]:
     """The ai-influencer technique, ported and validated on fal gpt-image-2.
 
     SHORT and DIRECTIVE. The references carry WHO she is; the prompt only says
@@ -1019,12 +1020,18 @@ def compose_tagged(brief: str, *, pose_text: str = "", has_wardrobe: bool = Fals
         parts_out.append(capture_text)
 
     if realism:
+        # Two claims lived in one string and only one of them is about the
+        # register. Real skin belongs in EVERY prompt — a studio photograph of a
+        # person still has pores, and the master-face prompt says so at length.
+        # "Shot on a phone" does not: it contradicts an editorial or commercial
+        # opener, and it shipped on those anyway because there was no seam to cut.
         parts_out.append(
             "Sharp, high-detail face: visible skin pores, fine peach-fuzz and "
             "skin texture, subtle natural imperfections, and her exact freckles, "
             "moles and beauty marks reproduced from @image1 — never smoothed, "
-            "airbrushed or retouched. Crisp focus on the eyes. Shot on a phone, "
-            "not a professional camera.")
+            "airbrushed or retouched. Crisp focus on the eyes.")
+        if phone:
+            parts_out.append("Shot on a phone, not a professional camera.")
 
     # Flaws go LAST so they qualify the realism line above rather than being
     # overruled by it — "crisp focus on the eyes" and "mild motion blur" are a

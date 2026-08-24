@@ -23,11 +23,18 @@ Measured on 12 real runs from data/eve1.db on 2026-08-24, before any of this was
 written, because a metric that has not been checked against real images is a
 guess with a decimal point on it.
 
-  face_frac        WORKS. Bed selfie 0.113; car selfies 0.201-0.272; full-length
-                   mirror selfie 0.099. It separates "a selfie" from "a
-                   photograph of someone holding a phone" — which was the exact
-                   failure of run 15e2298957 — and it is geometry, so it needs no
-                   reference corpus to be readable.
+  face_frac        WORKS, WITH A CEILING. Bed selfie 0.113; car selfies
+                   0.201-0.272; full-length mirror selfie 0.099. It separates
+                   "photographed from across the room" from "held at arm's
+                   length", which was the exact failure of run 15e2298957.
+
+                   ⚠ It measures FRAMING, not VIEWPOINT, and the difference bit
+                   immediately. Run 4930945a94 (seedream) scored 0.2166 — better
+                   than the nano run it lost to on every other axis — while
+                   putting the phone IN the frame with a RECORD overlay and her
+                   reflection on its screen. A third camera three feet away
+                   produces the same face fraction as a front camera at arm's
+                   length. Nothing here can tell them apart; only looking can.
 
   edge_sharp       CANDIDATE. Gradient magnitude sampled only at edge pixels,
                    face against the top quarter of the frame. Bed selfie 2.04,

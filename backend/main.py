@@ -4351,6 +4351,12 @@ def _is_wet_pose(pose_id: str | None, brief: str = "") -> bool:
 # true in a car as it is at arm's length.
 _SELFIE_GROUPS = ("Selfie (Handheld)", "Selfie (Mirror)", "Selfie (Car)")
 
+# The registers the phone doctrine applies to. `editorial`, `luxury` and
+# `commercial` ARE a professional shoot — telling them "never a professional
+# camera" contradicts their own opener. Everything that gates on register reads
+# this one tuple.
+PHONE_REGISTERS = ("candid", "street", "pov")
+
 
 def _is_selfie_pose(pose_id: str | None, brief: str = "",
                     camera_holder: str = "") -> bool:
@@ -4784,7 +4790,16 @@ def shot(req: ShotReq):
     # The photographic doctrine — camera, skin, constraints. See capture_clause's
     # docstring: these sections were unreachable from a shot until 2026-08-24, so
     # every one of the first 607 runs shipped without a single word of it.
-    capture_text = promptlib.capture_clause(_parts)
+    #
+    # ⚠ Gated on the REGISTER, and this was wrong for a day. capture_clause says
+    # "never a professional camera, never a photoshoot"; SHOT_TYPES["editorial"]
+    # opens the same prompt with "Editorial photo". Shipping both is an argument,
+    # not a directive. `_sys` below was gated from the start and `_infer_capture`
+    # stands down on a studio brief — this one was not, so three mechanisms held
+    # three different opinions about whether the phone doctrine applies to a
+    # studio register. One predicate now, so they cannot drift apart again.
+    phone_register = req.shot_type in PHONE_REGISTERS
+    capture_text = promptlib.capture_clause(_parts) if phone_register else ""
     # Who held the camera and how imperfect the frame is — inferred from the brief
     # when the caller left them blank. Recorded in `demoted` so the run says so.
     holder_id, flaws_id, optics_id, groom_id, _inferred = _infer_capture(
@@ -4854,7 +4869,8 @@ def shot(req: ShotReq):
             req.brief, pose_text=pose_text, has_wardrobe=has_wardrobe,
             pose_ref_tag=pose_ref_tag, build_text=build_text, shot_type=req.shot_type,
             camera_holder=holder_id, flaws=flaws_id,
-            carry_text=carry_text, capture_text=capture_text, pov=req.pov)
+            carry_text=carry_text, capture_text=capture_text, pov=req.pov,
+            phone=phone_register)
         if collab_clause:
             text = f"{collab_clause} {text}"
 
@@ -5110,7 +5126,7 @@ def shot(req: ShotReq):
     # That is precisely why capture_clause puts the doctrine IN the prompt — the
     # same argument generate.py:398 already makes for gpt-image. Treat this as a
     # bonus on the fallback provider, not as the mechanism.
-    _sys = promptlib.SYSTEM if req.shot_type in ("candid", "street", "pov") else ""
+    _sys = promptlib.SYSTEM if phone_register else ""
 
     def run(job: dict) -> dict:
         return generate.generate(
