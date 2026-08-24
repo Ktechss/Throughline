@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Sparkles, Loader2, Wand2, Shirt, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ModelPicker from "@/components/ModelPicker";
+import Picker from "@/components/collab/Picker";
 import VerdictChip from "./VerdictChip";
 import OutfitPicker from "./OutfitPicker";
 import PosePicker from "./PosePicker";
@@ -14,6 +15,9 @@ export default function ShootTab({
   gens, outfits, poseGroups,
   brief, setBrief, aiPrompt, setAiPrompt, aiBusy, onAiPrompt,
   resolution, setResolution, faceAcc, setFaceAcc, pov, setPov, bodyRef, setBodyRef,
+  aspect, setAspect, shotLib,
+  holder, setHolder, flaws, setFlaws, optics, setOptics,
+  exposure, setExposure, groomingState, setGroomingState,
   model, setModel,
   withChar, setWithChar, castable = [],
   selectedOutfit, setSelectedOutfit, selectedPose, setSelectedPose,
@@ -102,6 +106,33 @@ export default function ShootTab({
               Hold her figure
             </button>
           </div>
+          {/* THE CAPTURE ROW.
+              Every one of these existed on ShotReq and none of them were ever
+              sent from this tab — measured across the first 607 runs, `flaws`
+              was set 0 times. A control nothing can reach is not a control, and
+              the result was 607 photographs with no photographer, taken on no
+              particular camera, of a woman who was never less than fully styled.
+
+              Blank means INFERRED, not off: the brief is read for "selfie",
+              "imperfect", "just woke up" and so on, and whatever it decides is
+              reported back in the preview below. Choosing here overrides it. */}
+          {shotLib && !pov && (
+            <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+              <Picker label="Camera" flat={shotLib.camera_holders?.filter((o) => o.id)}
+                value={holder} onChange={setHolder} empty="from brief"
+                hint={holder ? undefined : "auto"} />
+              <Picker label="Imperfection" flat={shotLib.flaws?.filter((o) => o.id)}
+                value={flaws} onChange={setFlaws} empty="from brief" />
+              <Picker label="Optics" flat={shotLib.optics?.filter((o) => o.id)}
+                value={optics} onChange={setOptics} empty="from brief" />
+              <Picker label="Exposure" flat={shotLib.exposure?.filter((o) => o.id)}
+                value={exposure} onChange={setExposure} empty="clean" />
+              <Picker label="Her state" flat={shotLib.grooming_state?.filter((o) => o.id)}
+                value={groomingState} onChange={setGroomingState} empty="from brief" />
+              <Picker label="Frame size" flat={shotLib.aspects}
+                value={aspect} onChange={setAspect} empty="3:4" />
+            </div>
+          )}
           {pov && <p className="mt-2 text-[11px] text-emerald-300/80">POV mode: no face — describe the product / what's in her hand in the brief. Pick a manicure for best hand consistency. The AI prompt is ignored in POV; identity gate is N/A.</p>}
 
           {/* WHAT THIS WILL ACTUALLY SEND, before it costs anything.

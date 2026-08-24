@@ -4254,6 +4254,10 @@ def shot_options():
         "shot_types": [{"id": k, "label": v} for k, v in promptlib.SHOT_TYPES.items()],
         "camera_holders": [{"id": k, **v} for k, v in promptlib.CAMERA_HOLDERS.items()],
         "flaws": [{"id": k, **v} for k, v in promptlib.SNAPSHOT_FLAWS.items()],
+        "optics": [{"id": k, **v} for k, v in promptlib.OPTICS.items()],
+        "exposure": [{"id": k, **v} for k, v in promptlib.EXPOSURE.items()],
+        "grooming_state": [{"id": k, **v} for k, v in promptlib.GROOMING_STATE.items()],
+        "aspects": framing_data.ASPECTS,
     }
 
 
@@ -4338,12 +4342,112 @@ def _is_wet_pose(pose_id: str | None, brief: str = "") -> bool:
                           brief or "", re.I))
 
 
-def _is_selfie_pose(pose_id: str | None) -> bool:
-    """True for the handheld selfie poses, read from the library rather than a
-    prefix match, so a renamed id cannot silently stop being a selfie."""
-    if not pose_id:
-        return False
-    return pose_id in (promptlib.POSE_GROUPS.get("Selfie (Handheld)") or {})
+# Every selfie category, not just the handheld one. This checked "Selfie
+# (Handheld)" alone, which was correct on the day it was written and stopped
+# being correct the moment the library grew: "Selfie (Mirror)" (25) and "Selfie
+# (Car)" (50) are 75 poses that are unmistakably selfies and were getting the
+# 600-char outfit cap meant for a photograph someone else took. The cap exists
+# because a selfie crop physically cannot contain a hem or a shoe — which is as
+# true in a car as it is at arm's length.
+_SELFIE_GROUPS = ("Selfie (Handheld)", "Selfie (Mirror)", "Selfie (Car)")
+
+
+def _is_selfie_pose(pose_id: str | None, brief: str = "",
+                    camera_holder: str = "") -> bool:
+    """True when this shot is a selfie, from the pose, the brief, or the holder.
+
+    Read from the library rather than a prefix match, so a renamed id cannot
+    silently stop being a selfie — and now also from the brief, the same widening
+    `_is_wet_pose` already has. Run 15e2298957 is why: the brief said "took her
+    phone and captured imperfect selfie", no pose was picked, and every selfie
+    rule in the pipeline sat out a shot that was explicitly asked to be one.
+    """
+    if camera_holder in ("selfie", "mirror"):
+        return True
+    if pose_id and any(pose_id in (promptlib.POSE_GROUPS.get(g) or {})
+                       for g in _SELFIE_GROUPS):
+        return True
+    return bool(re.search(r"\bselfie(s)?\b|\bselfi\b", brief or "", re.I))
+
+
+# Who held the camera, and how imperfect the frame is, read out of the brief when
+# the caller did not say.
+#
+# Both knobs have existed on ShotReq since they were written, are served to the
+# UI, and are wired into the Collaborate page. Measured over the first 607 runs:
+# `camera_holder` was set 7 times and `flaws` was set ZERO times. A control that
+# is never reached is not a control, and the Shoot tab — where nearly every image
+# is made — never sent either one.
+#
+# So they are inferred here as a floor, never a ceiling: an explicit value always
+# wins, and whatever is inferred is recorded in meta so the run says what it did
+# rather than doing it invisibly.
+_MIRROR_RE = re.compile(r"\bmirror\b|\breflection\b", re.I)
+_IMPERFECT_RE = re.compile(
+    r"\bimperfect\b|\bcandid\b|\bunposed\b|\bmessy\b|\bcasual\b|\bnatural\b|"
+    r"\bunfiltered\b|\bunedited\b|\brandom\b|\bquick\b|\beveryday\b", re.I)
+_WOKEN_RE = re.compile(
+    r"\bjust wo(ke|ken)\b|\bwaking up\b|\bwakes up\b|\bwoke up\b|\bhalf.asleep\b|"
+    r"\bsleepy\b|\byawn(ing|s|ed)?\b|\bbed ?head\b|\bfirst thing in the morning\b",
+    re.I)
+_WORKOUT_RE = re.compile(
+    r"\bgym\b|\bworkout\b|\bworking out\b|\bexercis\w*\b|\byoga\b|\brunning\b|"
+    r"\bjog\w*\b|\bsweaty\b|\bpost.workout\b", re.I)
+# A studio/editorial brief is asking for exactly the professional optics the
+# phone default forbids. Detect it so the inference stands down rather than
+# telling a deliberate studio shoot it may not have a portrait lens.
+_STUDIO_RE = re.compile(
+    r"\bstudio\b|\beditorial\b|\bphotoshoot\b|\bphoto ?shoot\b|\bcampaign\b|"
+    r"\bcatalogue\b|\bcatalog\b|\blookbook\b|\bprofessional (photo|camera|shoot)\b",
+    re.I)
+
+
+def _infer_capture(brief: str, pose_id: str | None, holder: str, flaws: str,
+                   optics: str = "", grooming_state: str = "",
+                   shot_type: str = "candid"
+                   ) -> tuple[str, str, str, str, list[str]]:
+    """Return (camera_holder, flaws, optics, grooming_state, notes).
+
+    Explicit values always pass through untouched — this is a floor for the
+    knobs nobody sets, not a policy that overrides the ones they do.
+    """
+    notes: list[str] = []
+    b = brief or ""
+    studio = bool(_STUDIO_RE.search(b)) or shot_type in (
+        "editorial", "luxury", "commercial")
+
+    if not holder:
+        mirror_pose = bool(pose_id and pose_id in (
+            promptlib.POSE_GROUPS.get("Selfie (Mirror)") or {}))
+        if mirror_pose or (_MIRROR_RE.search(b) and _is_selfie_pose(None, b)):
+            holder = "mirror"
+            notes.append("camera_holder=mirror inferred from the brief")
+        elif _is_selfie_pose(pose_id, b):
+            holder = "selfie"
+            notes.append("camera_holder=selfie inferred from the brief")
+
+    if not flaws and _IMPERFECT_RE.search(b):
+        # `subtle`, never `snapshot`. snapshot sets expected_low=True and costs
+        # real similarity; asking for it is a decision, not an inference.
+        flaws = "subtle"
+        notes.append("flaws=subtle inferred from the brief")
+
+    if not optics and not studio:
+        # A selfie is held at arm's length on the front camera; anything else on
+        # a phone register is still a phone, and still deep-focus. This is the
+        # line that answers the 51 unasked-for "85mm"s.
+        optics = "phone-front" if holder in ("selfie", "mirror") else "phone-deep"
+        notes.append(f"optics={optics} inferred (phone register)")
+
+    if not grooming_state:
+        if _WOKEN_RE.search(b):
+            grooming_state = "just-woken"
+            notes.append("grooming_state=just-woken inferred from the brief")
+        elif _WORKOUT_RE.search(b):
+            grooming_state = "post-workout"
+            notes.append("grooming_state=post-workout inferred from the brief")
+
+    return holder, flaws, optics, grooming_state, notes
 
 
 # A shot has no framing picker — the brief carries it in words. This reads them
@@ -4429,6 +4533,11 @@ class ShotReq(BaseModel):
                                      # Also a face-size lever — see CAMERA_HOLDERS
     flaws: str = ""                  # "" | subtle | snapshot. Deliberate imperfection;
                                      # "snapshot" is expected to score low, by design
+    optics: str = ""                 # "" | phone-deep | phone-front | portrait
+    exposure: str = ""               # "" | blown-window | dark-face | phone-hdr | low-light
+    grooming_state: str = ""         # "" | just-woken | end-of-day | unmaintained |
+                                     # post-workout. Overrides the standing grooming
+                                     # line, so it is appended after it — see _WET_HAIR
 
 
 class AiPromptReq(BaseModel):
@@ -4672,6 +4781,16 @@ def shot(req: ShotReq):
     # her nails, so the generic nails part stands down rather than contradicting it.
     carry_text = promptlib.carry_clause(
         _parts, skip={"grooming.nails"} if nail_id else set())
+    # The photographic doctrine — camera, skin, constraints. See capture_clause's
+    # docstring: these sections were unreachable from a shot until 2026-08-24, so
+    # every one of the first 607 runs shipped without a single word of it.
+    capture_text = promptlib.capture_clause(_parts)
+    # Who held the camera and how imperfect the frame is — inferred from the brief
+    # when the caller left them blank. Recorded in `demoted` so the run says so.
+    holder_id, flaws_id, optics_id, groom_id, _inferred = _infer_capture(
+        req.brief, req.pose_id, req.camera_holder, req.flaws,
+        req.optics, req.grooming_state, req.shot_type)
+    demoted.extend(_inferred)
     # POV is a specific faceless first-person framing that a generic AI prompt (which
     # references @image1 and describes her posing) would fight — so POV always uses
     # the template's POV branch and ignores any AI prompt.
@@ -4697,11 +4816,18 @@ def shot(req: ShotReq):
             base = f"{base} {build_text}"
         if carry_text:
             base = f"{base} {carry_text}"
+        # Same treatment, and the most important instance of it. Claude writes
+        # the SCENE; the camera is ours. Left to itself it asked for "85mm" in 51
+        # prompts and "shallow depth of field" in 40 — the exact look camera.body
+        # forbids — because camera.body was not in the prompt to argue with it.
+        # Appended AFTER Claude's text so that when the two disagree, we win.
+        if capture_text:
+            base = f"{base} {capture_text}"
         # Same treatment as the build clause: appended rather than handed to
         # Claude. Who held the camera and how imperfect the frame is are
         # photographic facts, and an AI prompt written before they were chosen
         # would otherwise contradict them.
-        holder = (promptlib.CAMERA_HOLDERS.get(req.camera_holder) or {}).get("text", "")
+        holder = (promptlib.CAMERA_HOLDERS.get(holder_id) or {}).get("text", "")
         if holder:
             base = f"{base} {holder}"
         # A pose picked alongside an AI prompt must still take effect — otherwise a
@@ -4716,7 +4842,7 @@ def shot(req: ShotReq):
                     "outfit, lighting and identity.")
         # Flaws last, for the same reason as in compose_tagged: they qualify the
         # sharpness the prompt above asks for, and the later line wins.
-        flaw = (promptlib.SNAPSHOT_FLAWS.get(req.flaws) or {}).get("text", "")
+        flaw = (promptlib.SNAPSHOT_FLAWS.get(flaws_id) or {}).get("text", "")
         if flaw:
             base = f"{base} {flaw}"
         if collab_clause:
@@ -4727,8 +4853,8 @@ def shot(req: ShotReq):
         text, sanitised = promptlib.compose_tagged(
             req.brief, pose_text=pose_text, has_wardrobe=has_wardrobe,
             pose_ref_tag=pose_ref_tag, build_text=build_text, shot_type=req.shot_type,
-            camera_holder=req.camera_holder, flaws=req.flaws,
-            carry_text=carry_text, pov=req.pov)
+            camera_holder=holder_id, flaws=flaws_id,
+            carry_text=carry_text, capture_text=capture_text, pov=req.pov)
         if collab_clause:
             text = f"{collab_clause} {text}"
 
@@ -4792,11 +4918,20 @@ def shot(req: ShotReq):
         # A selfie crop overrides the normal cap — see _SELFIE_TEXT_CAP. This
         # applies whether or not an outfit image is attached, because the limit
         # here is the FRAME, not what the reference already carries.
-        selfie = _is_selfie_pose(req.pose_id)
+        selfie = _is_selfie_pose(req.pose_id, req.brief, holder_id)
         cap = _SELFIE_TEXT_CAP if selfie else _OUTFIT_TEXT_CAP
         if desc and (has_wardrobe or selfie) and len(desc) > cap:
             cut = desc[:cap]
-            desc = cut[:cut.rfind(".") + 1] or cut
+            # Prefer a sentence end, then any clause end, and only then a word
+            # boundary. The bare `or cut` fallback shipped mid-word — run
+            # a99848d7ce ends "...the wrap-style skirt fa" — which happens on any
+            # garment description written as one long sentence, i.e. most of them.
+            end = max(cut.rfind("."), cut.rfind(";"))
+            if end < cap // 2:
+                end = cut.rfind(" ")
+            desc = (cut[:end + 1].rstrip(" ;") if end > 0 else cut).rstrip()
+            if not desc.endswith("."):
+                desc += "."
             demoted.append(
                 f"outfit description trimmed to {len(desc)} chars "
                 + ("(a selfie crop cannot show most of it)" if selfie
@@ -4892,6 +5027,20 @@ def shot(req: ShotReq):
     if _is_wet_pose(req.pose_id, req.brief):
         text = f"{text}{_WET_HAIR}"
 
+    # Optics, exposure and grooming state — here for the same reason _WET_HAIR is
+    # here, and it is the whole reason they work at all.
+    #
+    # GROOMING_STATE contradicts carry_clause ("nails clean and even", asserted in
+    # every prompt) and hair.base ("soft waves"). OPTICS contradicts whatever
+    # focal length Claude wrote into an AI prompt. Both contradictions are
+    # deliberate and both are only WON by arriving last.
+    for _txt in (
+            (promptlib.OPTICS.get(optics_id) or {}).get("text", ""),
+            (promptlib.EXPOSURE.get(req.exposure) or {}).get("text", ""),
+            (promptlib.GROOMING_STATE.get(groom_id) or {}).get("text", "")):
+        if _txt:
+            text = f"{text} {_txt}"
+
     label = req.brief.strip()[:60] or "untitled shot"
     session = generate.new_session(label)
 
@@ -4942,9 +5091,20 @@ def shot(req: ShotReq):
             "cast": cast,
         }
 
+    # promptlib.SYSTEM says "never a fashion shoot, never a studio session", which
+    # is right for a phone register and flatly wrong for the three registers that
+    # ARE a studio session. Send it only where it agrees with the opener.
+    #
+    # ⚠ It reaches fal only. kie_generate and poyo_generate take no system field,
+    # and the chain is kie → poyo → fal, so on the usual path this ships nothing.
+    # That is precisely why capture_clause puts the doctrine IN the prompt — the
+    # same argument generate.py:398 already makes for gpt-image. Treat this as a
+    # bonus on the fallback provider, not as the mechanism.
+    _sys = promptlib.SYSTEM if req.shot_type in ("candid", "street", "pov") else ""
+
     def run(job: dict) -> dict:
         return generate.generate(
-            prompt=text, system="", refs=refs, aspect=aspect,
+            prompt=text, system=_sys, refs=refs, aspect=aspect,
             seed=req.seed, session=session, progress=job, character=owner_cid,
             # If gpt-image-2 refuses a revealing outfit on content_policy, render
             # it on the scene model instead (weaker identity, recorded) rather
@@ -4961,13 +5121,20 @@ def shot(req: ShotReq):
                   "home_corner": home_corner.stem if home_corner else None,
                   "sanitised": sanitised, "pov": req.pov,
                   "ref_demoted": demoted, "when": tl_facts,
-                  "camera_holder": req.camera_holder, "flaws": req.flaws,
+                  "camera_holder": holder_id, "flaws": flaws_id,
+                  "optics": optics_id, "exposure": req.exposure,
+                  "grooming_state": groom_id,
                   # A deliberately imperfect frame is EXPECTED to score low —
                   # motion blur and a half-caught expression degrade the very
                   # geometry ArcFace reads. Recording it here is what keeps that
                   # low number from being counted as drift later.
-                  "expected_low": bool((promptlib.SNAPSHOT_FLAWS.get(req.flaws)
-                                        or {}).get("expected_low")),
+                  #
+                  # Grooming state does the same thing by a different route:
+                  # puffy eyes and a slept-on face move the landmarks ArcFace
+                  # measures. Either one alone is enough to expect a low score.
+                  "expected_low": bool(
+                      (promptlib.SNAPSHOT_FLAWS.get(flaws_id) or {}).get("expected_low")
+                      or (promptlib.GROOMING_STATE.get(groom_id) or {}).get("expected_low")),
                   "ai_prompt": bool(req.prompt and req.prompt.strip())},
         )
 

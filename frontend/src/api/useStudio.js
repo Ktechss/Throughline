@@ -27,6 +27,17 @@ export function useStudio(charParam) {
   const [aiPrompt, setAiPrompt] = useState("");
   const [aiBusy, setAiBusy] = useState(false);
   const [resolution, setResolution] = useState("4K");
+  const [aspect, setAspect] = useState("3:4");
+  // THE CAPTURE AXES. All four existed server-side and none of them were sent
+  // from this tab: measured over the first 607 runs, `flaws` was set 0 times and
+  // `camera_holder` 7. Left blank they are now INFERRED from the brief, so ""
+  // means "let the brief decide", not "off".
+  const [holder, setHolder] = useState("");
+  const [flaws, setFlaws] = useState("");
+  const [optics, setOptics] = useState("");
+  const [exposure, setExposure] = useState("");
+  const [groomingState, setGroomingState] = useState("");
+  const [shotLib, setShotLib] = useState(null);
   const [faceAcc, setFaceAcc] = useState(true);
   const [pov, setPov] = useState(false);   // faceless first-person POV product/lifestyle shot
   // Attach her pinned body reference as a THIRD image, even when an outfit
@@ -154,6 +165,7 @@ export function useStudio(charParam) {
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => { api.get("/api/video/models").then(setVideoCat).catch(() => {}); }, []);
+  useEffect(() => { api.get("/api/shot/options").then(setShotLib).catch(() => {}); }, []);
 
   // ------------------------------------------------------------------ shoot
   const pollGen = (jid) => {
@@ -179,12 +191,14 @@ export function useStudio(charParam) {
   // approximation and reported 880 characters for a prompt that shipped 4,517 —
   // it was reassuring precisely when it should have warned.
   const shotBody = () => ({
-    brief, aspect: "3:4", prompt: pov ? null : (aiPrompt.trim() || null),
+    brief, aspect, prompt: pov ? null : (aiPrompt.trim() || null),
     wardrobe_id: selectedOutfit?.id || null, pose_ref_id: null,
     pose_id: selectedPose?.id || null, pose_text: null,
     nail_id: selectedNail?.id || null,
     resolution, face_accessories: faceAcc, body_ref: bodyRef,
     pov, shot_type: pov ? "pov" : "candid",
+    camera_holder: holder, flaws, optics, exposure,
+    grooming_state: groomingState,
     with_character: withChar?.id || null,
     model,
   });
@@ -202,7 +216,8 @@ export function useStudio(charParam) {
     // Deps are the fields shotBody() reads, listed explicitly — shotBody itself
     // is recreated every render and would retrigger this on every keystroke.
   }, [brief, aiPrompt, selectedOutfit?.id, selectedPose?.id, selectedNail?.id,
-      resolution, faceAcc, bodyRef, pov, withChar?.id, bio?.reference]);
+      resolution, aspect, faceAcc, bodyRef, pov, withChar?.id, bio?.reference,
+      holder, flaws, optics, exposure, groomingState]);
 
   const onGenerate = async () => {
     if (!bio?.reference) { setErr("No identity reference yet — calibrate her first."); return; }
@@ -584,6 +599,9 @@ export function useStudio(charParam) {
     poseGroups, stats, refresh,
     // shoot
     brief, setBrief, aiPrompt, setAiPrompt, aiBusy, onAiPrompt, resolution, setResolution,
+    aspect, setAspect, shotLib,
+    holder, setHolder, flaws, setFlaws, optics, setOptics,
+    exposure, setExposure, groomingState, setGroomingState,
     faceAcc, setFaceAcc, pov, setPov, selectedOutfit, setSelectedOutfit, selectedPose, setSelectedPose,
     selectedNail, setSelectedNail, nails, saveNail, deleteNail, updateNail, bulkDeleteNails,
     home, homeBusy, saveHome, uploadCorner, generateCorner, deleteCorner,

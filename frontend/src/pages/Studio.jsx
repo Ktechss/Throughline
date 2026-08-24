@@ -185,6 +185,12 @@ export default function Studio() {
                 brief={s.brief} setBrief={s.setBrief} aiPrompt={s.aiPrompt} setAiPrompt={s.setAiPrompt}
                 aiBusy={s.aiBusy} onAiPrompt={s.onAiPrompt}
                 resolution={s.resolution} setResolution={s.setResolution}
+                aspect={s.aspect} setAspect={s.setAspect} shotLib={s.shotLib}
+                holder={s.holder} setHolder={s.setHolder}
+                flaws={s.flaws} setFlaws={s.setFlaws}
+                optics={s.optics} setOptics={s.setOptics}
+                exposure={s.exposure} setExposure={s.setExposure}
+                groomingState={s.groomingState} setGroomingState={s.setGroomingState}
                 faceAcc={s.faceAcc} setFaceAcc={s.setFaceAcc}
                 pov={s.pov} setPov={s.setPov}
                 bodyRef={s.bodyRef} setBodyRef={s.setBodyRef}

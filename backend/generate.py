@@ -637,6 +637,27 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
     if (meta or {}).get("expected_low"):
         row["verdict"]["expected_low"] = True
 
+    # IS IT A PHOTOGRAPH — measured separately, and stored separately.
+    #
+    # ⚠ This is not part of the identity number and must never be added to it. A
+    # good capture score does not make a picture her; a good similarity does not
+    # make it a photograph. It lives under its own key so that a later read on
+    # one axis cannot accidentally sweep in the other, the same quarantine the
+    # upscale rows and the video frames get.
+    #
+    # Failure here is never allowed to lose a generation that already cost money:
+    # the image is downloaded and gated by this point, and a metric is not worth
+    # a run record.
+    try:
+        from . import capture as _capture
+        _cap = _capture.measure(dest)            # once — it runs the detector
+        row["verdict"]["capture"] = {**_cap.dict(), "framing": _cap.framing}
+        _d = _capture.distance(_cap, owner)
+        if _d:
+            row["verdict"]["capture"]["distance"] = _d
+    except Exception as exc:                     # noqa: BLE001 — see above
+        row["verdict"]["capture"] = {"error": str(exc)[:120]}
+
     # Shrink last: the verdict above was scored on the pristine download, and the
     # row must name whatever file actually survives.
     row["file"] = archive(dest).name

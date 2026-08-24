@@ -657,6 +657,126 @@ SNAPSHOT_FLAWS = {
                 "harsh direct on-camera flash with a hard shadow behind her."},
 }
 
+# THE OPTICS OF THE THING THAT TOOK THE PICTURE.
+#
+# `camera.body` says "wide 24mm-equivalent lens" and `constraints.main` says "no
+# bokeh", and between them they name the tell without describing its opposite.
+# That gap is why Claude filled it with "85mm" 51 times and "shallow depth of
+# field" 40 times: a model told only what NOT to do renders the thing it knows.
+#
+# A phone front camera is f/2.2 at a fixed wide focal length. Its hyperfocal
+# distance means that at arm's length the WHOLE ROOM is in acceptable focus —
+# there is no separated subject, no creamy fall-off, no portrait-mode cut-out
+# around the hair. Saying so positively is the entire point of this table:
+# `prompt.py`'s own history records that naming a thing to avoid ("not tilted")
+# doubled its frequency, and that describing the state you want fixed it.
+OPTICS = {
+    "": {"label": "Unspecified", "text": ""},
+    "phone-deep": {
+        "label": "Phone — deep focus",
+        "text": "Phone-camera optics: a fixed wide lens at a small aperture, so "
+                "depth of field is DEEP — the wall, the furniture and the room "
+                "behind her are all in focus, about as sharp as she is. There is "
+                "no background blur, no subject separation and no lens fall-off. "
+                "Slight barrel distortion toward the edges of the frame."},
+    "phone-front": {
+        "label": "Phone — front camera, arm's length",
+        "text": "Front-camera optics at arm's length: a wide lens close to her "
+                "face, so her nearest features sit slightly large and her ears "
+                "and shoulders fall away faster than they would in life. Depth "
+                "of field is DEEP — the room behind her stays in focus, about as "
+                "sharp as she is, with no background blur and no subject "
+                "separation."},
+    "portrait": {
+        "label": "Portrait lens (deliberate)",
+        "text": "A longer portrait lens: she is compressed and separated from a "
+                "softly out-of-focus background."},
+}
+
+# HOW THE SENSOR AND THE METER FAILED.
+#
+# `lighting_data` describes the LIGHT IN THE ROOM. This describes what a small
+# sensor does with it, which is a different axis and an absent one: grep across
+# the repo finds zero uses of "blown", "overexposed", "clipped" or "chromatic
+# aberration" as prompt language, in 607 runs.
+#
+# It matters because a phone cannot expose a face and a bright window correctly
+# in the same frame. Run 15e2298957 has a perfectly lit face AND a detailed blue
+# sky behind it, which is not a phone photo — it is a photographer with a
+# reflector. One of the two has to give, and saying which is the difference.
+EXPOSURE = {
+    "": {"label": "Unspecified", "text": ""},
+    "blown-window": {
+        "label": "Window blown out",
+        "text": "The camera metered for her face, so the window behind her is "
+                "blown to featureless white with the light bleeding over its "
+                "frame. No detail survives outside."},
+    "dark-face": {
+        "label": "Backlit, face underexposed",
+        "text": "The camera metered for the bright background, so she is "
+                "underexposed — her face sits a stop or two dark, shadows are "
+                "muddy and slightly noisy, and the highlights behind her hold."},
+    "phone-hdr": {
+        "label": "Phone HDR, over-processed",
+        "text": "Heavy phone HDR processing: local contrast pushed hard, faint "
+                "bright halos where dark edges meet the window, shadows lifted "
+                "flat and grey, and over-sharpened detail on her hair and lashes."},
+    "low-light": {
+        "label": "Low light, high ISO",
+        "text": "Shot at high ISO in poor light: visible luminance and colour "
+                "noise through the shadows, fine detail smeared by the phone's "
+                "denoiser, and slightly muddy colour."},
+}
+
+# WHAT STATE SHE IS ACTUALLY IN.
+#
+# The axis this project did not have. `SNAPSHOT_FLAWS` describes the PHOTOGRAPH
+# — tilt, blur, crop — and nothing anywhere described HER as unmaintained. So
+# every image, in every scene, at every hour, showed a woman with finished hair,
+# even skin and a clean manicure. A brief could move her to a bed at 7am and it
+# could not make her look like she had been asleep.
+#
+# ⚠ Placement matters. `carry_clause` asserts her nails are "clean and even" in
+# every single prompt, and `hair.base` gives her "soft waves". These lines
+# contradict that on purpose, so they must be appended AFTER it — the same
+# argument _WET_HAIR makes in main.py, and for the same reason: the model
+# resolves a contradiction in favour of whichever it read last.
+#
+# ⚠ These cost similarity, like SNAPSHOT_FLAWS. Puffy eyes and a slept-on face
+# change the geometry ArcFace reads. That is the intended outcome, not drift.
+GROOMING_STATE = {
+    "": {"label": "As styled", "expected_low": False, "text": ""},
+    "just-woken": {
+        "label": "Just woken", "expected_low": True,
+        "text": "She has just woken up and has not touched her face or hair. Her "
+                "hair is slept-on — crushed flat on the side she lay on, lifting "
+                "and frizzing on the other, flyaways everywhere, the roots a "
+                "little oily and the waves broken rather than styled. Her face "
+                "is bare: no makeup at all, eyes puffy and slightly narrowed, "
+                "faint creases pressed into one cheek by the pillow, under-eyes "
+                "shadowed and a little swollen, lips dry and pale. Skin is "
+                "uneven and slightly shiny at the nose and forehead."},
+    "end-of-day": {
+        "label": "End of a long day", "expected_low": False,
+        "text": "It is the end of a long day and her look has worn down: makeup "
+                "faded and patchy, liner smudged under the outer corners, lips "
+                "mostly worn off, shine coming through at the nose and forehead. "
+                "Her hair has dropped out of the shape it started in, with "
+                "strands escaping around her face."},
+    "unmaintained": {
+        "label": "Between appointments", "expected_low": False,
+        "text": "Small signs of a real week: polish chipped at the tips of two or "
+                "three nails and worn thin on the others, a faint tan line, and "
+                "hair that is overdue a trim, with split ends visible where it "
+                "falls past her shoulders."},
+    "post-workout": {
+        "label": "After exercise", "expected_low": True,
+        "text": "She has just finished exercising: skin flushed and genuinely "
+                "sweaty at the hairline, temples and upper lip, damp strands "
+                "stuck to her forehead and neck, hair pulled back roughly with "
+                "pieces escaping, and no makeup beyond what has survived."},
+}
+
 # Pose library, ported from ai-influencer's POSE_MAP — text pose descriptions
 # someone tuned until they reliably produce each stance. These are the primary
 # pose direction; the reference images carry identity, the pose text carries the
@@ -715,10 +835,74 @@ def build_clause(parts: list["Part"]) -> str:
     return "Keep her body shape to this build: " + "; ".join(body) + "."
 
 
+def capture_clause(parts: list["Part"]) -> str:
+    """The photographic facts: what camera, what skin, what is forbidden.
+
+    Third and last of the three clause builders, and the one that should have
+    existed from the start. `carry_clause`'s docstring above records finding that
+    `compose_tagged` only ever pulled `body` parts, and fixing it for grooming
+    and accessories. The same bug was left standing for the three sections that
+    carry every word of realism doctrine this project has:
+
+        camera.body       "a handheld phone camera - wide 24mm-equivalent lens,
+                           automatic exposure, natural sensor noise in the
+                           shadows. Never a professional camera, never a lighting
+                           setup, never a photoshoot."
+        skin.facts        pores, sheen, dry lip edges, baby hairs, peach fuzz,
+                           and sensor noise on the shadow side of her face
+        constraints.main  "no bokeh, no professional lighting setup, no beauty
+                           retouching ... indistinguishable from a real photo a
+                           friend posted online"
+        subject.energy    "a real person, not a model on a shoot"
+
+    Measured on 2026-08-24 over every run in the database: across 607 shots,
+    "sensor noise" appeared 0 times, "no bokeh" 0 times, "never a professional
+    camera" 0 times, "not a model on a shoot" 0 times. The doctrine was written,
+    argued for in comments, marked `critical=True` so the UI warns before you
+    disable it -- and never once shipped.
+
+    What DID ship, because nothing was there to contradict it, was Claude writing
+    "85mm" into 51 prompts and "shallow depth of field" into 40. `camera.body`
+    exists precisely to forbid that, and it was not in the room.
+
+    `subject.energy` rides along from `subject` because it is the one non-identity
+    part in that section and it says the same thing as the rest; the identity
+    parts of `subject`/`face` stay out, exactly as `compose()` drops them when a
+    reference exists. Disabled parts stay dropped, so the checkboxes remain real.
+    """
+    cam = [p.text.strip().rstrip(".") for p in parts
+           if p.section == "camera" and getattr(p, "enabled", True)
+           and p.text.strip() and not getattr(p, "placeholder", False)]
+    skin = [p.text.strip() for p in parts
+            if p.section == "skin" and getattr(p, "enabled", True)
+            and p.text.strip() and not getattr(p, "identity", False)]
+    cons = [p.text.strip() for p in parts
+            if p.section == "constraints" and getattr(p, "enabled", True)
+            and p.text.strip()]
+    energy = [p.text.strip().rstrip(".") for p in parts
+              if p.id == "subject.energy" and getattr(p, "enabled", True)
+              and p.text.strip()]
+
+    out: list[str] = []
+    if energy:
+        out.append("She is " + "; ".join(energy) + ".")
+    if cam:
+        out.append("Shot on " + "; ".join(cam) + ".")
+    if skin:
+        # skin.facts is a newline-separated block of em-dash bullets. Flatten it:
+        # a shot prompt is one run of prose, and the bullets survive as clauses.
+        flat = "; ".join(ln.strip(" -—\t") for block in skin
+                         for ln in block.splitlines() if ln.strip(" -—\t"))
+        out.append("Skin, as photographic fact: " + flat + ".")
+    if cons:
+        out.append(" ".join(cons))
+    return " ".join(out)
+
+
 def compose_tagged(brief: str, *, pose_text: str = "", has_wardrobe: bool = False,
                    pose_ref_tag: str = "", build_text: str = "", n_skin: int = 0,
                    shot_type: str = "candid", camera_holder: str = "",
-                   flaws: str = "", carry_text: str = "",
+                   flaws: str = "", carry_text: str = "", capture_text: str = "",
                    realism: bool = True, pov: bool = False) -> tuple[str, list[dict]]:
     """The ai-influencer technique, ported and validated on fal gpt-image-2.
 
@@ -822,6 +1006,12 @@ def compose_tagged(brief: str, *, pose_text: str = "", has_wardrobe: bool = Fals
         parts_out.append("Match skin texture and facial detail from @image3 and @image4.")
     elif n_skin == 1:
         parts_out.append("Match skin texture and facial detail from @image3.")
+
+    # The photographic facts from the part tree, ahead of the realism line below
+    # because that line is reference-SPECIFIC (it names @image1's freckles) while
+    # this one is general. General first, specific second, flaws last.
+    if capture_text:
+        parts_out.append(capture_text)
 
     if realism:
         parts_out.append(
