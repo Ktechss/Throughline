@@ -779,6 +779,61 @@ GROOMING_STATE = {
                 "pieces escaping, and no makeup beyond what has survived."},
 }
 
+# WHAT IS LYING AROUND, TODAY.
+#
+# The rooms come back tidy. Not showroom-tidy — the corner generator already
+# argues against that ("Cohesive, lived-in, real home — NOT a showroom or staged
+# catalogue") and the corners genuinely have wear in them. What they do not have
+# is MESS, and mess is a different thing from wear: wear is permanent and
+# belongs to the room, mess is transient and belongs to the day.
+#
+# ⚠ That distinction is the whole design. The setting clause says "reproduce
+# that same place faithfully ... do not invent or substitute a different room",
+# and a clutter line that describes furniture would fight it and lose. So every
+# entry below adds only things a person PUT DOWN — objects that arrived this
+# morning and will be gone tomorrow — and says explicitly that the room itself
+# is unchanged.
+#
+# Why it matters more than it sounds: the single most convincing detail in the
+# whole wake-up series was "a phone charger cable trailing across the mattress",
+# and Claude wrote that of its own accord into one prompt. Nothing in the
+# pipeline could ask for it twice.
+CLUTTER = {
+    "": {"label": "As the reference shows it", "text": ""},
+    "lived-in": {
+        "label": "Lightly lived-in",
+        "text": "The room itself is exactly as the reference shows it — same "
+                "furniture, same layout, nothing moved or added to it. What is "
+                "different is only what someone has put down today: a phone "
+                "charging cable trailing across a surface, a used glass, a hair "
+                "tie, one garment over the back of a chair. Small, ordinary, and "
+                "clearly left rather than placed."},
+    "slept-in": {
+        "label": "Slept in",
+        "text": "The room itself is exactly as the reference shows it. The bed is "
+                "not: the duvet is thrown back and bunched where she pushed out "
+                "of it, the pillows hold the dents of a head, the bottom sheet is "
+                "rucked and creased, and a phone, a charging cable and a "
+                "half-drunk glass of water are on the mattress or the table beside "
+                "it. Nothing about the bed looks made."},
+    "used": {
+        "label": "In use",
+        "text": "The room itself is exactly as the reference shows it. Across it, "
+                "the evidence of an ordinary day: two or three used cups and "
+                "glasses, an open laptop with a cable running off it, papers and "
+                "a phone face-down, packaging that has not been thrown out, shoes "
+                "left where they came off. Things are where they were dropped, not "
+                "where they belong."},
+    "messy": {
+        "label": "Genuinely messy",
+        "text": "The room itself is exactly as the reference shows it, and it is a "
+                "mess: clothes over the chair and on the floor, a laundry pile, "
+                "several days of glasses and cups, an open bag with its contents "
+                "spilling, cables tangled, surfaces covered. Nobody tidied for "
+                "this photograph and it shows."},
+}
+
+
 # Pose library, ported from ai-influencer's POSE_MAP — text pose descriptions
 # someone tuned until they reliably produce each stance. These are the primary
 # pose direction; the reference images carry identity, the pose text carries the
@@ -1164,7 +1219,7 @@ def no_crowd_clause(subjects: int = 1) -> str:
 
 
 def late_clauses(*, optics: str = "", exposure: str = "", grooming_state: str = "",
-                 wet: bool = False, suppress_crowd: bool = False,
+                 clutter: str = "", wet: bool = False, suppress_crowd: bool = False,
                  subjects: int = 1) -> list[str]:
     """The tail both generation paths append, in the order that makes it work.
 
@@ -1173,6 +1228,8 @@ def late_clauses(*, optics: str = "", exposure: str = "", grooming_state: str = 
 
         optics          overrules whatever focal length an AI prompt invented
         exposure        overrules the evenly-lit scene the model would default to
+        clutter         overrules "reproduce that same place faithfully", but
+                        only for what is lying on it, never for the room
         wet             overrules "hair comes only from @image1"
         grooming_state  overrules carry_clause's "nails clean and even" and
                         hair.base's "soft waves" — so it goes LAST of the four
@@ -1184,6 +1241,7 @@ def late_clauses(*, optics: str = "", exposure: str = "", grooming_state: str = 
     out = [
         (OPTICS.get(optics) or {}).get("text", ""),
         (EXPOSURE.get(exposure) or {}).get("text", ""),
+        (CLUTTER.get(clutter) or {}).get("text", ""),
         wet_clause(subjects) if wet else "",
         (GROOMING_STATE.get(grooming_state) or {}).get("text", ""),
         no_crowd_clause(subjects).strip() if suppress_crowd else "",

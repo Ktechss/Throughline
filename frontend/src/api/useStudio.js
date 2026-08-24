@@ -37,6 +37,7 @@ export function useStudio(charParam) {
   const [optics, setOptics] = useState("");
   const [exposure, setExposure] = useState("");
   const [groomingState, setGroomingState] = useState("");
+  const [clutter, setClutter] = useState("");
   const [shotLib, setShotLib] = useState(null);
   // THE THREE OPT-INS. Each was made deliberately per-request by a commit that
   // argued the case well, and then given nothing to opt in with — so all three
@@ -205,7 +206,7 @@ export function useStudio(charParam) {
     resolution, face_accessories: faceAcc, body_ref: bodyRef,
     pov, shot_type: pov ? "pov" : "candid",
     camera_holder: holder, flaws, optics, exposure,
-    grooming_state: groomingState,
+    grooming_state: groomingState, clutter,
     safety_tolerance: safety || null,
     ref_budget: refBudget,
     use_timeline: useTimeline,
@@ -228,7 +229,7 @@ export function useStudio(charParam) {
     // is recreated every render and would retrigger this on every keystroke.
   }, [brief, aiPrompt, selectedOutfit?.id, selectedPose?.id, selectedNail?.id,
       resolution, aspect, faceAcc, bodyRef, pov, withChar?.id, bio?.reference,
-      holder, flaws, optics, exposure, groomingState,
+      holder, flaws, optics, exposure, groomingState, clutter,
       safety, refBudget, useTimeline, shotDate]);
 
   const onGenerate = async () => {
@@ -614,6 +615,7 @@ export function useStudio(charParam) {
     aspect, setAspect, shotLib,
     holder, setHolder, flaws, setFlaws, optics, setOptics,
     exposure, setExposure, groomingState, setGroomingState,
+    clutter, setClutter,
     safety, setSafety, refBudget, setRefBudget,
     useTimeline, setUseTimeline, shotDate, setShotDate,
     faceAcc, setFaceAcc, pov, setPov, selectedOutfit, setSelectedOutfit, selectedPose, setSelectedPose,

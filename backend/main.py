@@ -4110,6 +4110,7 @@ def shot_options():
         "optics": [{"id": k, **v} for k, v in promptlib.OPTICS.items()],
         "exposure": [{"id": k, **v} for k, v in promptlib.EXPOSURE.items()],
         "grooming_state": [{"id": k, **v} for k, v in promptlib.GROOMING_STATE.items()],
+        "clutter": [{"id": k, **v} for k, v in promptlib.CLUTTER.items()],
         "aspects": framing_data.ASPECTS,
     }
 
@@ -4284,10 +4285,16 @@ _STUDIO_RE = re.compile(
     re.I)
 
 
+_MESSY_RE = re.compile(r"\bmessy\b|\bmess\b|\buntidy\b|\bcluttered?\b|\bchaos\b", re.I)
+_INDOORS_RE = re.compile(
+    r"\bbed\b|\bbedroom\b|\bsofa\b|\bcouch\b|\bliving room\b|\bkitchen\b|"
+    r"\bdesk\b|\bat home\b|\bher (room|flat|apartment|place)\b|\bbathroom\b", re.I)
+
+
 def _infer_capture(brief: str, pose_id: str | None, holder: str, flaws: str,
                    optics: str = "", grooming_state: str = "",
-                   shot_type: str = "candid"
-                   ) -> tuple[str, str, str, str, list[str]]:
+                   shot_type: str = "candid", clutter: str = ""
+                   ) -> tuple[str, str, str, str, str, list[str]]:
     """Return (camera_holder, flaws, optics, grooming_state, notes).
 
     Explicit values always pass through untouched — this is a floor for the
@@ -4329,7 +4336,19 @@ def _infer_capture(brief: str, pose_id: str | None, holder: str, flaws: str,
             grooming_state = "post-workout"
             notes.append("grooming_state=post-workout inferred from the brief")
 
-    return holder, flaws, optics, grooming_state, notes
+    # WHAT IS LYING AROUND. Only indoors — a clutter line about "things someone
+    # put down" means nothing on a street or a rooftop, and the corner reference
+    # is what carries an outdoor place anyway.
+    if not clutter and _INDOORS_RE.search(b):
+        if _MESSY_RE.search(b):
+            clutter = "messy"
+        elif grooming_state == "just-woken" or re.search(r"\bbed\b|\bbedroom\b", b, re.I):
+            clutter = "slept-in"
+        else:
+            clutter = "lived-in"
+        notes.append(f"clutter={clutter} inferred from the brief")
+
+    return holder, flaws, optics, grooming_state, clutter, notes
 
 
 # A shot has no framing picker — the brief carries it in words. This reads them
@@ -4428,6 +4447,9 @@ class ShotReq(BaseModel):
     allow_crowd: bool = False        # let other people into a solo shot. Inferred
                                      # from the brief when it names them; see
                                      # _WANTS_PEOPLE for why the default suppresses
+    clutter: str = ""                # "" | lived-in | slept-in | used | messy.
+                                     # What is lying around TODAY — never the room
+                                     # itself, which the corner reference owns
     optics: str = ""                 # "" | phone-deep | phone-front | portrait
     exposure: str = ""               # "" | blown-window | dark-face | phone-hdr | low-light
     grooming_state: str = ""         # "" | just-woken | end-of-day | unmaintained |
@@ -4692,9 +4714,9 @@ def shot(req: ShotReq):
     capture_text = promptlib.capture_clause(_parts) if phone_register else ""
     # Who held the camera and how imperfect the frame is — inferred from the brief
     # when the caller left them blank. Recorded in `demoted` so the run says so.
-    holder_id, flaws_id, optics_id, groom_id, _inferred = _infer_capture(
+    holder_id, flaws_id, optics_id, groom_id, clutter_id, _inferred = _infer_capture(
         req.brief, req.pose_id, req.camera_holder, req.flaws,
-        req.optics, req.grooming_state, req.shot_type)
+        req.optics, req.grooming_state, req.shot_type, req.clutter)
     demoted.extend(_inferred)
     # POV is a specific faceless first-person framing that a generic AI prompt (which
     # references @image1 and describes her posing) would fight — so POV always uses
@@ -4951,6 +4973,7 @@ def shot(req: ShotReq):
     tail = ""
     for _txt in promptlib.late_clauses(
             optics=optics_id, exposure=req.exposure, grooming_state=groom_id,
+            clutter=clutter_id,
             wet=_is_wet_pose(req.pose_id, req.brief),
             suppress_crowd=suppress_crowd,
             subjects=len(cast) + 1 if cast else 1):
@@ -5080,7 +5103,7 @@ def shot(req: ShotReq):
                   "ref_demoted": demoted, "when": tl_facts,
                   "camera_holder": holder_id, "flaws": flaws_id,
                   "optics": optics_id, "exposure": req.exposure,
-                  "grooming_state": groom_id,
+                  "grooming_state": groom_id, "clutter": clutter_id,
                   # Recorded because it changes what the gate's number MEANS: a
                   # frame with other people in it is scored as a max over faces.
                   "allow_crowd": _wants_people(req.brief, req.allow_crowd),
@@ -5213,6 +5236,7 @@ class SceneReq(BaseModel):
     optics: str = ""
     exposure: str = ""
     grooming_state: str = ""
+    clutter: str = ""
     prompt_override: str | None = None     # a written prompt used VERBATIM in
                                            # place of everything assembled here —
                                            # same contract as ShotReq.prompt
@@ -5622,7 +5646,7 @@ def _build_scene(req: "SceneReq") -> dict:
     # pose for a cast member.
     parts.extend(promptlib.late_clauses(
         optics=req.optics, exposure=req.exposure,
-        grooming_state=req.grooming_state,
+        grooming_state=req.grooming_state, clutter=req.clutter,
         wet=_is_wet_pose(None, req.prompt or ""),
         subjects=max(1, len(cast))))
 

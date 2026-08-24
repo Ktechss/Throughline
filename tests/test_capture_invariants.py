@@ -85,7 +85,7 @@ def test_wake_up_brief_infers_every_axis():
     picked."""
     brief = ("she just woke up yawning she still in her bed took her phone and "
              "captured imperfect selfie to post it to instagram.")
-    holder, flaws, optics, groom, notes = _infer_capture(brief, None, "", "")
+    holder, flaws, optics, groom, clutter, notes = _infer_capture(brief, None, "", "")
     assert holder == "selfie"
     assert flaws == "subtle"
     assert optics == "phone-front"
@@ -95,21 +95,22 @@ def test_wake_up_brief_infers_every_axis():
 
 def test_explicit_values_always_win():
     brief = "imperfect selfie"
-    holder, flaws, optics, groom, _ = _infer_capture(
-        brief, None, "friend", "snapshot", "portrait", "end-of-day")
-    assert (holder, flaws, optics, groom) == (
-        "friend", "snapshot", "portrait", "end-of-day")
+    holder, flaws, optics, groom, clutter, _ = _infer_capture(
+        brief, None, "friend", "snapshot", "portrait", "end-of-day",
+        clutter="messy")
+    assert (holder, flaws, optics, groom, clutter) == (
+        "friend", "snapshot", "portrait", "end-of-day", "messy")
 
 
 def test_a_studio_brief_keeps_its_professional_optics():
     """The phone default must not overrule a brief that asked for a studio."""
-    _, _, optics, _, _ = _infer_capture(
+    _, _, optics, *_ = _infer_capture(
         "photo shoot in the studio, dark and light room effect", None, "", "")
     assert optics == "", "a studio brief must not be forced onto phone optics"
 
 
 def test_editorial_register_also_stands_down():
-    _, _, optics, _, _ = _infer_capture(
+    _, _, optics, *_ = _infer_capture(
         "on a rooftop at dusk", None, "", "", shot_type="editorial")
     assert optics == ""
 
@@ -384,3 +385,22 @@ def test_capture_distance_is_none_without_a_band():
                           shadow_noise=2.8, clip_pct=1.1)
     if not capture.load_band():
         assert capture.distance(cap) is None
+
+
+def test_clutter_is_the_days_mess_not_the_room():
+    """The setting clause says "reproduce that same place faithfully". A clutter
+    line that described furniture would fight it and lose, so every entry adds
+    only what someone PUT DOWN and says the room is unchanged."""
+    for k, v in promptlib.CLUTTER.items():
+        if not k:
+            continue
+        assert "exactly as the reference shows it" in v["text"], k
+
+
+def test_clutter_infers_indoors_only():
+    """A line about things someone put down means nothing on a street."""
+    from backend.main import _infer_capture
+    *_, indoors, _ = _infer_capture("she just woke up in her bed", None, "", "")
+    *_, outdoors, _ = _infer_capture("walking through the night market", None, "", "")
+    assert indoors == "slept-in"
+    assert outdoors == ""

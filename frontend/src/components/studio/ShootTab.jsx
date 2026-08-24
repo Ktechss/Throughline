@@ -18,6 +18,7 @@ export default function ShootTab({
   aspect, setAspect, shotLib,
   holder, setHolder, flaws, setFlaws, optics, setOptics,
   exposure, setExposure, groomingState, setGroomingState,
+  clutter, setClutter,
   safety, setSafety, refBudget, setRefBudget,
   useTimeline, setUseTimeline, shotDate, setShotDate,
   model, setModel,
@@ -119,7 +120,7 @@ export default function ShootTab({
               "imperfect", "just woke up" and so on, and whatever it decides is
               reported back in the preview below. Choosing here overrides it. */}
           {shotLib && !pov && (
-            <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+            <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-2">
               <Picker label="Camera" flat={shotLib.camera_holders?.filter((o) => o.id)}
                 value={holder} onChange={setHolder} empty="from brief"
                 hint={holder ? undefined : "auto"} />
@@ -131,6 +132,11 @@ export default function ShootTab({
                 value={exposure} onChange={setExposure} empty="clean" />
               <Picker label="Her state" flat={shotLib.grooming_state?.filter((o) => o.id)}
                 value={groomingState} onChange={setGroomingState} empty="from brief" />
+              {/* What is lying around TODAY. Never the room — the corner
+                  reference owns that, and a clutter line describing furniture
+                  would fight "reproduce that same place faithfully". */}
+              <Picker label="Clutter" flat={shotLib.clutter?.filter((o) => o.id)}
+                value={clutter} onChange={setClutter} empty="from brief" />
               <Picker label="Frame size" flat={shotLib.aspects}
                 value={aspect} onChange={setAspect} empty="3:4" />
             </div>
