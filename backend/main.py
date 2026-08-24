@@ -4404,6 +4404,18 @@ class ShotReq(BaseModel):
                                      # model the words "yellow nails" and dropped the
                                      # manicure entirely. Opt in per shot when identity
                                      # matters more than the extras.
+    # fal's own moderation dial, 1 strictest to 6 least strict, default 4.
+    # 11b4f1a chose per-request over a raised global default — "a quiet
+    # platform-wide loosening is not a decision that belongs in a config
+    # constant where nobody sees it" — and then no per-request control was ever
+    # built, so every shot in the first 613 runs went out on a default nobody
+    # picked. The field was added to wardrobe and scene and missed here, despite
+    # that commit saying it "does apply to shots".
+    #
+    # ⚠ It governs OUTPUT moderation. A prompt-level refusal (loc: ["body",
+    # "prompt"]) is a provider policy boundary and raising this changes nothing —
+    # see the wardrobe request for the measured case.
+    safety_tolerance: str | None = None
     date: str | None = None          # ISO date this shot happens on. None = today
     use_timeline: bool = False       # OFF by default: appending season/manicure text to
                                      # every shot changes output nobody asked to change.
@@ -5013,6 +5025,7 @@ def shot(req: ShotReq):
             # than dead-spinning to a failure.
             fallback_endpoint=SCENE_EDIT,
             resolution=req.resolution, model=req.model,
+            safety_tolerance=req.safety_tolerance,
             meta={"brief": req.brief, "bio_references": [p.name for p in refs],
                   # Present ONLY on a collaboration. generate() branches the gate
                   # on it, and the guest's review finds her shots by it.

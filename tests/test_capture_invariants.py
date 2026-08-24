@@ -282,3 +282,34 @@ def test_the_tail_lives_in_one_place():
     src = pathlib.Path("backend/main.py").read_text()
     for gone in ("_WET_HAIR = (", "_NO_CROWD = ("):
         assert gone not in src, f"{gone} is back in main.py — use promptlib"
+
+
+# ── the three opt-ins ────────────────────────────────────────────────────────
+
+def test_shot_accepts_all_three_opt_ins():
+    """Each was made per-request by a commit that argued the case, then given
+    nothing to opt in with. safety_tolerance was never even added to ShotReq,
+    despite 11b4f1a saying it "does apply to shots"."""
+    from backend.main import ShotReq
+    r = ShotReq(brief="x", safety_tolerance="6", ref_budget=True, use_timeline=True)
+    assert r.safety_tolerance == "6"
+    assert r.ref_budget is True
+    assert r.use_timeline is True
+
+
+def test_the_opt_ins_still_default_off():
+    """Off is the right default for all three — the commits argued that and were
+    right. The bug was never having a way to turn them on."""
+    from backend.main import ShotReq
+    r = ShotReq(brief="x")
+    assert r.safety_tolerance is None
+    assert r.ref_budget is False
+    assert r.use_timeline is False
+
+
+def test_scene_accepts_the_tail_axes():
+    from backend.main import SceneReq
+    r = SceneReq(prompt="@kiara at a cafe", optics="phone-deep",
+                 exposure="low-light", grooming_state="end-of-day")
+    assert (r.optics, r.exposure, r.grooming_state) == (
+        "phone-deep", "low-light", "end-of-day")

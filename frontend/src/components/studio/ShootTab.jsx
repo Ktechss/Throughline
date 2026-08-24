@@ -18,6 +18,8 @@ export default function ShootTab({
   aspect, setAspect, shotLib,
   holder, setHolder, flaws, setFlaws, optics, setOptics,
   exposure, setExposure, groomingState, setGroomingState,
+  safety, setSafety, refBudget, setRefBudget,
+  useTimeline, setUseTimeline, shotDate, setShotDate,
   model, setModel,
   withChar, setWithChar, castable = [],
   selectedOutfit, setSelectedOutfit, selectedPose, setSelectedPose,
@@ -131,6 +133,55 @@ export default function ShootTab({
                 value={groomingState} onChange={setGroomingState} empty="from brief" />
               <Picker label="Frame size" flat={shotLib.aspects}
                 value={aspect} onChange={setAspect} empty="3:4" />
+            </div>
+          )}
+          {/* THE THREE OPT-INS.
+              Each one was made deliberately per-request by a commit that argued
+              the case — "a quiet platform-wide loosening is not a decision that
+              belongs in a config constant where nobody sees it" — and then never
+              given a control. Across the first 613 runs all three sat at their
+              default, so the reasoning was correct and the effect was zero. */}
+          {!pov && (
+            <div className="mt-3 flex flex-wrap items-end gap-x-5 gap-y-3">
+              <label className="block">
+                <span className="text-[10px] text-zinc-500">Moderation</span>
+                <select value={safety || ""} onChange={(e) => setSafety(e.target.value)}
+                  title="fal's own dial. 1 strictest, 6 least strict. Blank uses the provider default (4). Governs OUTPUT moderation — a prompt-level refusal is a policy boundary and this will not move it."
+                  className="mt-1 w-[132px] rounded-lg bg-white/5 ring-1 ring-white/10 px-2.5 py-1.5 text-[12px] outline-none focus:ring-white/30 text-zinc-200">
+                  <option value="">default (4)</option>
+                  {[1, 2, 3, 4, 5, 6].map((n) => (
+                    <option key={n} value={String(n)}>
+                      {n}{n === 1 ? " — strictest" : n === 6 ? " — loosest" : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <button type="button" onClick={() => setRefBudget(!refBudget)}
+                title="Hold this shot to 2 reference images. Buys ~0.04 similarity and costs the nail / pose / place reference IMAGES — each demoted to its description, and most nails have none. Opt in when identity matters more than the extras."
+                className="flex items-center gap-2 text-[12px] text-zinc-400 hover:text-zinc-200">
+                <span className={cn("relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors", refBudget ? "bg-sky-500/80" : "bg-white/10")}>
+                  <span className={cn("absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform", refBudget ? "translate-x-4" : "translate-x-0")} />
+                </span>
+                Prioritise identity
+              </button>
+
+              <button type="button" onClick={() => setUseTimeline(!useTimeline)}
+                title="Let the date show: season light, and a manicure at the right point in its ~2.5 week cycle. Works with no eras set — season and nails come from the date alone."
+                className="flex items-center gap-2 text-[12px] text-zinc-400 hover:text-zinc-200">
+                <span className={cn("relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors", useTimeline ? "bg-emerald-500/80" : "bg-white/10")}>
+                  <span className={cn("absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform", useTimeline ? "translate-x-4" : "translate-x-0")} />
+                </span>
+                Apply the calendar
+              </button>
+
+              {useTimeline && (
+                <label className="block">
+                  <span className="text-[10px] text-zinc-500">Shot date</span>
+                  <input type="date" value={shotDate || ""} onChange={(e) => setShotDate(e.target.value)}
+                    className="mt-1 rounded-lg bg-white/5 ring-1 ring-white/10 px-2.5 py-1.5 text-[12px] outline-none focus:ring-white/30 text-zinc-200" />
+                </label>
+              )}
             </div>
           )}
           {pov && <p className="mt-2 text-[11px] text-emerald-300/80">POV mode: no face — describe the product / what's in her hand in the brief. Pick a manicure for best hand consistency. The AI prompt is ignored in POV; identity gate is N/A.</p>}

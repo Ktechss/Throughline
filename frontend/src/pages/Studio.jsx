@@ -191,6 +191,10 @@ export default function Studio() {
                 optics={s.optics} setOptics={s.setOptics}
                 exposure={s.exposure} setExposure={s.setExposure}
                 groomingState={s.groomingState} setGroomingState={s.setGroomingState}
+                safety={s.safety} setSafety={s.setSafety}
+                refBudget={s.refBudget} setRefBudget={s.setRefBudget}
+                useTimeline={s.useTimeline} setUseTimeline={s.setUseTimeline}
+                shotDate={s.shotDate} setShotDate={s.setShotDate}
                 faceAcc={s.faceAcc} setFaceAcc={s.setFaceAcc}
                 pov={s.pov} setPov={s.setPov}
                 bodyRef={s.bodyRef} setBodyRef={s.setBodyRef}

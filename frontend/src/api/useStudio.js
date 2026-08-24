@@ -38,6 +38,13 @@ export function useStudio(charParam) {
   const [exposure, setExposure] = useState("");
   const [groomingState, setGroomingState] = useState("");
   const [shotLib, setShotLib] = useState(null);
+  // THE THREE OPT-INS. Each was made deliberately per-request by a commit that
+  // argued the case well, and then given nothing to opt in with — so all three
+  // sat at their default across the first 613 runs.
+  const [safety, setSafety] = useState("");       // fal moderation dial, 1-6
+  const [refBudget, setRefBudget] = useState(false);
+  const [useTimeline, setUseTimeline] = useState(false);
+  const [shotDate, setShotDate] = useState("");   // ISO; blank = today
   const [faceAcc, setFaceAcc] = useState(true);
   const [pov, setPov] = useState(false);   // faceless first-person POV product/lifestyle shot
   // Attach her pinned body reference as a THIRD image, even when an outfit
@@ -199,6 +206,10 @@ export function useStudio(charParam) {
     pov, shot_type: pov ? "pov" : "candid",
     camera_holder: holder, flaws, optics, exposure,
     grooming_state: groomingState,
+    safety_tolerance: safety || null,
+    ref_budget: refBudget,
+    use_timeline: useTimeline,
+    date: shotDate || null,
     with_character: withChar?.id || null,
     model,
   });
@@ -217,7 +228,8 @@ export function useStudio(charParam) {
     // is recreated every render and would retrigger this on every keystroke.
   }, [brief, aiPrompt, selectedOutfit?.id, selectedPose?.id, selectedNail?.id,
       resolution, aspect, faceAcc, bodyRef, pov, withChar?.id, bio?.reference,
-      holder, flaws, optics, exposure, groomingState]);
+      holder, flaws, optics, exposure, groomingState,
+      safety, refBudget, useTimeline, shotDate]);
 
   const onGenerate = async () => {
     if (!bio?.reference) { setErr("No identity reference yet — calibrate her first."); return; }
@@ -602,6 +614,8 @@ export function useStudio(charParam) {
     aspect, setAspect, shotLib,
     holder, setHolder, flaws, setFlaws, optics, setOptics,
     exposure, setExposure, groomingState, setGroomingState,
+    safety, setSafety, refBudget, setRefBudget,
+    useTimeline, setUseTimeline, shotDate, setShotDate,
     faceAcc, setFaceAcc, pov, setPov, selectedOutfit, setSelectedOutfit, selectedPose, setSelectedPose,
     selectedNail, setSelectedNail, nails, saveNail, deleteNail, updateNail, bulkDeleteNails,
     home, homeBusy, saveHome, uploadCorner, generateCorner, deleteCorner,

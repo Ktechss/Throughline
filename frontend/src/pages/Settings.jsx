@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { api } from "@/api/throughline";
-import { ArrowUp, ArrowDown, Loader2, AlertTriangle } from "lucide-react";
+import { ArrowUp, ArrowDown, Loader2, AlertTriangle, Plus, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useModels } from "@/components/ModelPicker";
 
@@ -26,6 +26,26 @@ export default function Settings() {
   const [credits, setCredits] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
+  // Eras. The backend has had GET/PUT /api/timeline since the timeline shipped
+  // and nothing ever called them, so every character's era list is [] — which is
+  // why `use_timeline` produced season and manicure but never a haircut.
+  const [tl, setTl] = useState(null);
+  const [eraBusy, setEraBusy] = useState(false);
+
+  const loadTl = () => api.get("/api/timeline").then(setTl).catch(() => {});
+  useEffect(() => { loadTl(); }, []);
+
+  const saveEras = async (eras) => {
+    setTl((t) => ({ ...(t || {}), eras }));       // optimistic
+    setEraBusy(true); setErr(null);
+    try { await api.send("/api/timeline", "PUT", { eras }); await loadTl(); }
+    catch (e) { setErr(String(e)); await loadTl(); }
+    finally { setEraBusy(false); }
+  };
+
+  const eras = tl?.eras || [];
+  const patchEra = (i, k, v) =>
+    saveEras(eras.map((e, j) => (j === i ? { ...e, [k]: v } : e)));
 
   const load = () =>
     api.get("/api/providers")
@@ -76,6 +96,92 @@ export default function Settings() {
           {err}
         </div>
       )}
+
+      {/* ERAS — the calendar's slow axis.
+          Season and manicure fall out of the date on their own; an era is the
+          part that needs a human, because it says she got a haircut. The API has
+          existed since the timeline shipped and nothing called it, so every
+          character's list is empty and "Apply the calendar" has never been able
+          to age her hair. */}
+      <section className="mb-9">
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-[13px] font-semibold text-zinc-300">Eras</h2>
+          {eraBusy && <Loader2 className="h-3.5 w-3.5 animate-spin text-zinc-500" />}
+        </div>
+        <p className="text-[11px] text-zinc-500 mb-3 leading-relaxed">
+          Hair moves in slow steps, and continuity across them is what makes two
+          photographs six months apart read as one person living rather than two
+          attempts at the same prompt. An era starts on its date and runs until
+          the next one.
+          {tl?.preview && (
+            <><br /><span className="text-zinc-600">Today: {tl.preview}</span></>
+          )}
+        </p>
+
+        <div className="space-y-2">
+          {eras.map((e, i) => (
+            <div key={i} className="rounded-xl bg-white/[0.03] ring-1 ring-white/10 p-3">
+              <div className="flex flex-wrap items-end gap-3">
+                <label className="block">
+                  <span className="text-[10px] text-zinc-500">From</span>
+                  <input type="date" value={e.from || ""}
+                    onChange={(ev) => patchEra(i, "from", ev.target.value)}
+                    className="mt-1 block rounded-lg bg-white/5 ring-1 ring-white/10 px-2.5 py-1.5 text-[12px] outline-none focus:ring-white/30 text-zinc-200" />
+                </label>
+                <label className="block flex-1 min-w-[10rem]">
+                  <span className="text-[10px] text-zinc-500">Name</span>
+                  <input value={e.name || ""} placeholder="long hair, pre-monsoon"
+                    onChange={(ev) => patchEra(i, "name", ev.target.value)}
+                    className="mt-1 block w-full rounded-lg bg-white/5 ring-1 ring-white/10 px-2.5 py-1.5 text-[12px] outline-none focus:ring-white/30 text-zinc-200 placeholder:text-zinc-600" />
+                </label>
+                <button onClick={() => saveEras(eras.filter((_, j) => j !== i))}
+                  title="Remove this era"
+                  className="p-1.5 rounded-lg text-zinc-500 hover:text-rose-300 hover:bg-white/5">
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+
+              <label className="block mt-2">
+                <span className="text-[10px] text-zinc-500">Hair</span>
+                <input value={e.hair || ""} placeholder="cut to the collarbone, blunt ends"
+                  onChange={(ev) => patchEra(i, "hair", ev.target.value)}
+                  className="mt-1 block w-full rounded-lg bg-white/5 ring-1 ring-white/10 px-2.5 py-1.5 text-[12px] outline-none focus:ring-white/30 text-zinc-200 placeholder:text-zinc-600" />
+              </label>
+
+              {/* Off by default and deliberately so: an era's hair line DESCRIBES
+                  her, which is the one thing the pipeline otherwise refuses to do
+                  over a reference (0.834 described vs 0.860 terse). Overriding the
+                  reference is the whole point when she has had a haircut the
+                  reference predates — but it is a decision with a measured cost,
+                  never a default. */}
+              <button onClick={() => patchEra(i, "apply_hair", !e.apply_hair)}
+                disabled={!(e.hair || "").trim()}
+                title="Let this era's hair line override the reference. It describes her, which costs identity (0.834 vs 0.860 measured) — turn on only when she has had a haircut the reference predates."
+                className={cn("mt-2 flex items-center gap-2 text-[11px]",
+                  (e.hair || "").trim() ? "text-zinc-400 hover:text-zinc-200" : "text-zinc-600 cursor-not-allowed")}>
+                <span className={cn("relative inline-flex h-4 w-8 shrink-0 rounded-full transition-colors",
+                  e.apply_hair ? "bg-amber-500/80" : "bg-white/10")}>
+                  <span className={cn("absolute top-0.5 left-0.5 h-3 w-3 rounded-full bg-white transition-transform",
+                    e.apply_hair ? "translate-x-4" : "translate-x-0")} />
+                </span>
+                Override the reference&rsquo;s hair &middot; costs ~0.03 identity
+              </button>
+            </div>
+          ))}
+        </div>
+
+        <button
+          onClick={() => saveEras([...eras, { from: new Date().toISOString().slice(0, 10), name: "" }])}
+          className="mt-3 inline-flex items-center gap-1.5 rounded-lg ring-1 ring-white/10 px-3 py-1.5 text-[12px] text-zinc-300 hover:ring-white/30">
+          <Plus className="h-3.5 w-3.5" /> Add an era
+        </button>
+        {!eras.length && (
+          <p className="mt-2 text-[11px] text-zinc-600">
+            No eras yet. Season and manicure still apply from the date alone &mdash;
+            an era only adds the haircut.
+          </p>
+        )}
+      </section>
 
       <section className="mb-9">
         <h2 className="text-[13px] font-semibold text-zinc-300 mb-2">Default model</h2>

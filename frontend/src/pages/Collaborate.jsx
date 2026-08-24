@@ -51,6 +51,8 @@ export default function Collaborate() {
   // server-side default alone made a crowd unaskable from the UI, and "blurred
   // crowd behind us" is a legitimate thing to want from a nightclub selfie.
   const [allowCrowd, setAllowCrowd] = useState(false);
+  const [safety, setSafety] = useState("");   // fal moderation dial, 1-6
+
   const [seed, setSeed] = useState("");
   const [modes, setModes] = useState({});
   const [draft, setDraft] = useState("");        // AI-written, editable
@@ -91,6 +93,7 @@ export default function Collaborate() {
     prompt, place, activity, interaction, holder, flaws, shot_type: shotType,
     framing, aspect, resolution, lighting, time_of_day: timeOfDay, weather, season,
     face_accessories: faceAcc, allow_crowd: allowCrowd,
+    safety_tolerance: safety || null,
     seed: seed === "" ? null : Number(seed),
     prompt_override: draft.trim() || null,
     wardrobe: pick(members, "outfit"), nails: pick(members, "nail"),
@@ -101,7 +104,7 @@ export default function Collaborate() {
     as_image: Object.fromEntries(Object.entries(modes).map(([k, v]) => [k, v !== "text"])),
     model,
   }), [prompt, place, activity, interaction, holder, flaws, shotType, framing, aspect,
-       resolution, lighting, timeOfDay, weather, season, faceAcc, allowCrowd, seed, draft, members, modes, model]);
+       resolution, lighting, timeOfDay, weather, season, faceAcc, allowCrowd, safety, seed, draft, members, modes, model]);
 
   // The right column renders what the SERVER will actually do, not a guess.
   useEffect(() => {
@@ -304,6 +307,15 @@ export default function Collaborate() {
                 <Picker label="Season" flat={lib.season} value={season} onChange={setSeason} />
                 <Picker label="Camera" flat={lib.holders.map((h) => ({ id: h.id, label: h.label }))}
                   value={holder} onChange={setHolder} empty="unspecified" />
+                {/* fal's own dial. Per-request by design (11b4f1a) and never
+                    given a control until now — every scene shipped on the
+                    provider default. */}
+                <Picker label="Moderation" value={safety} onChange={setSafety}
+                  empty="default (4)"
+                  flat={[1, 2, 3, 4, 5, 6].map((n) => ({
+                    id: String(n),
+                    label: `${n}${n === 1 ? " — strictest" : n === 6 ? " — loosest" : ""}`,
+                  }))} />
                 <Picker label="Imperfection" flat={lib.flaws.map((f) => ({ id: f.id, label: f.label }))}
                   value={flaws} onChange={setFlaws} empty="clean" />
               </div>
