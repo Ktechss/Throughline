@@ -48,7 +48,6 @@ frontal images score high — so a broken pose control looks like success.
 |---|---|
 | `FINDINGS.md` | **Read first.** Measurements carried over; raw data gone |
 | `backend/prompt.py` | The part tree + `compose()`. Every prompt fragment is editable data, not code |
-| `backend/skeleton.py` | OpenPose-18 rig + renderer. The rendered PNG *is* the reference image |
 | `backend/gate.py` | ArcFace. Gallery, abstain floor, calibration |
 | `backend/generate.py` | fal calls + run bookkeeping. Every run records its exact prompt |
 | `backend/main.py` | FastAPI |
@@ -81,11 +80,6 @@ one links `libGL`, absent on a GUI-less server).
 
 ## Open questions
 
-- **Does the pose image actually work?** The skeleton is passed to
-  nano-banana as an ordinary reference and the model is *asked* to match it.
-  That is suggestion, not conditioning. Verify by reading back **yaw**, never
-  similarity. If it's too weak, the same renderer feeds a real ControlNet
-  endpoint unchanged.
 - **How does she hold up off-frontal and full-body?** Every generator row in
   `FINDINGS.md` is a frontal studio close-up. The two places both previous
   generators collapsed are still untested here.

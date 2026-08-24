@@ -27,7 +27,7 @@ from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
 from . import (config, db, describe, gate, generate, prompt as promptlib, prompter,
-               skeleton, timeline)
+               timeline)
 from . import framing_data, getup_data, lighting_data
 from . import providers
 from .interactions_data import INTERACTIONS
@@ -35,7 +35,7 @@ from .scenes_data import MOMENTS
 from .config import (ARCHIVE_FORMAT, ARCHIVE_QUALITY, BODIES, BODIES_META,
                      CHARACTERS, CharPath, EDIT, GOLD, HOME_PATH,
                      IMAGES, NAILS, PLACES, POSE_REFS,
-                     POSES, REF_BUDGET, REFS, RESOLUTION, ROOT, SCENE_EDIT,
+                     REF_BUDGET, REFS, RESOLUTION, ROOT, SCENE_EDIT,
                      SCENE_TEXT2IMG, TEXT2IMG, TIMELINE_PATH, WARDROBE)
 
 @asynccontextmanager
@@ -622,9 +622,8 @@ def _master_face_prompt(parts: list[promptlib.Part], inspired: bool,
     fixed: presentation, realism, and what to avoid.
     """
     kept = [p for p in parts if p.identity or p.id in _MASTER_FACE_KEEP]
-    # Composed WITHOUT pose_note: with the pose parts dropped there is no pose
-    # section left for compose() to attach it to, so the presentation rides as
-    # its own block below — where it is the only voice on framing anyway.
+    # The pose parts are dropped by _MASTER_FACE_KEEP, so the presentation
+    # rides as its own block below — where it is the only voice on framing.
     face = promptlib.compose(kept, has_reference=False)
     blocks = [_INSPIRATION_CLAUSE] if inspired else []
     blocks += [
@@ -1350,152 +1349,6 @@ def reset_parts():
     parts = promptlib.default_parts()
     _save_parts(parts)
     return {"parts": [p.dict() for p in parts]}
-
-
-# ---------------------------------------------------------------- compose
-
-class ComposeReq(BaseModel):
-    has_reference: bool = False
-    pose_name: str | None = None
-
-
-@app.post("/api/compose")
-def compose(req: ComposeReq):
-    """The final whole-body prompt, exactly as it will be sent."""
-    parts = _load_parts()
-    pose_note = ""
-    if req.pose_name:
-        p = _load_pose(req.pose_name)
-        pose_note = skeleton.describe(p)
-    text = promptlib.compose(parts, has_reference=req.has_reference,
-                             pose_note=pose_note)
-    return {
-        "prompt": text,
-        "system": promptlib.SYSTEM,
-        "lint": promptlib.lint(parts, has_reference=req.has_reference),
-        "chars": len(text),
-        "dropped": [p.id for p in parts
-                    if p.enabled and p.identity and req.has_reference],
-    }
-
-
-# ---------------------------------------------------------------- poses
-
-def _pose_path(name: str) -> Path:
-    safe = "".join(c for c in name if c.isalnum() or c in "-_")
-    if not safe:
-        raise HTTPException(400, "bad pose name")
-    return POSES / f"{safe}.json"
-
-
-def _load_pose(name: str) -> skeleton.Pose:
-    p = _pose_path(name)
-    if not p.exists():
-        return skeleton.default_pose(name)
-    return skeleton.Pose.from_json(json.loads(p.read_text()))
-
-
-@app.get("/api/poses")
-def list_poses():
-    return {"poses": sorted(p.stem for p in POSES.glob("*.json"))}
-
-
-@app.get("/api/poses/{name}")
-def get_pose(name: str):
-    return _load_pose(name).to_json()
-
-
-@app.put("/api/poses/{name}")
-def put_pose(name: str, payload: dict = Body(...)):
-    pose = skeleton.Pose.from_json(payload)
-    pose.name = name
-    _pose_path(name).write_text(json.dumps(pose.to_json(), indent=2) + "\n")
-    return pose.to_json()
-
-
-@app.delete("/api/poses/{name}")
-def delete_pose(name: str):
-    _pose_path(name).unlink(missing_ok=True)
-    return {"ok": True}
-
-
-@app.get("/api/poses/{name}/preview.png")
-def pose_preview(name: str):
-    """The exact image handed to the model — not an approximation of it."""
-    return Response(content=skeleton.render_bytes(_load_pose(name)),
-                    media_type="image/png")
-
-
-@app.get("/api/skeleton/default")
-def skeleton_default():
-    return {"pose": skeleton.default_pose().to_json(),
-            "names": skeleton.NAMES,
-            "limbs": [[a, b, list(c)] for a, b, c in skeleton.LIMBS]}
-
-
-# ---------------------------------------------------------------- generate
-
-class GenReq(BaseModel):
-    aspect: str = "4:5"
-    seed: int | None = None
-    pose_name: str | None = None
-    use_pose_image: bool = False
-    refs: list[str] = []          # filenames under data/images, or absolute
-    note: str = ""
-    # Which kie model renders this. None uses the project default
-    # (providers.load_model). Per-request so the wardrobe can be made on
-    # one model and the shot on another without changing the default.
-    model: str | None = None
-
-
-def _resolve_ref(name: str) -> Path:
-    """A reference may be an imported identity ref or a previous generation."""
-    p = Path(name)
-    if p.is_absolute() and p.exists():
-        return p
-    for base in (REFS, IMAGES):
-        q = base / Path(name).name
-        if q.exists():
-            return q
-    raise HTTPException(400, f"no such reference: {name}")
-
-
-@app.post("/api/generate")
-def do_generate(req: GenReq):
-    parts = _load_parts()
-    refs = [_resolve_ref(r) for r in req.refs]
-    has_ref = bool(refs)
-    # One trigger, one session — even though this endpoint makes a single image
-    # today. When it fans out (a re-roll loop, a model bakeoff), the grouping is
-    # already correct rather than needing to be retrofitted.
-    session = generate.new_session(
-        req.note or ", ".join(Path(r).stem for r in req.refs) or "no reference")
-
-    pose_file = None
-    pose_note = ""
-    if req.pose_name:
-        pose = _load_pose(req.pose_name)
-        pose_note = skeleton.describe(pose)
-        if req.use_pose_image:
-            pose_file = POSES / f"{pose.name}.png"
-            skeleton.save(pose, pose_file)
-            # Costs a reference slot. See FINDINGS: three refs scored 0.547 vs
-            # 0.811 for one. Verify by reading back yaw, not similarity.
-            refs.append(pose_file)
-
-    text = promptlib.compose(parts, has_reference=has_ref, pose_note=pose_note)
-    try:
-        row = generate.generate(
-            prompt=text, system=promptlib.SYSTEM, refs=refs,
-            aspect=req.aspect, seed=req.seed, pose_file=pose_file,
-            session=session, character=config.get_active(),
-            model=req.model,
-            meta={"note": req.note, "pose": req.pose_name,
-                  "pose_as_image": req.use_pose_image},
-        )
-    except Exception as exc:  # noqa: BLE001 — surface it in the UI, don't 500
-        raise HTTPException(500, str(exc)[:300]) from exc
-    return row
 
 
 # ---------------------------------------------------------------- runs
@@ -4497,8 +4350,6 @@ class ShotReq(BaseModel):
     brief: str = ""              # the ONLY thing the user writes
     prompt: str | None = None    # AI-written (Claude) prompt, edited by the user;
                                  # used VERBATIM when present instead of the template
-    pose_name: str | None = None
-    use_pose_image: bool = False
     aspect: str = "3:4"
     seed: int | None = None
     with_character: str | None = None   # a COLLABORATION: her face rides as @image2

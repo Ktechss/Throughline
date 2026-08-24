@@ -51,12 +51,30 @@ measurement that says it might cost identity. Measure it before trusting it.
 Same woman, same prompt family. Face size alone moved identity by 0.185. Any
 full-body shot is carrying much weaker identity signal than its number suggests.
 
-**Text pose control does not work on nano-banana-pro/edit.** Asked for a profile,
-got yaw **-1.3°**. Asked for a look-down, got **-0.6°**. Three of four pose
-probes returned frontal. This is the entire reason the skeleton editor exists —
-and the reason it must be verified by *measuring returned yaw*, not by reading a
-similarity score. A pose control that silently does nothing still produces
-high-scoring frontal images.
+**Text pose control did not work on nano-banana-pro/edit — and now does.**
+Originally: asked for a profile, got yaw **-1.3°**; asked for a look-down, got
+**-0.6°**; three of four pose probes returned frontal. That measurement is why
+the OpenPose skeleton editor was built.
+
+Re-measured 2026-08-24 over 213 runs, after the 851-pose text library replaced
+the one-line pose descriptions, grouping by what the pose TEXT asks for:
+
+| pose text asks for | n | median \|yaw\| | over 20° |
+|---|---|---|---|
+| turned away from the lens | 12 | **25.4°** | 67% |
+| eyes on the lens | 5 | **3.1°** | 0% |
+| neither | 196 | 10.5° | 29% |
+
+An 8x separation, across nine distinct poses rather than one repeated;
+`square-shoulders-direct` returns 1.0° and 1.6°, `seated-knee-clasp` 60.6°.
+Small n, so strong rather than settled — but the library fixed what the rig was
+built for, and the rig was deleted on the strength of it (see `git log` for
+`backend/skeleton.py`).
+
+The method survives the verdict and matters more than it: **a pose control is
+verified by measuring returned yaw, never by reading a similarity score.** A
+pose control that silently does nothing still produces high-scoring frontal
+images, which is exactly what makes it invisible.
 
 **Never read a similarity score before checking the yaw it came back at.** The
 two findings above combine into a trap: a model that ignores your pose request

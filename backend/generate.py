@@ -259,7 +259,7 @@ DOWNLOAD_TIMEOUT = 240   # total seconds for the result image download. 4K resul
 
 def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
              aspect: str = "4:5", seed: int | None = None,
-             pose_file: Path | None = None, meta: dict | None = None,
+             meta: dict | None = None,
              session: dict | None = None, endpoint: str | None = None,
              extra: dict | None = None, progress: dict | None = None,
              fallback_endpoint: str | None = None,
@@ -530,7 +530,7 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
             "model": (r or {}).get("model"),
             "moderation_fallback": moderation_fallback, "prompt": prompt,
             "system": system, "refs": [p.name for p in refs],
-            "pose": pose_file.name if pose_file else None, "seed": seed,
+            "seed": seed,
             "aspect": aspect, "resolution": resolution or RESOLUTION,
             "seconds": round(time.time() - t0, 1),
             "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -598,7 +598,6 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
         "prompt": prompt,
         "system": system,
         "refs": [p.name for p in refs],
-        "pose": pose_file.name if pose_file else None,
         "seed": seed,
         "aspect": aspect,
         "resolution": resolution or RESOLUTION,
@@ -805,7 +804,7 @@ def generate_video(*, still: Path, prompt: str, model: str | None = None,
 
     # The motion prompt gets the SAME sanitiser as a shot prompt. It did not
     # before, which left a hole exactly where one was least expected: the still
-    # path neutralises "sensual/seductive/cleavage" upstream in compose_shot,
+    # path neutralises "sensual/seductive/cleavage" inside compose_tagged,
     # while a clip's prompt is typed (or now AI-written) and went to the provider
     # untouched. Reported on the row, so a rewrite is never silent.
     from . import prompt as promptlib

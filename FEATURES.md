@@ -187,12 +187,3 @@ Opened from any finished shot:
 - Reused wherever a gate result is shown: status (kept / rejected / other /
   ungated), similarity score (struck through on a pose mismatch), signed yaw in
   degrees, and face pixel size.
-
----
-
-## Present but not wired into the UI
-
-- **PoseEditor** (`src/PoseEditor.jsx`) — an interactive OpenPose-18 skeleton rig
-  editor (drag joints, nudge by ±0.01, select, toggle joint visibility, grouped
-  joint list). It is implemented but **not imported anywhere**, so it is not
-  currently reachable in the running app.

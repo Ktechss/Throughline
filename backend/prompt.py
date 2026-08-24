@@ -172,7 +172,8 @@ class Part:
     # UI and attached to EVERY generation. See BIO_SECTIONS.
     bio: bool = False
     # True = a stand-in used only when no brief is given. A brief REPLACES these
-    # rather than arguing with them. See compose_shot.
+    # rather than arguing with them. Read by compose(); compose_tagged takes
+    # the brief directly and never consults a placeholder.
     placeholder: bool = False
     note: str = ""
 
@@ -490,8 +491,7 @@ TITLES = {
 }
 
 
-def compose(parts: list[Part], *, has_reference: bool = False,
-            pose_note: str = "") -> str:
+def compose(parts: list[Part], *, has_reference: bool = False) -> str:
     """Parts -> the final prompt.
 
     `has_reference=True` drops every identity part and substitutes IDENTITY_LOCK.
@@ -510,10 +510,7 @@ def compose(parts: list[Part], *, has_reference: bool = False,
             continue
         title = TITLES.get(section, section.title())
 
-        if section == "pose" and pose_note:
-            body = "; ".join(p.text.strip().rstrip(".") for p in got)
-            body = f"{body}. {pose_note}" if body else pose_note
-        elif section in BLOCK_SECTIONS:
+        if section in BLOCK_SECTIONS:
             body = "\n".join(p.text.strip() for p in got)
         else:
             body = "; ".join(p.text.strip().rstrip(".") for p in got)
@@ -1042,102 +1039,6 @@ def compose_tagged(brief: str, *, pose_text: str = "", has_wardrobe: bool = Fals
         parts_out.append(flaw)
 
     return sanitise(" ".join(parts_out))
-
-
-def compose_shot(parts: list[Part], brief: str, *, has_reference: bool = True,
-                 pose_note: str = "") -> str:
-    """BIO + one shot brief. This is the whole prompting surface.
-
-    The user writes the place, the moment and the pose. Everything about WHO she
-    is comes from the BIO and the reference image, identically every time — so
-    two photos taken a month apart differ only in the ways they were meant to.
-
-    A brief REPLACES the placeholder shot parts rather than joining them.
-    Appending was measured and it fails silently: a prompt carrying both "a
-    plain white studio cyclorama" and "in the stands at a World Cup match" is a
-    contradiction, and the model resolved it by rendering the studio. The result
-    scored 0.857 — the highest of the day — because a frontal studio portrait is
-    the easiest shot for the gate. A confident number for an ignored
-    instruction, which is this project's signature failure.
-
-    Constraints (`placeholder=False`) survive regardless: "no visible brand
-    logos" is not something to retype per shot and not something to lose by
-    forgetting.
-    """
-    return compose_shot_ex(parts, brief, has_reference=has_reference,
-                           pose_note=pose_note)[0]
-
-
-def compose_shot_ex(parts: list[Part], brief: str, *, has_reference: bool = True,
-                    pose_note: str = "") -> tuple[str, list[dict]]:
-    """compose_shot, plus the moderation-sanitiser change list.
-
-    ## Why the brief LEADS when one is given
-
-    The old layout appended the brief as one clause inside a fixed section order,
-    so it landed in the MIDDLE of ~200 words of BIO boilerplate. Two failures
-    measured directly: an instruction-following model (gpt-image-2) weights what
-    comes first, so a buried brief was under-followed; and a standing constraint
-    that sat BEFORE the brief ("No visible brand logos") silently overrode it
-    ("Argentina football jersey"). Both are the brief being discarded.
-
-    So when a brief exists it leads the prompt, and the BIO follows framed as
-    "keep her consistent while doing the above." Placeholder parts (the default
-    scene/wardrobe/pose/light AND the default no-logos guard) drop out entirely —
-    the brief owns everything it touches.
-
-    Sanitisation runs on the final text, catching a trigger from the BIO or the
-    brief. Returns (clean_prompt, changes).
-    """
-    live = [p for p in parts if p.enabled]
-    if has_reference:
-        live = [p for p in live if not p.identity]
-
-    if not brief.strip():
-        # No brief: the structured, placeholder-driven default (seed hunt / base).
-        return sanitise(compose(live, has_reference=has_reference, pose_note=pose_note))
-
-    # Brief present: it leads; defaults it would fight are dropped.
-    live = [p for p in live if not p.placeholder]
-
-    def txt(section: str, sep: str = "; ") -> str:
-        got = [p for p in live if p.section == section]
-        return sep.join(p.text.strip() for p in got)
-
-    shot = brief.strip()
-    if pose_note:
-        shot = f"{shot} {pose_note}"
-
-    blocks = [f"Candid photograph. {shot}"]
-
-    # Identity + why she must not change, then the physical facts to hold steady.
-    lock = IDENTITY_LOCK if has_reference else ""
-    energy = txt("subject")
-    ident = " ".join(s for s in (lock, energy) if s).strip()
-    if ident:
-        blocks.append(ident if ident.endswith(".") else ident + ".")
-
-    build = txt("body")
-    if build:
-        blocks.append(f"Keep her build consistent with the reference: {build}.")
-
-    # Persistent grooming + signature accessories — the same on every shot.
-    groom = "; ".join(s for s in (txt("grooming"), txt("accessories")) if s).strip()
-    if groom:
-        blocks.append(f"Consistent grooming and accessories, the same on every shot: {groom}.")
-
-    skin = txt("skin", sep="\n")
-    if skin:
-        blocks.append("Skin — real photographic detail, no retouching:\n" + skin)
-
-    # Wardrobe here holds only NON-placeholder wardrobe parts (none by default,
-    # since the brief owns the outfit). Realism tail last.
-    tail = " ".join(s for s in (txt("wardrobe", " "), txt("camera", " "),
-                                txt("constraints", "\n")) if s).strip()
-    if tail:
-        blocks.append(tail)
-
-    return sanitise("\n\n".join(blocks))
 
 
 def bio_summary(parts: list[Part], *, has_reference: bool = True) -> dict:

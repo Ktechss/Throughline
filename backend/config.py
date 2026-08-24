@@ -126,7 +126,6 @@ WARDROBE = CharPath("wardrobe")       # outfit reference images (@image2 per sho
 POSE_REFS = CharPath("pose-refs")     # pose reference images of HER (keyword-selected)
 NAILS = CharPath("nails")             # manicure/nail-style reference images (attached @imageN)
 PLACES = CharPath("places")           # location/home reference images (attached @imageN)
-POSES = CharPath("poses")             # saved skeletons
 BODIES = CharPath("bodies")           # saved BODY types (figure references, selectable)
 GOLD = CharPath("gold")               # human-APPROVED shots — the curated LoRA dataset.
                                       # Approvals accumulate HERE, never in the gallery
@@ -171,7 +170,7 @@ TIMELINE_PATH = CharPath("state", "timeline.json")  # her year: {eras: [{from, n
 def ensure_char_dirs(cid: str | None = None) -> None:
     """Create the full folder skeleton for one character (idempotent)."""
     base = char_base(cid)
-    for name in ("images", "refs", "wardrobe", "pose-refs", "poses",
+    for name in ("images", "refs", "wardrobe", "pose-refs",
                  "bodies", "gold", "nails", "places", "state"):
         (base / name).mkdir(parents=True, exist_ok=True)
 
