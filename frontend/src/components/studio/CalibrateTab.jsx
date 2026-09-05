@@ -44,7 +44,7 @@ export default function CalibrateTab({
           return (
             <React.Fragment key={label}>
               <button onClick={() => setStep(n)} className="flex items-center gap-2">
-                <span className={cn("h-7 w-7 rounded-full flex items-center justify-center text-[11px] font-semibold ring-1 transition-all", active ? "bg-white text-black ring-white" : done ? "bg-emerald-500/20 text-emerald-300 ring-emerald-500/40" : "ring-white/10 text-zinc-500")}>
+                <span className={cn("h-7 w-7 rounded-full flex items-center justify-center text-[11px] font-semibold ring-1 transition-all", active ? "bg-white text-black ring-white" : done ? "bg-emerald-500/20 text-emerald-300 ring-emerald-500/40" : "ring-line text-zinc-500")}>
                   {done ? <Check className="h-3.5 w-3.5" /> : n}
                 </span>
                 <span className={cn("text-[12px] font-medium", active ? "text-white" : "text-zinc-500")}>{label}</span>
@@ -65,9 +65,9 @@ export default function CalibrateTab({
             </div>
             <div className="flex items-center gap-3">
               <div className="flex items-center gap-1.5">
-                <button onClick={() => setFaceCount(Math.max(1, faceCount - 1))} className="h-7 w-7 rounded-md ring-1 ring-white/10 text-zinc-300">−</button>
+                <button onClick={() => setFaceCount(Math.max(1, faceCount - 1))} className="h-7 w-7 rounded-md ring-1 ring-line text-zinc-300">−</button>
                 <span className="text-[12px] text-zinc-300 w-6 text-center tabular-nums">{faceCount}</span>
-                <button onClick={() => setFaceCount(Math.min(12, faceCount + 1))} className="h-7 w-7 rounded-md ring-1 ring-white/10 text-zinc-300">+</button>
+                <button onClick={() => setFaceCount(Math.min(12, faceCount + 1))} className="h-7 w-7 rounded-md ring-1 ring-line text-zinc-300">+</button>
               </div>
               <button onClick={generate} disabled={busy} className="rounded-lg bg-white text-black px-4 py-1.5 text-[12px] font-medium hover:bg-zinc-200 disabled:opacity-50 flex items-center gap-1.5">
                 <Loader2 className={cn("h-3.5 w-3.5", busy && "animate-spin")} /> {busy ? "Starting…" : "Generate faces"}
@@ -81,7 +81,7 @@ export default function CalibrateTab({
               ))}
             </div>
           ) : (
-            <div className="rounded-xl ring-1 ring-white/8 bg-white/[0.02] p-8 text-center text-[12px] text-zinc-500">
+            <div className="rounded-xl ring-1 ring-line-subtle bg-surface p-8 text-center text-[12px] text-zinc-500">
               No candidates yet. Set the count and generate faces.
             </div>
           )}
@@ -105,10 +105,10 @@ function SeedStep({ bio, seed, onUploadSeed, onContinue }) {
   const yaw = seed?.yaw;
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      <section className="rounded-2xl ring-1 ring-white/8 bg-white/[0.02] p-5">
+      <section className="rounded-2xl ring-1 ring-line-subtle bg-surface p-5">
         <h3 className="text-[12px] font-semibold text-zinc-300 mb-3">Seed face</h3>
         <div className="flex gap-3">
-          <div className="relative h-40 w-32 rounded-xl overflow-hidden ring-1 ring-white/10 flex-shrink-0 bg-zinc-900">
+          <div className="relative h-40 w-32 rounded-xl overflow-hidden ring-1 ring-line flex-shrink-0 bg-zinc-900">
             {bio?.calib_seed ? (
               <img src={refUrl(bio.calib_seed)} alt="seed" className="h-full w-full object-cover" />
             ) : (
@@ -128,7 +128,7 @@ function SeedStep({ bio, seed, onUploadSeed, onContinue }) {
           <input type="file" accept="image/*" hidden onChange={handleUpload} />
         </label>
       </section>
-      <section className="rounded-2xl ring-1 ring-white/8 bg-white/[0.02] p-5">
+      <section className="rounded-2xl ring-1 ring-line-subtle bg-surface p-5">
         <h3 className="text-[12px] font-semibold text-zinc-300 mb-3">Calibration seed</h3>
         <p className="text-[12px] text-zinc-400 leading-relaxed">
           Every calibration face for <span className="text-zinc-200">{character?.name || "this character"}</span> is generated from this seed. Approve the on-model faces to build the identity fingerprint, then lock the threshold.
@@ -143,12 +143,12 @@ function SeedStep({ bio, seed, onUploadSeed, onContinue }) {
 function FaceCandidate({ cand, onToggle, onSetIdentity }) {
   if (cand.running) {
     return (
-      <div className="rounded-xl overflow-hidden ring-1 ring-white/8">
+      <div className="rounded-xl overflow-hidden ring-1 ring-line-subtle">
         <div className="relative aspect-square bg-zinc-900 flex flex-col items-center justify-center gap-2 text-center px-2">
           <Loader2 className="h-6 w-6 animate-spin text-zinc-400" />
           <span className="text-[10px] text-zinc-400">{cand.stage || "generating…"}</span>
         </div>
-        <div className="px-2 py-1.5 flex items-center justify-between text-[9px] text-zinc-500">
+        <div className="px-2 py-1.5 flex items-center justify-between text-[11px] text-zinc-500">
           <span>{cand.angle}</span>
         </div>
       </div>
@@ -159,16 +159,16 @@ function FaceCandidate({ cand, onToggle, onSetIdentity }) {
       <div className="rounded-xl overflow-hidden ring-1 ring-rose-500/30">
         <div className="relative aspect-square bg-rose-500/5 flex flex-col items-center justify-center gap-1 text-center px-2">
           <span className="text-[11px] text-rose-300">failed</span>
-          <span className="text-[9px] text-rose-400/70 break-words">{cand.error}</span>
+          <span className="text-[11px] text-rose-400/70 break-words">{cand.error}</span>
         </div>
-        <div className="px-2 py-1.5 flex items-center justify-between text-[9px] text-zinc-500">
+        <div className="px-2 py-1.5 flex items-center justify-between text-[11px] text-zinc-500">
           <span>{cand.angle}</span>
         </div>
       </div>
     );
   }
   return (
-    <div className={cn("relative rounded-xl overflow-hidden ring-1 transition-all", cand.sel ? "ring-white" : "ring-white/8 hover:ring-white/20")}>
+    <div className={cn("relative rounded-xl overflow-hidden ring-1 transition-all", cand.sel ? "ring-white" : "ring-line-subtle hover:ring-white/20")}>
       <button onClick={onToggle} className="block w-full text-left">
         <div className="relative aspect-square bg-zinc-900">
           <img src={cand.url} alt="candidate" className="h-full w-full object-cover" />
@@ -178,7 +178,7 @@ function FaceCandidate({ cand, onToggle, onSetIdentity }) {
       <button onClick={onSetIdentity} title="Use as identity ★" className="absolute top-1.5 right-1.5 h-6 w-6 rounded-full bg-amber-400 text-black flex items-center justify-center hover:bg-amber-300">
         <Star className="h-3 w-3 fill-black" />
       </button>
-      <div className="px-2 py-1.5 flex items-center justify-between text-[9px] text-zinc-500">
+      <div className="px-2 py-1.5 flex items-center justify-between text-[11px] text-zinc-500">
         <span>{cand.angle}</span>
         <span className="tabular-nums">{cand.yaw != null ? `${cand.yaw > 0 ? "+" : ""}${cand.yaw}°` : "0°"} · {cand.facePx ?? "—"}px</span>
       </div>
@@ -205,7 +205,7 @@ function LockStep({ gallery, onRecalibrate, onReset, onRemoveGallery }) {
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      <section className="rounded-2xl ring-1 ring-white/8 bg-white/[0.02] p-5">
+      <section className="rounded-2xl ring-1 ring-line-subtle bg-surface p-5">
         <div className="flex items-center gap-2 mb-4">
           <Lock className="h-4 w-4 text-emerald-400" />
           <h3 className="text-[13px] font-semibold text-zinc-200">Fingerprint</h3>
@@ -221,7 +221,7 @@ function LockStep({ gallery, onRecalibrate, onReset, onRemoveGallery }) {
           <div className="text-[11px] text-zinc-500 mb-2">Gallery angle chips</div>
           <div className="flex flex-wrap gap-1.5">
             {entries.length > 0 ? entries.map((a) => (
-              <span key={a} className="group inline-flex items-center gap-1.5 rounded-full bg-white/5 ring-1 ring-white/10 px-2.5 py-1 text-[10px]">
+              <span key={a} className="group inline-flex items-center gap-1.5 rounded-full bg-white/5 ring-1 ring-line px-2.5 py-1 text-[10px]">
                 {a}
                 {onRemoveGallery && (
                   <button onClick={() => onRemoveGallery(a)} title={`Remove ${a} from fingerprint`}
@@ -232,7 +232,7 @@ function LockStep({ gallery, onRecalibrate, onReset, onRemoveGallery }) {
           </div>
         </div>
       </section>
-      <section className="rounded-2xl ring-1 ring-white/8 bg-white/[0.02] p-5 space-y-3">
+      <section className="rounded-2xl ring-1 ring-line-subtle bg-surface p-5 space-y-3">
         <button onClick={recalibrate} disabled={busy || entries.length < 3} className="w-full rounded-lg bg-white/10 hover:bg-white/15 px-4 py-3 text-[12px] text-zinc-200 flex items-center justify-center gap-2 disabled:opacity-40">
           <RefreshCw className={cn("h-3.5 w-3.5", busy && "animate-spin")} /> Recalibrate threshold
         </button>

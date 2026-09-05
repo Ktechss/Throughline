@@ -267,7 +267,9 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
              character: str | None = None,
              safety_tolerance: str | int | None = None,
              provider: str | None = None,
-             model: str | None = None) -> dict:
+             model: str | None = None,
+             run_id: str | None = None,
+             client_token: str | None = None) -> dict:
     """One generation, gated and recorded.
 
     gated=False for output that is not a photo OF her — a wardrobe turnaround is
@@ -290,7 +292,12 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
     why the served endpoint is recorded on the row (`moderation_fallback`).
     """
     refs = refs or []
-    rid = uuid.uuid4().hex[:10]
+    # The caller may hand us the id it already told the client about, so the job
+    # id, the run id, the image filename and the idempotency record are all ONE
+    # identifier. uuid4().hex[:10] is 40 bits; a collision used to surface as an
+    # IntegrityError out of runs_insert AFTER the image was paid for and
+    # downloaded. Full hex costs nothing and removes that entirely.
+    rid = run_id or uuid.uuid4().hex
     # Pin the character NOW — a mid-render switch must not misfile this. An
     # explicit `character` pins it harder still: IMAGES is a live proxy onto
     # whoever is active, so a long job (character creation makes a dozen images
@@ -301,6 +308,23 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
     dest = config.char_base(owner) / "images" / f"{rid}.png"
     dest.parent.mkdir(parents=True, exist_ok=True)
     primary = endpoint or (PRIMARY_EDIT if refs else PRIMARY_T2I)
+
+    # RESERVE THE ROW BEFORE THE MONEY. Everything from here to the insert at
+    # the bottom used to be a hole: the provider renders and bills, and a crash
+    # anywhere in between left no row, no task id and no file. See
+    # db.runs_reserve. Written with the request's inputs, which are the part
+    # worth keeping if the rest never arrives.
+    db.runs_reserve(rid, owner, {
+        "id": rid, "status": "pending", "client_token": client_token,
+        "session": session or new_session("ad-hoc"),
+        "file": dest.name, "prompt": prompt, "system": system,
+        "refs": [p.name for p in refs], "seed": seed, "aspect": aspect,
+        "resolution": resolution or RESOLUTION,
+        "endpoint": primary, "model": model, "provider": provider,
+        "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "mark": None, "meta": meta or {},
+        "verdict": {"status": "pending", "reason": "generation in flight"},
+    })
 
     # WHO RENDERS THIS. Same model, same picture, different bill — measured on
     # one prompt with three references at 4K, scored on her own gallery:
@@ -538,21 +562,20 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
         # Park a row carrying the URL so /api/runs/refetch can finish the job.
         # `file` names a path that is deliberately NOT on disk, which is exactly
         # the shape /api/runs/missing already looks for.
-        db.runs_insert({
-            "id": rid, "session": session or new_session("ad-hoc"),
-            "file": dest.name, "source_url": source_url, "endpoint": used_ep,
-            "provider": use, "credits": (r or {}).get("credits"),
-            "model": (r or {}).get("model"),
-            "moderation_fallback": moderation_fallback, "prompt": prompt,
-            "system": system, "refs": [p.name for p in refs],
-            "seed": seed,
-            "aspect": aspect, "resolution": resolution or RESOLUTION,
-            "seconds": round(time.time() - t0, 1),
-            "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            "auto_leveled": 0.0, "mark": None, "meta": meta or {},
-            "verdict": {"status": "error",
-                        "reason": f"{err} — image is on fal, refetch to recover"},
-        }, character_id=owner)
+        # PATCH, not insert: the row was reserved before the provider call.
+        # It also carries pending_tasks now, which the old parking row omitted —
+        # so /api/runs/reclaim said "no parked provider task on this run" for
+        # exactly the rows that had one, and the sweeper's reclaim branch never
+        # fired for them.
+        db.runs_patch(
+            rid, status="parked", source_url=source_url, endpoint=used_ep,
+            provider=use, credits=(r or {}).get("credits"),
+            model=(r or {}).get("model") or model,
+            moderation_fallback=moderation_fallback,
+            pending_tasks=_pending or None,
+            seconds=round(time.time() - t0, 1), auto_leveled=0.0,
+            verdict={"status": "error",
+                     "reason": f"{err} — image is on fal, refetch to recover"})
         raise RuntimeError(f"{err}; the image was generated and its URL is saved "
                            f"— recover it from Review > missing images ({rid})")
 
@@ -681,7 +704,10 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
     # row must name whatever file actually survives.
     row["file"] = archive(dest).name
 
-    db.runs_insert(row, character_id=owner)   # atomic + pinned to the owning character
+    # PATCH the reserved row rather than inserting a second one. `status` moving
+    # to complete is what tells the sweeper this one needs nothing.
+    row["status"] = "complete"
+    db.runs_patch(rid, **row)
     return row
 
 
@@ -724,16 +750,93 @@ import threading  # noqa: E402
 
 JOBS: dict[str, dict] = {}
 
+# ------------------------------------------------------------------ job events
+#
+# Polling worked but was lossy and loud: eight hand-rolled loops in the frontend
+# at 1-3s each, every completion firing an 11-endpoint refresh, and — because
+# the poll loops swallowed errors and rescheduled unconditionally — a backend
+# restart left tabs hammering /api/jobs/{gone} at 1.5s forever.
+#
+# SSE rather than WebSocket: this is strictly one-way status text, and SSE keeps
+# the things that matter here for free — the browser reconnects on its own, it
+# is plain HTTP through the Vite proxy, and it is curl-able. The polling
+# endpoint stays as the fallback and as the reattach primitive.
+_LOOP = None                                    # set in main's lifespan
+_LISTENERS: dict[str, set] = {}
+_LISTENER_LOCK = threading.Lock()
+
+
+def bind_loop(loop) -> None:
+    """Hand the worker threads a way back onto the event loop."""
+    global _LOOP
+    _LOOP = loop
+
+
+def subscribe(jid: str):
+    import asyncio
+    q = asyncio.Queue(maxsize=64)
+    with _LISTENER_LOCK:
+        _LISTENERS.setdefault(jid, set()).add(q)
+    return q
+
+
+def unsubscribe(jid: str, q) -> None:
+    with _LISTENER_LOCK:
+        qs = _LISTENERS.get(jid)
+        if qs:
+            qs.discard(q)
+            if not qs:
+                _LISTENERS.pop(jid, None)
+
+
+def _publish(jid: str) -> None:
+    """Called from the WORKER thread on every mutation of a job."""
+    if _LOOP is None:
+        return
+    with _LISTENER_LOCK:
+        qs = list(_LISTENERS.get(jid, ()))
+    if not qs:
+        return
+    snap = job_status(jid)
+    for q in qs:
+        try:
+            _LOOP.call_soon_threadsafe(q.put_nowait, snap)
+        except Exception:       # noqa: BLE001 — a dead listener must not kill a job
+            pass
+
+
+class _Job(dict):
+    """A job dict that announces its own changes.
+
+    Subclassing the dict rather than adding publish() calls at each of the ~10
+    `job["stage"] = ...` sites in this module and main.py: those are written by
+    whoever adds a new job type, and one forgotten call is a stream that goes
+    silent halfway with no error.
+    """
+
+    def __setitem__(self, k, v):
+        super().__setitem__(k, v)
+        jid = self.get("id")
+        if jid:
+            _publish(jid)
+
 
 def _now() -> float:
     return time.time()
 
 
-def start_job(label: str, fn) -> str:
-    """Run fn() (which returns a run row) in a thread, tracked in JOBS."""
-    jid = uuid.uuid4().hex[:8]
-    JOBS[jid] = {"id": jid, "label": label, "stage": "starting",
-                 "started": _now(), "done": False, "error": None, "run": None}
+def start_job(label: str, fn, jid: str | None = None) -> str:
+    """Run fn() (which returns a run row) in a thread, tracked in JOBS.
+
+    `jid` lets the caller supply the id it will also use as the run id, so the
+    job and the row it produces share one identifier. Without that there was no
+    way to go from a finished row back to the job that made it, or from a job
+    id to its row — they were independent uuids that never met.
+    """
+    jid = jid or uuid.uuid4().hex[:8]
+    JOBS[jid] = _Job({"id": jid, "label": label, "stage": "starting",
+                      "started": _now(), "done": False, "error": None,
+                      "run": None})
 
     def worker():
         j = JOBS[jid]
@@ -746,11 +849,39 @@ def start_job(label: str, fn) -> str:
             j["error"] = str(exc)[:300]
             j["stage"] = "failed"
         finally:
-            j["done"] = True
+            # elapsed BEFORE done: a listener woken by done=True must not read a
+            # job whose elapsed is still being computed.
             j["elapsed"] = round(_now() - j["started"], 1)
+            j["done"] = True
+            _reap()
 
     threading.Thread(target=worker, daemon=True).start()
     return jid
+
+
+# Keep finished jobs around long enough for a client that was mid-poll (or
+# mid-reconnect) to still read the terminal state, then let them go. JOBS was
+# never pruned at all: every job ever started stayed resident holding its full
+# run row (a shot's prompt alone is ~4.5 KB), and all_jobs() plus
+# backup._guard_jobs walked the whole history on every call.
+JOB_TTL_S = 3600
+JOB_KEEP = 200
+
+
+def _reap() -> None:
+    now = _now()
+    done = [(j.get("started", now), jid) for jid, j in list(JOBS.items())
+            if j.get("done")]
+    stale = [jid for started, jid in done if now - started > JOB_TTL_S]
+    # Age first, then a hard cap so a burst cannot outrun the TTL.
+    if len(done) - len(stale) > JOB_KEEP:
+        for _, jid in sorted(done)[:len(done) - len(stale) - JOB_KEEP]:
+            stale.append(jid)
+    for jid in stale:
+        with _LISTENER_LOCK:
+            if jid in _LISTENERS:        # someone is still watching; leave it
+                continue
+        JOBS.pop(jid, None)
 
 
 def job_status(jid: str) -> dict | None:

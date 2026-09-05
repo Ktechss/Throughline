@@ -7,8 +7,19 @@ import { cn } from "@/lib/utils";
 // doesn't also open its detail view.
 export function TileCheckbox({ checked, active, onChange, className }) {
   return (
-    <button
-      type="button"
+    // A SPAN, not a button. This sits inside the tile's own <button>, and a
+    // button cannot legally contain one — React's validateDOMNesting warns, the
+    // markup is invalid, and assistive tech sees a control with no owner. It
+    // keeps role/tabIndex so it is still operable on its own.
+    <span
+      role="checkbox"
+      tabIndex={0}
+      aria-checked={!!checked}
+      onKeyDown={(e) => {
+        if (e.key === " " || e.key === "Enter") {
+          e.stopPropagation(); e.preventDefault(); onChange?.();
+        }
+      }}
       onClick={(e) => { e.stopPropagation(); e.preventDefault(); onChange?.(); }}
       className={cn(
         "absolute top-2 left-2 z-10 h-5 w-5 rounded-md ring-1 flex items-center justify-center transition-all",
@@ -20,7 +31,7 @@ export function TileCheckbox({ checked, active, onChange, className }) {
       aria-label={checked ? "Deselect" : "Select"}
     >
       <Check className="h-3.5 w-3.5" strokeWidth={3} />
-    </button>
+    </span>
   );
 }
 

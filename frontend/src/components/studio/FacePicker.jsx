@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Modal, Button } from "@/components/ui/modal";
 
 // The one judgement this project deliberately leaves to a human. Everything else
 // about identity is a number — "is this still her?" is measured, never eyeballed
@@ -16,18 +17,21 @@ export default function FacePicker({ character, candidates, onChoose, busy, onCa
   const idOf = (c) => c.run_id || c.id;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
-      <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => !busy && onCancel?.()} />
-      <div className="relative w-full max-w-3xl rounded-2xl bg-[#0d0d0f] ring-1 ring-white/10 overflow-hidden">
-        <div className="px-6 py-5 border-b border-white/5">
-          <h3 className="text-[15px] font-semibold">Choose {character.name}&rsquo;s face</h3>
-          <p className="text-[11px] text-zinc-500 mt-1 leading-relaxed">
-            Every future image of her descends from the one you pick — it becomes her identity
-            reference and her calibration seed. She can&rsquo;t be photographed until you choose.
-          </p>
-        </div>
-
-        <div className="p-6 grid grid-cols-2 sm:grid-cols-4 gap-3">
+    <Modal
+      open
+      // Choosing her face is mandatory, so the backdrop must not dismiss it —
+      // and never while the choice is being saved.
+      onClose={busy ? undefined : onCancel}
+      closeOnBackdrop={false}
+      title={`Choose ${character.name}\u2019s face`}
+      subtitle="Every future image of her descends from the one you pick."
+      size="lg"
+    >
+      <p className="text-[11px] text-zinc-500 leading-relaxed mb-4">
+        It becomes her identity reference and her calibration seed. She can&rsquo;t be
+        photographed until you choose.
+      </p>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {candidates.map((c) => (
             <button
               key={idOf(c)}
@@ -36,33 +40,27 @@ export default function FacePicker({ character, candidates, onChoose, busy, onCa
                 "relative rounded-xl overflow-hidden ring-1 transition-all aspect-[3/4]",
                 sel === idOf(c)
                   ? "ring-2 ring-emerald-400 scale-[1.02]"
-                  : "ring-white/10 hover:ring-white/30 opacity-80 hover:opacity-100"
+                  : "ring-line hover:ring-white/30 opacity-80 hover:opacity-100"
               )}
             >
               <img src={`/api/images/${c.file}/thumb`} alt="" className="h-full w-full object-cover" />
             </button>
           ))}
-        </div>
-
-        <div className="px-6 py-4 border-t border-white/5 flex items-center gap-3">
-          <p className="flex-1 text-[11px] text-zinc-500">
-            Her body reference is generated from this face, so the two agree.
-          </p>
-          {onCancel && (
-            <button onClick={() => !busy && onCancel()} disabled={!!busy}
-              className="rounded-lg ring-1 ring-white/10 px-4 py-2.5 text-[13px] text-zinc-400 hover:bg-white/5 disabled:opacity-40">
-              Later
-            </button>
-          )}
-          <button
-            onClick={() => sel && onChoose(character, sel)}
-            disabled={!sel || !!busy}
-            className="rounded-lg bg-white text-black px-5 py-2.5 text-[13px] font-medium hover:bg-zinc-200 disabled:opacity-40 flex items-center gap-2"
-          >
-            {busy ? <><Loader2 className="h-4 w-4 animate-spin" /> {busy}</> : "Lock this face"}
-          </button>
-        </div>
       </div>
-    </div>
+      <p className="mt-4 text-[11px] text-zinc-500">
+        Her body reference is generated from this face, so the two agree.
+      </p>
+      <div className="mt-4 flex items-center justify-end gap-2">
+        {onCancel && (
+          <Button variant="outline" onClick={() => !busy && onCancel()} disabled={!!busy}>
+            Later
+          </Button>
+        )}
+        <Button variant="primary" onClick={() => sel && onChoose(character, sel)}
+          disabled={!sel || !!busy}>
+          {busy ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> {busy}</> : "Lock this face"}
+        </Button>
+      </div>
+    </Modal>
   );
 }

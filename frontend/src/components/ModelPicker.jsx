@@ -77,7 +77,7 @@ export default function ModelPicker({ value, onChange, className, label = "Model
       <select
         value={value || ""}
         onChange={(e) => onChange(e.target.value || null)}
-        className="w-full rounded-lg bg-white/[0.04] ring-1 ring-white/10 px-2.5 py-1.5
+        className="w-full rounded-lg bg-white/[0.04] ring-1 ring-line px-2.5 py-1.5
                    text-[12.5px] text-zinc-200 outline-none focus-visible:ring-emerald-500/60"
       >
         <option value="">Default — {models.find((m) => m.id === def)?.label || "—"}</option>

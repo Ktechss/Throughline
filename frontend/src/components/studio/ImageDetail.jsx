@@ -1,6 +1,7 @@
 import React, { useState } from "react";
-import { X, Check, Ban, Shirt, PersonStanding, Copy, AlertTriangle, Maximize2, Loader2, Film } from "lucide-react";
+import { Check, Ban, Shirt, PersonStanding, Copy, AlertTriangle, Maximize2, Loader2, Film } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Modal } from "@/components/ui/modal";
 import VerdictChip from "./VerdictChip";
 import AnimatePanel from "./AnimatePanel";
 import { ep, refUrl, apiCharacter } from "@/api/throughline";
@@ -52,17 +53,18 @@ export default function ImageDetail({ image, wardrobe = [], onClose, onMark, onT
   const hideOnErr = (e) => { const f = e.currentTarget.closest("figure"); if (f) f.style.display = "none"; };
 
   return (
-    <div onMouseDown={onClose} className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/80 backdrop-blur-sm p-4 md:p-8">
-      <div onMouseDown={(e) => e.stopPropagation()}
-        className="relative my-auto w-full max-w-6xl rounded-2xl border border-white/10 bg-[#0d0d0f] flex max-h-[92vh] flex-col overflow-hidden">
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-white/5 px-5 py-3">
-          <VerdictChip status={image.status} pov={image.pov} similarity={image.similarity} yaw={image.yaw} facePx={image.facePx} poseMismatch={image.poseMismatch} />
-          <button onClick={onClose} className="text-zinc-400 hover:text-white"><X className="h-5 w-5" /></button>
-        </div>
-
-        {/* Scrollable body (scrollbar hidden globally) */}
-        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
+    // The verdict IS the title here — sim, yaw and face_px are the first thing
+    // to read about a shot, never the filename.
+    <Modal
+      open
+      onClose={onClose}
+      size="xl"
+      title={
+        <VerdictChip status={image.status} pov={image.pov} similarity={image.similarity}
+          yaw={image.yaw} facePx={image.facePx} poseMismatch={image.poseMismatch} />
+      }
+    >
+      <div className="space-y-6">
           {(run.verdict?.reason || run.moderation_fallback) && (
             <div className="rounded-lg bg-amber-500/10 ring-1 ring-amber-500/20 p-3 text-[11px] text-amber-300 flex gap-2">
               <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
@@ -107,13 +109,13 @@ export default function ImageDetail({ image, wardrobe = [], onClose, onMark, onT
               <div className="flex flex-wrap gap-3">
                 {face && (
                   <figure className="m-0 w-28">
-                    <img src={refUrl(face)} onError={hideOnErr} className="h-36 w-28 rounded-lg object-cover ring-1 ring-white/10" alt="face ref" />
+                    <img src={refUrl(face)} onError={hideOnErr} className="h-36 w-28 rounded-lg object-cover ring-1 ring-line" alt="face ref" />
                     <figcaption className="mt-1 truncate text-[10px] text-zinc-500">face · {face}</figcaption>
                   </figure>
                 )}
                 {outfitFile && (
                   <figure className="m-0 w-28">
-                    <img src={`/api/wardrobe/${outfitFile}/file?character=${apiCharacter() || ""}`} onError={hideOnErr} className="h-36 w-28 rounded-lg object-cover ring-1 ring-white/10" alt="outfit ref" />
+                    <img src={`/api/wardrobe/${outfitFile}/file?character=${apiCharacter() || ""}`} onError={hideOnErr} className="h-36 w-28 rounded-lg object-cover ring-1 ring-line" alt="outfit ref" />
                     <figcaption className="mt-1 truncate text-[10px] text-zinc-500">outfit · {meta.wardrobe}</figcaption>
                   </figure>
                 )}
@@ -126,7 +128,7 @@ export default function ImageDetail({ image, wardrobe = [], onClose, onMark, onT
                 {isVideo && (source
                   ? (
                     <button onClick={() => onOpenSource?.(source)} className="m-0 w-28 text-left group/src">
-                      <img src={source.thumb} onError={hideOnErr} className="h-36 w-28 rounded-lg object-cover ring-1 ring-white/10 group-hover/src:ring-white/30" alt="source frame" />
+                      <img src={source.thumb} onError={hideOnErr} className="h-36 w-28 rounded-lg object-cover ring-1 ring-line group-hover/src:ring-white/30" alt="source frame" />
                       <div className="mt-1 truncate text-[10px] text-zinc-500">
                         {meta.continued_from ? "continued from" : "animated from"} · {source.kind === "video" ? "clip" : "still"}
                       </div>
@@ -139,7 +141,7 @@ export default function ImageDetail({ image, wardrobe = [], onClose, onMark, onT
               <p className="mt-3 font-mono text-[10px] text-zinc-600">attached: {(run.refs || []).join(" → ") || "none"}</p>
 
               {(meta.pose_id || meta.pose_ref) && (
-                <div className="mt-4 rounded-lg ring-1 ring-white/10 bg-white/[0.02] p-3">
+                <div className="mt-4 rounded-lg ring-1 ring-line bg-surface p-3">
                   <div className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-1">Pose used</div>
                   <p className="text-[12px] text-zinc-200">{meta.pose_id || "custom pose reference"}</p>
                   {meta.pose_text && <p className="mt-0.5 text-[11px] text-zinc-500 leading-snug line-clamp-3">{meta.pose_text}</p>}
@@ -150,10 +152,10 @@ export default function ImageDetail({ image, wardrobe = [], onClose, onMark, onT
               {/* Metadata — fills the empty space under the references / pose card */}
               <section className="mt-4">
                 <h4 className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-2">Metadata</h4>
-                <div className="grid grid-cols-2 gap-px rounded-lg overflow-hidden ring-1 ring-white/8 bg-white/8">
+                <div className="grid grid-cols-2 gap-px rounded-lg overflow-hidden ring-1 ring-line-subtle bg-white/10">
                   {kv.map((x) => (
                     <div key={x[0]} className="bg-[#0d0d0f] p-3">
-                      <div className="text-[9px] uppercase tracking-wider text-zinc-600">{x[0]}</div>
+                      <div className="text-[11px] uppercase tracking-wider text-zinc-600">{x[0]}</div>
                       <div className="mt-1 text-[12px] font-mono text-zinc-200 truncate">{String(x[1])}</div>
                     </div>
                   ))}
@@ -173,7 +175,7 @@ export default function ImageDetail({ image, wardrobe = [], onClose, onMark, onT
           {run.prompt && (
             <section>
               <h4 className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-2">Full prompt sent</h4>
-              <p className="text-[11px] font-mono text-zinc-400 leading-relaxed bg-white/[0.02] rounded-lg p-4 ring-1 ring-white/5 whitespace-pre-wrap break-words">{run.prompt}</p>
+              <p className="text-[11px] font-mono text-zinc-400 leading-relaxed bg-surface rounded-lg p-4 ring-1 ring-white/5 whitespace-pre-wrap break-words">{run.prompt}</p>
             </section>
           )}
 
@@ -187,10 +189,10 @@ export default function ImageDetail({ image, wardrobe = [], onClose, onMark, onT
               </div>
             </section>
           )}
-        </div>
+      </div>
 
         {/* Actions pinned at the bottom */}
-        <div className="border-t border-white/5 px-5 py-3 flex flex-wrap items-center gap-2">
+      <div className="sticky bottom-0 -mx-4 -mb-3 mt-5 border-t border-white/10 bg-[#0d0d0f]/95 backdrop-blur px-4 py-3 flex flex-wrap items-center gap-2">
           <button onClick={() => onMark(run.id, "approve")} className={cn("rounded-lg px-4 py-2 text-[12px] flex items-center gap-1.5 ring-1", mark === "approve" ? "bg-emerald-500/25 text-emerald-200 ring-emerald-500/40" : "bg-emerald-500/10 text-emerald-300 ring-emerald-500/25 hover:bg-emerald-500/20")}><Check className="h-3.5 w-3.5" /> approve</button>
           <button onClick={() => onMark(run.id, "reject")} className={cn("rounded-lg px-4 py-2 text-[12px] flex items-center gap-1.5 ring-1", mark === "reject" ? "bg-rose-500/25 text-rose-200 ring-rose-500/40" : "bg-rose-500/10 text-rose-300 ring-rose-500/25 hover:bg-rose-500/20")}><Ban className="h-3.5 w-3.5" /> reject</button>
           <div className="flex-1" />
@@ -201,7 +203,7 @@ export default function ImageDetail({ image, wardrobe = [], onClose, onMark, onT
                 : "Animate this still. It becomes frame one, so identity is inherited rather than re-argued."}
               className={cn("rounded-lg px-4 py-2 text-[12px] flex items-center gap-1.5 ring-1",
                 showAnimate ? "bg-indigo-500/25 text-indigo-200 ring-indigo-400/40"
-                            : "ring-white/10 text-zinc-300 hover:bg-white/5")}>
+                            : "ring-line text-zinc-300 hover:bg-white/5")}>
               {animating[run.id]
                 ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> {animating[run.id]}</>
                 : <><Film className="h-3.5 w-3.5" /> {isVideo ? "extend" : "animate"}</>}
@@ -211,7 +213,7 @@ export default function ImageDetail({ image, wardrobe = [], onClose, onMark, onT
             <a href={`/api/images/${run.file}/hires?factor=2`} target="_blank" rel="noreferrer"
               onClick={() => { setHires("busy"); setTimeout(() => setHires("ready"), 1200); }}
               title="Upscaled 2x on topaz for delivery. Not re-scored — the verdict above stays measured on the original."
-              className="rounded-lg ring-1 ring-white/10 px-4 py-2 text-[12px] text-zinc-300 hover:bg-white/5 flex items-center gap-1.5">
+              className="rounded-lg ring-1 ring-line px-4 py-2 text-[12px] text-zinc-300 hover:bg-white/5 flex items-center gap-1.5">
               {hires === "busy"
                 ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> upscaling…</>
                 : <><Maximize2 className="h-3.5 w-3.5" /> export 2x</>}
@@ -219,12 +221,11 @@ export default function ImageDetail({ image, wardrobe = [], onClose, onMark, onT
           )}
           {!isVideo && (
             <>
-              <button onClick={() => onToWardrobe(run.id)} className="rounded-lg ring-1 ring-white/10 px-4 py-2 text-[12px] text-zinc-300 hover:bg-white/5 flex items-center gap-1.5"><Shirt className="h-3.5 w-3.5" /> → wardrobe</button>
-              <button onClick={() => onToPoseRef(run.id)} className="rounded-lg ring-1 ring-white/10 px-4 py-2 text-[12px] text-zinc-300 hover:bg-white/5 flex items-center gap-1.5"><PersonStanding className="h-3.5 w-3.5" /> → pose ref</button>
+              <button onClick={() => onToWardrobe(run.id)} className="rounded-lg ring-1 ring-line px-4 py-2 text-[12px] text-zinc-300 hover:bg-white/5 flex items-center gap-1.5"><Shirt className="h-3.5 w-3.5" /> → wardrobe</button>
+              <button onClick={() => onToPoseRef(run.id)} className="rounded-lg ring-1 ring-line px-4 py-2 text-[12px] text-zinc-300 hover:bg-white/5 flex items-center gap-1.5"><PersonStanding className="h-3.5 w-3.5" /> → pose ref</button>
             </>
           )}
-        </div>
       </div>
-    </div>
+    </Modal>
   );
 }

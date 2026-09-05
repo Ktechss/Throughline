@@ -102,7 +102,7 @@ export default function MotionTab({ shots = [], videoCat, animating = {}, onAnim
                 title={`${isKept(s) ? "kept" : s.status} · ${s.brief}`}
                 className={cn("relative rounded overflow-hidden ring-1 transition-all",
                   s.id === startId ? "ring-2 ring-emerald-400 scale-[0.94]"
-                    : "ring-white/10 hover:ring-white/40")}>
+                    : "ring-line hover:ring-white/40")}>
                 <img src={s.thumb} alt={s.brief} loading="lazy"
                   className={cn("h-11 w-full object-cover",
                     !isKept(s) && s.id !== startId && "opacity-55")} />
@@ -137,7 +137,7 @@ export default function MotionTab({ shots = [], videoCat, animating = {}, onAnim
                 stills={stills.filter((s) => s.id !== start.id)}
               />
             ) : (
-              <div className="rounded-xl ring-1 ring-white/10 bg-white/[0.02] p-8 text-center">
+              <div className="rounded-xl ring-1 ring-line bg-surface p-8 text-center">
                 <ArrowRight className="h-5 w-5 mx-auto mb-2 text-zinc-700" />
                 <p className="text-[12px] text-zinc-500">
                   Choose a start frame and the model, length, direction and end-frame
@@ -159,7 +159,7 @@ export default function MotionTab({ shots = [], videoCat, animating = {}, onAnim
           : (
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
               {clips.map((c) => (
-                <div key={c.id} className="rounded-xl ring-1 ring-white/8 bg-white/[0.02] overflow-hidden">
+                <div key={c.id} className="rounded-xl ring-1 ring-line-subtle bg-surface overflow-hidden">
                   <video src={c.url} poster={c.thumb} controls loop playsInline
                     className="w-full aspect-[4/5] object-cover bg-black" />
                   <div className="px-2.5 py-2 space-y-1">

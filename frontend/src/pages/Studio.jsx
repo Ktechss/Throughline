@@ -2,9 +2,13 @@ import React, { useState } from "react";
 import { useSearchParams, Link } from "react-router-dom";
 import { ShieldCheck, ShieldAlert, Lock, ChevronLeft, Camera, IdCard, Sliders, GalleryHorizontal, Film } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { promptText } from "@/components/ui/confirm";
 import { api, runView } from "@/api/throughline";
 import { useStudio } from "@/api/useStudio";
 import FacePicker from "@/components/studio/FacePicker";
+import NoFacesPanel from "@/components/studio/NoFacesPanel";
+import CharacterSwitcher from "@/components/CharacterSwitcher";
+import { tabAttention } from "@/lib/nextStep";
 import ShootTab from "@/components/studio/ShootTab";
 import BioTab from "@/components/studio/BioTab";
 import CalibrateTab from "@/components/studio/CalibrateTab";
@@ -33,7 +37,20 @@ export default function Studio() {
 
   const identityRef = s.bio?.reference ? `/api/refs/${s.bio.reference}/file` : null;
   const angleCount = (s.gallery.entries || []).length;
-  const reviewCount = s.shots.length;
+  // The BACKLOG, not the corpus. This was s.shots.length — every shot ever, a
+  // number that only grows, so the badge could never be cleared and therefore
+  // never meant anything.
+  //
+  // Counted from the same list the Review tab filters, NOT from stats.marks:
+  // stats counts images only (189) while the tab shows images and clips (208),
+  // so the two disagreed by 19 and the badge promised a backlog that did not
+  // match the one on screen.
+  const reviewCount = s.shots.filter((x) => !x.approved && !x.rejected).length;
+
+  const attention = tabAttention(
+    { id: charParam, has_reference: !!s.bio?.reference,
+      identityStatus: s.hasIdentity ? "identity_set" : "needs_calibration",
+      status: "ready" }, s.stats);
 
   const reviewStats = s.stats && {
     totalShots: s.stats.total,
@@ -49,13 +66,15 @@ export default function Studio() {
 
   // ImageDetail actions
   const toWardrobe = async (id) => {
-    const name = window.prompt("Save this outfit to the wardrobe as (category):", "");
+    const name = await promptText({ title: "Save to the wardrobe",
+      body: "Which category?", placeholder: "e.g. brunch, festive", confirmLabel: "Save" });
     if (!name) return;
     try { await api.send("/api/wardrobe/from-run", "POST", { run_id: id, category: name }); await s.refresh(); }
     catch (e) { s.setErr(String(e)); }
   };
   const toPoseRef = async (id) => {
-    const name = window.prompt("Save this as a pose reference named:", "");
+    const name = await promptText({ title: "Save as a pose reference",
+      placeholder: "name it", confirmLabel: "Save" });
     if (!name) return;
     try { await api.send("/api/pose-refs/from-run", "POST", { run_id: id, name }); await s.refresh(); }
     catch (e) { s.setErr(String(e)); }
@@ -91,6 +110,10 @@ export default function Studio() {
     try {
       await api.send(`/api/characters/${charParam}/master-face`, "POST", { run_id: runId });
       await s.refresh();      // committing the face is the whole step now
+      // Same destination as the roster's path. These two diverged: one sent you
+      // to Calibrate, the other dropped you on Shoot with Generate disabled and
+      // no explanation of why.
+      setTab("calibrate");
     } catch (e) { s.setErr(String(e)); }
     finally { setGateBusy(null); }
   };
@@ -104,19 +127,31 @@ export default function Studio() {
       />
     );
   }
+  // NO FACE AND NOTHING TO CHOOSE FROM. This used to fall through the gate into
+  // a studio where every generation 400s on the missing reference — the gate
+  // only fired when candidates existed, so the worst case was the one it let
+  // past. Generating faces cannot rescue it either: /api/calibrate/faces refuses
+  // without a seed she does not have. An upload can, so that is what is offered.
+  if (needsFace) {
+    return <NoFacesPanel name={s.charName} onUpload={() => setTab("bio")} />;
+  }
 
   return (
     <div className="min-h-screen">
       {/* Bio banner */}
       <div className="border-b border-white/5 bg-gradient-to-b from-white/[0.02] to-transparent">
         <div className="px-6 md:px-10 pt-6">
-          <Link to="/" className="inline-flex items-center gap-1.5 text-[12px] text-zinc-500 hover:text-zinc-300 mb-4">
-            <ChevronLeft className="h-3.5 w-3.5" /> Switch character
-          </Link>
+          <div className="mb-4 flex items-center gap-2">
+            <Link to="/" className="inline-flex items-center gap-1.5 text-[12px] text-zinc-500 hover:text-zinc-300">
+              <ChevronLeft className="h-3.5 w-3.5" /> Characters
+            </Link>
+            <span className="text-zinc-700">/</span>
+            <CharacterSwitcher variant="header" activeId={charParam} />
+          </div>
           <button onClick={() => setTab("bio")} className="w-full text-left group">
             <div className="flex items-center gap-4">
               <div className="relative">
-                <div className="h-16 w-16 rounded-xl overflow-hidden ring-1 ring-white/10 bg-zinc-800">
+                <div className="h-16 w-16 rounded-xl overflow-hidden ring-1 ring-line bg-zinc-800">
                   {identityRef
                     ? <img src={identityRef} alt={s.charName} className="h-full w-full object-cover" />
                     : <div className="h-full w-full flex items-center justify-center text-lg font-semibold text-zinc-600">{(s.charName || "?").slice(0, 2).toUpperCase()}</div>}
@@ -160,6 +195,9 @@ export default function Studio() {
                   <Icon className="h-4 w-4" strokeWidth={1.5} />
                   {t.label}
                   {t.id === "review" && reviewCount > 0 && <span className="ml-0.5 rounded-full bg-white/10 px-1.5 py-0.5 text-[10px] tabular-nums">{reviewCount}</span>}
+                  {/* Where the work is, without reordering the tabs — Shoot is
+                      the daily destination even though calibrate precedes it. */}
+                  {attention[t.id] && <span className="ml-0.5 h-1.5 w-1.5 rounded-full bg-amber-400" />}
                   {active && <span className="absolute inset-x-0 -bottom-px h-0.5 bg-white rounded-full" />}
                 </button>
               );
@@ -203,7 +241,7 @@ export default function Studio() {
                 withChar={s.withChar} setWithChar={s.setWithChar} castable={s.castable}
                 selectedOutfit={s.selectedOutfit} setSelectedOutfit={s.setSelectedOutfit}
                 selectedPose={s.selectedPose} setSelectedPose={s.setSelectedPose}
-                onGenerate={s.onGenerate} shotPreview={s.shotPreview} hasIdentity={!!s.bio?.reference}
+                onGenerate={s.onGenerate} shotPreview={s.shotPreview} hasFace={!!s.bio?.reference}
                 onOpenDetail={setDetail}
                 onUploadOutfit={s.uploadOutfit} onOpenDesigner={s.openDesigner} onDeleteOutfit={s.deleteOutfit}
                 creating={s.creating} outfitPreview={s.outfitPreview}

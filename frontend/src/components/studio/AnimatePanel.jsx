@@ -133,7 +133,7 @@ export default function AnimatePanel({ catalogue, defaultModel, status, busy, on
   });
 
   return (
-    <div className="rounded-xl ring-1 ring-white/10 bg-white/[0.02] p-4 space-y-3">
+    <div className="rounded-xl ring-1 ring-line bg-surface p-4 space-y-3">
       <div className="flex items-center gap-2">
         <Film className="h-3.5 w-3.5 text-zinc-400" />
         <h4 className="text-[11px] font-semibold text-zinc-300 uppercase tracking-wider">
@@ -179,7 +179,7 @@ export default function AnimatePanel({ catalogue, defaultModel, status, busy, on
       {!takesEnd && !continueFrom && endCapable && (
         <button onClick={() => { setProvider(endCapable.provider); setModelId(endCapable.id);
                                  setDuration(null); setResolution(null); }}
-          className="w-full rounded-lg ring-1 ring-white/10 bg-white/[0.02] hover:bg-white/[0.05] p-2.5 text-left flex items-start gap-2">
+          className="w-full rounded-lg ring-1 ring-line bg-surface hover:bg-white/[0.05] p-2.5 text-left flex items-start gap-2">
           <GitCommitHorizontal className="h-3.5 w-3.5 text-zinc-500 flex-shrink-0 mt-0.5" />
           <span className="text-[10px] text-zinc-400 leading-snug">
             Want it to land on a second shot? <span className="text-zinc-200">{endCapable.label}</span> takes
@@ -190,7 +190,7 @@ export default function AnimatePanel({ catalogue, defaultModel, status, busy, on
       )}
 
       {takesEnd && (
-        <div className="rounded-lg ring-1 ring-white/8 bg-black/20 p-3 space-y-2">
+        <div className="rounded-lg ring-1 ring-line-subtle bg-black/20 p-3 space-y-2">
           <div className="flex items-center justify-between gap-2">
             <span className="text-[10px] uppercase tracking-wider text-zinc-500">
               end frame {endShot ? "· clip lands here" : "· optional"}
@@ -221,7 +221,7 @@ export default function AnimatePanel({ catalogue, defaultModel, status, busy, on
                       title={`${kept ? "kept" : s.status} · ${s.brief}`}
                       className={cn("relative rounded overflow-hidden ring-1 transition-all",
                         endId === s.id ? "ring-2 ring-violet-400 scale-[0.94]"
-                          : "ring-white/10 hover:ring-white/40")}>
+                          : "ring-line hover:ring-white/40")}>
                       <img src={s.thumb} alt={s.brief} loading="lazy"
                         className={cn("h-11 w-full object-cover",
                           !kept && endId !== s.id && "opacity-55")} />
@@ -236,7 +236,7 @@ export default function AnimatePanel({ catalogue, defaultModel, status, busy, on
       )}
 
       {onSuggest && (
-        <div className="rounded-lg ring-1 ring-white/8 bg-black/20 p-3 space-y-2.5">
+        <div className="rounded-lg ring-1 ring-line-subtle bg-black/20 p-3 space-y-2.5">
           <div className="flex items-center justify-between gap-2">
             <span className="text-[10px] uppercase tracking-wider text-zinc-500">
               {ideas
@@ -250,7 +250,7 @@ export default function AnimatePanel({ catalogue, defaultModel, status, busy, on
                 duration override and post as the request body. */}
             <button onClick={() => ask()} disabled={reading}
               className={cn("rounded-md px-2.5 py-1 text-[10px] flex items-center gap-1.5 ring-1 transition-colors",
-                reading ? "bg-white/5 text-zinc-600 ring-white/10"
+                reading ? "bg-white/5 text-zinc-600 ring-line"
                         : "bg-violet-500/15 text-violet-200 ring-violet-400/30 hover:bg-violet-500/25")}>
               {reading
                 ? <><Loader2 className="h-3 w-3 animate-spin" /> reading the frame…</>
@@ -265,7 +265,7 @@ export default function AnimatePanel({ catalogue, defaultModel, status, busy, on
             value={idea} onChange={(e) => setIdea(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && !reading) ask(); }}
             placeholder="your idea, optional — e.g. she laughs and looks away"
-            className="w-full rounded-md bg-black/40 ring-1 ring-white/10 px-2.5 py-1.5 text-[11px] text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:ring-violet-400/40"
+            className="w-full rounded-md bg-black/40 ring-1 ring-line px-2.5 py-1.5 text-[11px] text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:ring-violet-400/40"
           />
 
           {ideas && (
@@ -290,7 +290,7 @@ export default function AnimatePanel({ catalogue, defaultModel, status, busy, on
               {ideas.duration_why && (
                 <div className={cn("rounded p-2 ring-1 flex items-start gap-1.5 text-[10px] leading-snug",
                   recDiffers ? "bg-sky-500/10 ring-sky-400/25 text-sky-200"
-                    : "bg-white/[0.03] ring-white/10 text-zinc-400")}>
+                    : "bg-surface ring-line text-zinc-400")}>
                   <Clock className="h-3 w-3 flex-shrink-0 mt-0.5" />
                   <span className="flex-1">
                     {recDiffers
@@ -312,13 +312,13 @@ export default function AnimatePanel({ catalogue, defaultModel, status, busy, on
                     className={cn("w-full text-left rounded-lg p-2.5 ring-1 transition-colors",
                       picked === i ? "bg-violet-500/15 ring-violet-400/40"
                         : i === ideas.best ? "bg-emerald-500/[0.07] ring-emerald-400/25 hover:bg-emerald-500/15"
-                          : "bg-white/[0.03] ring-white/8 hover:bg-white/[0.06]")}>
+                          : "bg-surface ring-line-subtle hover:bg-white/[0.06]")}>
                     <div className="flex items-center gap-1.5">
                       <span className="text-[11px] font-medium text-zinc-200">{s.title}</span>
                       {/* The pick is marked in place rather than sorted to the
                           top, so a re-read is comparable to the last one. */}
                       {i === ideas.best && (
-                        <span className="inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wider bg-emerald-500/20 text-emerald-300">
+                        <span className="inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[11px] font-semibold uppercase tracking-wider bg-emerald-500/20 text-emerald-300">
                           <Star className="h-2.5 w-2.5" /> best
                         </span>
                       )}
@@ -345,11 +345,11 @@ export default function AnimatePanel({ catalogue, defaultModel, status, busy, on
       )}
 
       <div>
-        <label className="text-[9px] uppercase tracking-wider text-zinc-600">what should move</label>
+        <label className="text-[11px] uppercase tracking-wider text-zinc-600">what should move</label>
         <textarea
           value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={2}
           placeholder="Gentle natural motion, the camera almost still, her expression unchanged."
-          className="mt-1 w-full rounded-lg bg-black/40 ring-1 ring-white/10 px-3 py-2 text-[11px] text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:ring-white/25 resize-none"
+          className="mt-1 w-full rounded-lg bg-black/40 ring-1 ring-line px-3 py-2 text-[11px] text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:ring-white/25 resize-none"
         />
         {fallThrough && (
           <p className="mt-1 text-[10px] text-violet-300/90 leading-snug flex gap-1.5">
@@ -386,7 +386,7 @@ export default function AnimatePanel({ catalogue, defaultModel, status, busy, on
         onClick={go} disabled={!!busy || blocked || !model}
         className={cn("w-full rounded-lg py-2 text-[12px] font-medium flex items-center justify-center gap-1.5 ring-1 transition-colors",
           busy || blocked || !model
-            ? "bg-white/5 text-zinc-600 ring-white/10 cursor-not-allowed"
+            ? "bg-white/5 text-zinc-600 ring-line cursor-not-allowed"
             : "bg-indigo-500/15 text-indigo-200 ring-indigo-400/30 hover:bg-indigo-500/25")}
       >
         {busy
@@ -408,7 +408,7 @@ export default function AnimatePanel({ catalogue, defaultModel, status, busy, on
 function Field({ label, children }) {
   return (
     <div>
-      <label className="text-[9px] uppercase tracking-wider text-zinc-600">{label}</label>
+      <label className="text-[11px] uppercase tracking-wider text-zinc-600">{label}</label>
       <div className="mt-1">{children}</div>
     </div>
   );
@@ -417,7 +417,7 @@ function Field({ label, children }) {
 function Select({ value, onChange, options }) {
   return (
     <select value={value} onChange={(e) => onChange(e.target.value)}
-      className="w-full rounded-lg bg-black/40 ring-1 ring-white/10 px-2 py-1.5 text-[11px] text-zinc-200 focus:outline-none focus:ring-white/25">
+      className="w-full rounded-lg bg-black/40 ring-1 ring-line px-2 py-1.5 text-[11px] text-zinc-200 focus:outline-none focus:ring-white/25">
       {options.map(([v, l]) => <option key={v} value={v} className="bg-[#0d0d0f]">{l}</option>)}
     </select>
   );

@@ -41,12 +41,12 @@ export default function CastRow({ character, lib, value, onChange, framingOrder 
   const shoesVisible = framingOrder >= 5;
 
   return (
-    <div className="rounded-xl ring-1 ring-white/8 bg-white/[0.02]">
+    <div className="rounded-xl ring-1 ring-line-subtle bg-surface">
       <button onClick={() => setOpen(!open)} className="w-full flex items-center gap-3 px-3 py-2.5 text-left">
         {chosen ? (
           <img src={chosen.url} alt="" className="h-10 w-8 rounded object-cover ring-1 ring-white/15" />
         ) : (
-          <span className="h-10 w-8 rounded ring-1 ring-white/10 flex items-center justify-center">
+          <span className="h-10 w-8 rounded ring-1 ring-line flex items-center justify-center">
             <Shirt className="h-3.5 w-3.5 text-zinc-600" />
           </span>
         )}
@@ -73,7 +73,7 @@ export default function CastRow({ character, lib, value, onChange, framingOrder 
                   <button key={o.id} title={o.description || o.name}
                     onClick={() => set("outfit", value.outfit === o.id ? null : o.id)}
                     className={cn("relative aspect-[3/4] rounded-lg overflow-hidden ring-1",
-                      value.outfit === o.id ? "ring-2 ring-emerald-400" : "ring-white/10 hover:ring-white/30")}>
+                      value.outfit === o.id ? "ring-2 ring-emerald-400" : "ring-line hover:ring-white/30")}>
                     <img src={o.url} alt={o.name} loading="lazy" className="h-full w-full object-cover" />
                     {value.outfit === o.id && (
                       <span className="absolute top-1 right-1 rounded-full bg-emerald-400 p-0.5">
@@ -96,7 +96,7 @@ export default function CastRow({ character, lib, value, onChange, framingOrder 
                   <button key={n.id} title={n.name}
                     onClick={() => set("nail", value.nail === n.id ? null : n.id)}
                     className={cn("h-10 w-10 rounded-lg overflow-hidden ring-1",
-                      value.nail === n.id ? "ring-2 ring-emerald-400" : "ring-white/10 hover:ring-white/30")}>
+                      value.nail === n.id ? "ring-2 ring-emerald-400" : "ring-line hover:ring-white/30")}>
                     <img src={`/api/nails/${n.file}/thumb?character=${cid}`} alt={n.name}
                          loading="lazy" className="h-full w-full object-cover" />
                   </button>

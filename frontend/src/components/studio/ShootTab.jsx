@@ -1,9 +1,12 @@
 import React, { useState } from "react";
-import { Sparkles, Loader2, Wand2, Shirt, Check } from "lucide-react";
+import { Sparkles, Loader2, Wand2, Shirt, Check, PersonStanding } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { promptText } from "@/components/ui/confirm";
+import { Section } from "@/components/ui/section";
 import ModelPicker from "@/components/ModelPicker";
 import Picker from "@/components/collab/Picker";
 import VerdictChip from "./VerdictChip";
+import PickerShelf from "./PickerShelf";
 import OutfitPicker from "./OutfitPicker";
 import PosePicker from "./PosePicker";
 import NailPicker from "./NailPicker";
@@ -24,12 +27,21 @@ export default function ShootTab({
   model, setModel,
   withChar, setWithChar, castable = [],
   selectedOutfit, setSelectedOutfit, selectedPose, setSelectedPose,
-  onGenerate, shotPreview, hasIdentity, onOpenDetail, onUploadOutfit, onOpenDesigner, onDeleteOutfit,
+  onGenerate, shotPreview, hasFace, onOpenDetail, onUploadOutfit, onOpenDesigner, onDeleteOutfit,
   creating, outfitPreview, onSaveOutfit, onDiscardOutfit, outfitCategories = [],
   nails, selectedNail, setSelectedNail, onSaveNail, onDeleteNail,
 }) {
+  // selectedOutfit / selectedPose / selectedNail hold the picked ROW, not an id
+  // — every picker calls onSelect(item) and useStudio reads `.id` off it. These
+  // headers used to look the row up BY id, which never matched, so the fallback
+  // handed PickerShelf the object itself and React unmounted the tab rendering
+  // it as a child. Read the row's fields directly; there is nothing to look up.
+
   const running = gens.some((g) => g.stage === "running");
-  const canGenerate = hasIdentity && (!!brief || !!selectedOutfit || !!selectedPose);
+  // hasFACE, not hasIdentity: shot() refuses on a missing master reference,
+  // which is a different fact from whether she has been calibrated. The two
+  // travelled under one prop name and meant opposite things in two files.
+  const canGenerate = hasFace && (!!brief || !!selectedOutfit || !!selectedPose);
 
   return (
     <div className="grid grid-cols-1 xl:grid-cols-[3fr_2fr] gap-8">
@@ -44,7 +56,7 @@ export default function ShootTab({
             onChange={(e) => setBrief(e.target.value)}
             rows={3}
             placeholder="Describe the place, moment, and mood…"
-            className="w-full rounded-xl bg-white/[0.03] ring-1 ring-white/10 px-4 py-3 text-[14px] focus:ring-white/30 outline-none resize-none placeholder:text-zinc-600"
+            className="w-full rounded-xl bg-surface ring-1 ring-line px-4 py-3 text-[14px] focus:ring-white/30 outline-none resize-none placeholder:text-zinc-600"
           />
 
           <div className="mt-3">
@@ -61,7 +73,7 @@ export default function ShootTab({
                 onChange={(e) => setAiPrompt(e.target.value)}
                 rows={3}
                 placeholder="Leave empty to use the template prompt…"
-                className="w-full rounded-xl bg-white/[0.02] ring-1 ring-white/10 px-4 py-3 text-[13px] font-mono focus:ring-white/30 outline-none resize-none placeholder:text-zinc-600"
+                className="w-full rounded-xl bg-surface ring-1 ring-line px-4 py-3 text-[13px] font-mono focus:ring-white/30 outline-none resize-none placeholder:text-zinc-600"
               />
               <button
                 onClick={onAiPrompt}
@@ -78,7 +90,7 @@ export default function ShootTab({
             <div className="flex items-center gap-1.5">
               <span className="text-[11px] text-zinc-500 mr-1">Res</span>
               {RES.map((r) => (
-                <button key={r} onClick={() => setResolution(r)} className={cn("rounded-md px-2.5 py-1 text-[11px] ring-1 transition-colors", resolution === r ? "bg-white text-black ring-white" : "ring-white/10 text-zinc-400 hover:text-white")}>{r}</button>
+                <button key={r} onClick={() => setResolution(r)} className={cn("rounded-md px-2.5 py-1 text-[11px] ring-1 transition-colors", resolution === r ? "bg-white text-black ring-white" : "ring-line text-zinc-400 hover:text-white")}>{r}</button>
               ))}
             </div>
             <ModelPicker value={model} onChange={setModel} className="w-[248px]" />
@@ -119,27 +131,44 @@ export default function ShootTab({
               Blank means INFERRED, not off: the brief is read for "selfie",
               "imperfect", "just woke up" and so on, and whatever it decides is
               reported back in the preview below. Choosing here overrides it. */}
+          {/* SEVEN OPTIONAL OVERRIDES, folded away.
+              These were a 7-column grid inside a ~640px column, so every select
+              was 91px wide and every value truncated to "from bri…" — a control
+              you cannot read is worse than one you cannot see. Blank means
+              INFERRED, so the whole group is the definition of progressive
+              disclosure: it has a correct default, and the count says how many
+              you have overridden without opening it. */}
           {shotLib && !pov && (
-            <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-2">
-              <Picker label="Camera" flat={shotLib.camera_holders?.filter((o) => o.id)}
+            <Section
+              className="mt-4"
+              title="Camera & finish"
+              count={[holder, flaws, optics, exposure, groomingState, clutter].filter(Boolean).length}
+              total={6}
+              hint={shotPreview?.auto && Object.keys(shotPreview.auto).length
+                ? `${Object.keys(shotPreview.auto).length} decided from the brief`
+                : "read from the brief"}
+            >
+            <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+              <Picker auto={shotPreview?.auto?.holder} label="Camera" flat={shotLib.camera_holders?.filter((o) => o.id)}
                 value={holder} onChange={setHolder} empty="from brief"
                 hint={holder ? undefined : "auto"} />
-              <Picker label="Imperfection" flat={shotLib.flaws?.filter((o) => o.id)}
+              <Picker auto={shotPreview?.auto?.flaws} label="Imperfection" flat={shotLib.flaws?.filter((o) => o.id)}
                 value={flaws} onChange={setFlaws} empty="from brief" />
-              <Picker label="Optics" flat={shotLib.optics?.filter((o) => o.id)}
+              <Picker auto={shotPreview?.auto?.optics} label="Optics" flat={shotLib.optics?.filter((o) => o.id)}
                 value={optics} onChange={setOptics} empty="from brief" />
               <Picker label="Exposure" flat={shotLib.exposure?.filter((o) => o.id)}
                 value={exposure} onChange={setExposure} empty="clean" />
-              <Picker label="Her state" flat={shotLib.grooming_state?.filter((o) => o.id)}
+              <Picker auto={shotPreview?.auto?.grooming_state} label="Her state" flat={shotLib.grooming_state?.filter((o) => o.id)}
                 value={groomingState} onChange={setGroomingState} empty="from brief" />
               {/* What is lying around TODAY. Never the room — the corner
                   reference owns that, and a clutter line describing furniture
                   would fight "reproduce that same place faithfully". */}
-              <Picker label="Clutter" flat={shotLib.clutter?.filter((o) => o.id)}
+              <Picker auto={shotPreview?.auto?.clutter} label="Clutter" flat={shotLib.clutter?.filter((o) => o.id)}
                 value={clutter} onChange={setClutter} empty="from brief" />
               <Picker label="Frame size" flat={shotLib.aspects}
                 value={aspect} onChange={setAspect} empty="3:4" />
             </div>
+            </Section>
           )}
           {/* THE THREE OPT-INS.
               Each one was made deliberately per-request by a commit that argued
@@ -153,7 +182,7 @@ export default function ShootTab({
                 <span className="text-[10px] text-zinc-500">Moderation</span>
                 <select value={safety || ""} onChange={(e) => setSafety(e.target.value)}
                   title="fal's own dial. 1 strictest, 6 least strict. Blank uses the provider default (4). Governs OUTPUT moderation — a prompt-level refusal is a policy boundary and this will not move it."
-                  className="mt-1 w-[132px] rounded-lg bg-white/5 ring-1 ring-white/10 px-2.5 py-1.5 text-[12px] outline-none focus:ring-white/30 text-zinc-200">
+                  className="mt-1 w-[132px] rounded-lg bg-white/5 ring-1 ring-line px-2.5 py-1.5 text-[12px] outline-none focus:ring-white/30 text-zinc-200">
                   <option value="">default (4)</option>
                   {[1, 2, 3, 4, 5, 6].map((n) => (
                     <option key={n} value={String(n)}>
@@ -185,7 +214,7 @@ export default function ShootTab({
                 <label className="block">
                   <span className="text-[10px] text-zinc-500">Shot date</span>
                   <input type="date" value={shotDate || ""} onChange={(e) => setShotDate(e.target.value)}
-                    className="mt-1 rounded-lg bg-white/5 ring-1 ring-white/10 px-2.5 py-1.5 text-[12px] outline-none focus:ring-white/30 text-zinc-200" />
+                    className="mt-1 rounded-lg bg-white/5 ring-1 ring-line px-2.5 py-1.5 text-[12px] outline-none focus:ring-white/30 text-zinc-200" />
                 </label>
               )}
             </div>
@@ -199,7 +228,7 @@ export default function ShootTab({
               which side of the 400px plateau the gate will be reading, because
               under it a verdict is about framing rather than identity. */}
           {shotPreview && (
-            <div className="mt-4 rounded-xl bg-white/[0.03] ring-1 ring-white/10 px-3 py-2.5 text-[11px]">
+            <div className="mt-4 rounded-xl bg-surface ring-1 ring-line px-3 py-2.5 text-[11px]">
               <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-zinc-400">
                 <span>{shotPreview.chars} chars</span>
                 <span className={cn(shotPreview.brief_share < 0.15 && "text-amber-400")}>
@@ -249,7 +278,7 @@ export default function ShootTab({
           >
             <Sparkles className="h-4 w-4" /> Generate shot
           </button>
-          {!hasIdentity
+          {!hasFace
             ? <p className="mt-2 text-[11px] text-amber-400/80 text-center">No identity reference yet — calibrate her first.</p>
             : !canGenerate && <p className="mt-2 text-[11px] text-zinc-600 text-center">Requires a brief, outfit, or pose.</p>}
         </section>
@@ -266,7 +295,7 @@ export default function ShootTab({
             <span className="text-[11px] text-zinc-600 tabular-nums">{gens.length ? `${gens.length} this session` : ""}{running ? " · working…" : ""}</span>
           </div>
           {gens.length === 0 ? (
-            <div className="rounded-xl ring-1 ring-white/5 bg-white/[0.02] py-10 text-center text-[12px] text-zinc-600">
+            <div className="rounded-xl ring-1 ring-white/5 bg-surface py-10 text-center text-[12px] text-zinc-600">
               Fire a shot — each generation lands here as its own card, gated the moment it finishes.
             </div>
           ) : (
@@ -297,7 +326,7 @@ export default function ShootTab({
                 <button key={c.id} onClick={() => setWithChar(withChar?.id === c.id ? null : c)}
                   className={cn("rounded-full px-3 py-1 text-[11px] ring-1 transition-colors",
                     withChar?.id === c.id ? "bg-white text-black ring-white"
-                                          : "ring-white/10 text-zinc-400 hover:text-white")}>{c.name}</button>
+                                          : "ring-line text-zinc-400 hover:text-white")}>{c.name}</button>
               ))}
             </div>
             {withChar && (
@@ -309,9 +338,27 @@ export default function ShootTab({
           </section>
         )}
 
-        <OutfitPicker outfits={outfits} selected={selectedOutfit} onSelect={setSelectedOutfit} onClear={() => setSelectedOutfit(null)} onUpload={onUploadOutfit} onOpenDesigner={onOpenDesigner} onDelete={onDeleteOutfit} />
-        <PosePicker poses={poseGroups} selected={selectedPose} onSelect={setSelectedPose} onClear={() => setSelectedPose(null)} />
-        <NailPicker nails={nails} selected={selectedNail} onSelect={setSelectedNail} onClear={() => setSelectedNail(null)} onSave={onSaveNail} onDelete={onDeleteNail} />
+        {/* Outfit leads because it is the first decision on a shoot day; the
+            other two open on demand and remember how you left them. */}
+        <PickerShelf id="outfit" title="Outfit" icon={Shirt} defaultOpen
+          selected={selectedOutfit?.name || selectedOutfit?.id}
+          thumb={selectedOutfit?.url}
+          onClear={() => setSelectedOutfit(null)}>
+          <OutfitPicker outfits={outfits} selected={selectedOutfit} onSelect={setSelectedOutfit} onClear={() => setSelectedOutfit(null)} onUpload={onUploadOutfit} onOpenDesigner={onOpenDesigner} onDelete={onDeleteOutfit} />
+        </PickerShelf>
+
+        <PickerShelf id="pose" title="Pose" icon={PersonStanding}
+          selected={selectedPose?.label || selectedPose?.id}
+          onClear={() => setSelectedPose(null)}>
+          <PosePicker poses={poseGroups} selected={selectedPose} onSelect={setSelectedPose} onClear={() => setSelectedPose(null)} />
+        </PickerShelf>
+
+        <PickerShelf id="nails" title="Nails" icon={Sparkles}
+          selected={selectedNail?.name || selectedNail?.category}
+          thumb={selectedNail?.url}
+          onClear={() => setSelectedNail(null)}>
+          <NailPicker nails={nails} selected={selectedNail} onSelect={setSelectedNail} onClear={() => setSelectedNail(null)} onSave={onSaveNail} onDelete={onDeleteNail} />
+        </PickerShelf>
       </div>
     </div>
   );
@@ -320,14 +367,18 @@ export default function ShootTab({
 function OutfitGenPanel({ creating, preview, categories, onSave, onDiscard }) {
   const [saveCategory, setSaveCategory] = useState("");
   const allCats = [...new Set([...WARDROBE_CATEGORIES, ...categories])];
-  const addCategory = () => { const c = window.prompt("New category name:"); if (c && c.trim()) setSaveCategory(c.trim()); };
+  const addCategory = async () => {
+    const c = await promptText({ title: "New outfit category",
+      placeholder: "e.g. brunch, festive, gym", confirmLabel: "Add" });
+    if (c) setSaveCategory(c);
+  };
 
   return (
-    <section className="rounded-xl ring-1 ring-sky-500/20 bg-sky-500/[0.04] p-4">
+    <section className="rounded-xl ring-1 ring-line-subtle bg-surface p-4">
       <h2 className="text-[13px] font-semibold text-zinc-300 mb-3 flex items-center gap-2"><Shirt className="h-3.5 w-3.5 text-sky-300" /> Outfit generation</h2>
       {preview ? (
         <div className="flex flex-col sm:flex-row gap-4">
-          <img src={`/api/images/${preview.file}`} alt="outfit preview" className="w-40 shrink-0 rounded-lg ring-1 ring-white/10 object-cover" />
+          <img src={`/api/images/${preview.file}`} alt="outfit preview" className="w-40 shrink-0 rounded-lg ring-1 ring-line object-cover" />
           <div className="flex-1 min-w-0">
             <div className="flex items-center justify-between mb-1.5">
               <span className="text-[12px] text-emerald-300">Generated — save into a category, or discard.</span>
@@ -336,13 +387,13 @@ function OutfitGenPanel({ creating, preview, categories, onSave, onDiscard }) {
             <div className="flex flex-wrap gap-1.5">
               {allCats.map((c) => (
                 <button key={c} onClick={() => setSaveCategory(c)}
-                  className={cn("rounded-full px-3 py-1 text-[11px] ring-1 transition-colors", saveCategory === c ? "bg-white text-black ring-white" : "ring-white/10 text-zinc-400 hover:text-white")}>{c}</button>
+                  className={cn("rounded-full px-3 py-1 text-[11px] ring-1 transition-colors", saveCategory === c ? "bg-white text-black ring-white" : "ring-line text-zinc-400 hover:text-white")}>{c}</button>
               ))}
             </div>
             <div className="mt-4 flex gap-2">
               <button onClick={() => onSave(saveCategory)} disabled={!saveCategory}
                 className="rounded-lg bg-white text-black px-4 py-2 text-[12px] font-medium hover:bg-zinc-200 disabled:opacity-40 flex items-center gap-1.5"><Check className="h-3.5 w-3.5" /> Save to wardrobe</button>
-              <button onClick={onDiscard} className="rounded-lg ring-1 ring-white/10 px-4 py-2 text-[12px] text-zinc-300 hover:bg-white/5">Discard</button>
+              <button onClick={onDiscard} className="rounded-lg ring-1 ring-line px-4 py-2 text-[12px] text-zinc-300 hover:bg-white/5">Discard</button>
             </div>
           </div>
         </div>
@@ -358,16 +409,16 @@ function OutfitGenPanel({ creating, preview, categories, onSave, onDiscard }) {
 function GenerationCard({ gen, onOpen }) {
   if (gen.stage === "running") {
     return (
-      <div className="rounded-lg ring-1 ring-white/8 bg-white/[0.02] overflow-hidden">
-        <div className="aspect-square bg-white/[0.02] flex items-center justify-center p-3">
+      <div className="rounded-lg ring-1 ring-line-subtle bg-surface overflow-hidden">
+        <div className="aspect-square bg-surface flex items-center justify-center p-3">
           <div className="text-center">
             <Loader2 className="h-4 w-4 text-amber-300 animate-spin mx-auto mb-1.5" />
-            <p className="text-[9px] text-zinc-500 line-clamp-2">{gen.brief}</p>
+            <p className="text-[11px] text-zinc-500 line-clamp-2">{gen.brief}</p>
           </div>
         </div>
         <div className="px-2 py-1.5 flex items-center gap-1">
-          <span className="text-[9px] text-zinc-400 truncate">{gen.stageLabel}</span>
-          <span className="ml-auto text-[9px] text-zinc-600 tabular-nums">{gen.elapsed}s</span>
+          <span className="text-[11px] text-zinc-400 truncate">{gen.stageLabel}</span>
+          <span className="ml-auto text-[11px] text-zinc-600 tabular-nums">{gen.elapsed}s</span>
         </div>
       </div>
     );
@@ -377,15 +428,15 @@ function GenerationCard({ gen, onOpen }) {
     return (
       <div className="rounded-lg ring-1 ring-rose-500/20 bg-rose-500/[0.04] overflow-hidden">
         <div className="aspect-square flex items-center justify-center p-3 text-center">
-          <p className="text-[9px] text-rose-300/80 line-clamp-4">{gen.error}</p>
+          <p className="text-[11px] text-rose-300/80 line-clamp-4">{gen.error}</p>
         </div>
-        <div className="px-2 py-1.5 text-[9px] text-zinc-500 truncate">{gen.brief}</div>
+        <div className="px-2 py-1.5 text-[11px] text-zinc-500 truncate">{gen.brief}</div>
       </div>
     );
   }
 
   return (
-    <button onClick={onOpen} className="text-left rounded-lg ring-1 ring-white/8 bg-white/[0.02] overflow-hidden hover:ring-white/20 transition-all group">
+    <button onClick={onOpen} className="text-left rounded-lg ring-1 ring-line-subtle bg-surface overflow-hidden hover:ring-white/20 transition-all group">
       <div className="relative aspect-square overflow-hidden bg-zinc-900">
         <img src={gen.thumb} alt={gen.brief} className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.02]" />
         <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent p-1.5">
@@ -394,7 +445,7 @@ function GenerationCard({ gen, onOpen }) {
       </div>
       <div className="px-2 py-1.5">
         <div className="text-[10px] text-zinc-300 line-clamp-1">{gen.brief}</div>
-        <div className="mt-0.5 flex items-center gap-1 text-[9px] text-zinc-500">
+        <div className="mt-0.5 flex items-center gap-1 text-[11px] text-zinc-500">
           <span className="truncate">{gen.model}</span>
           <span>·</span>
           <span className="tabular-nums">{gen.created}</span>

@@ -3,6 +3,7 @@ import { api } from "@/api/throughline";
 import { ArrowUp, ArrowDown, Loader2, AlertTriangle, Plus, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useModels } from "@/components/ModelPicker";
+import BackupPanel from "@/components/settings/BackupPanel";
 
 // PROVIDERS — who renders, in what order.
 //
@@ -83,7 +84,7 @@ export default function Settings() {
     ? Math.round((1 - first.usd / fal.usd) * 100) : 0;
 
   return (
-    <div className="px-5 md:px-8 py-7 max-w-[900px] mx-auto">
+    <div className="px-6 py-6 max-w-[1100px]">
       <div className="mb-6">
         <h1 className="text-[19px] font-semibold tracking-tight">Settings</h1>
         <p className="text-[12px] text-zinc-500 mt-0.5">
@@ -120,19 +121,19 @@ export default function Settings() {
 
         <div className="space-y-2">
           {eras.map((e, i) => (
-            <div key={i} className="rounded-xl bg-white/[0.03] ring-1 ring-white/10 p-3">
+            <div key={i} className="rounded-xl bg-surface ring-1 ring-line p-3">
               <div className="flex flex-wrap items-end gap-3">
                 <label className="block">
                   <span className="text-[10px] text-zinc-500">From</span>
                   <input type="date" value={e.from || ""}
                     onChange={(ev) => patchEra(i, "from", ev.target.value)}
-                    className="mt-1 block rounded-lg bg-white/5 ring-1 ring-white/10 px-2.5 py-1.5 text-[12px] outline-none focus:ring-white/30 text-zinc-200" />
+                    className="mt-1 block rounded-lg bg-white/5 ring-1 ring-line px-2.5 py-1.5 text-[12px] outline-none focus:ring-white/30 text-zinc-200" />
                 </label>
                 <label className="block flex-1 min-w-[10rem]">
                   <span className="text-[10px] text-zinc-500">Name</span>
                   <input value={e.name || ""} placeholder="long hair, pre-monsoon"
                     onChange={(ev) => patchEra(i, "name", ev.target.value)}
-                    className="mt-1 block w-full rounded-lg bg-white/5 ring-1 ring-white/10 px-2.5 py-1.5 text-[12px] outline-none focus:ring-white/30 text-zinc-200 placeholder:text-zinc-600" />
+                    className="mt-1 block w-full rounded-lg bg-white/5 ring-1 ring-line px-2.5 py-1.5 text-[12px] outline-none focus:ring-white/30 text-zinc-200 placeholder:text-zinc-600" />
                 </label>
                 <button onClick={() => saveEras(eras.filter((_, j) => j !== i))}
                   title="Remove this era"
@@ -145,7 +146,7 @@ export default function Settings() {
                 <span className="text-[10px] text-zinc-500">Hair</span>
                 <input value={e.hair || ""} placeholder="cut to the collarbone, blunt ends"
                   onChange={(ev) => patchEra(i, "hair", ev.target.value)}
-                  className="mt-1 block w-full rounded-lg bg-white/5 ring-1 ring-white/10 px-2.5 py-1.5 text-[12px] outline-none focus:ring-white/30 text-zinc-200 placeholder:text-zinc-600" />
+                  className="mt-1 block w-full rounded-lg bg-white/5 ring-1 ring-line px-2.5 py-1.5 text-[12px] outline-none focus:ring-white/30 text-zinc-200 placeholder:text-zinc-600" />
               </label>
 
               {/* Off by default and deliberately so: an era's hair line DESCRIBES
@@ -172,7 +173,7 @@ export default function Settings() {
 
         <button
           onClick={() => saveEras([...eras, { from: new Date().toISOString().slice(0, 10), name: "" }])}
-          className="mt-3 inline-flex items-center gap-1.5 rounded-lg ring-1 ring-white/10 px-3 py-1.5 text-[12px] text-zinc-300 hover:ring-white/30">
+          className="mt-3 inline-flex items-center gap-1.5 rounded-lg ring-1 ring-line px-3 py-1.5 text-[12px] text-zinc-300 hover:ring-white/30">
           <Plus className="h-3.5 w-3.5" /> Add an era
         </button>
         {!eras.length && (
@@ -212,7 +213,7 @@ export default function Settings() {
             <button key={m.id}
               onClick={() => { setModelErr(null); saveDefault(m.id).catch((e) => setModelErr(String(e))); }}
               className={cn("w-full text-left rounded-xl ring-1 px-3 py-2.5 transition-colors",
-                m.id === def ? "bg-emerald-500/[0.08] ring-emerald-500/40" : "bg-white/[0.02] ring-white/10 hover:bg-white/[0.04]")}>
+                m.id === def ? "bg-emerald-500/[0.08] ring-emerald-500/40" : "bg-surface ring-line hover:bg-white/[0.04]")}>
               <div className="flex items-center gap-2">
                 <span className={cn("text-[13px]", m.id === def ? "text-zinc-100" : "text-zinc-300")}>{m.label}</span>
                 {m.id === def && (
@@ -252,7 +253,7 @@ export default function Settings() {
             return (
               <div key={r.name}
                 className={cn("rounded-xl ring-1 px-3 py-2.5 flex items-center gap-3",
-                  r.enabled && !dead ? "bg-white/[0.03] ring-white/10" : "bg-white/[0.01] ring-white/5")}>
+                  r.enabled && !dead ? "bg-surface ring-line" : "bg-white/[0.01] ring-white/5")}>
                 <div className="flex flex-col gap-0.5">
                   <button onClick={() => move(i, -1)} disabled={i === 0}
                     className="text-zinc-500 hover:text-zinc-200 disabled:opacity-20">
@@ -320,6 +321,8 @@ export default function Settings() {
           </p>
         </div>
       </section>
+
+      <BackupPanel />
     </div>
   );
 }

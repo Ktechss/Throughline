@@ -1,4 +1,4 @@
-import { PersonStanding, ChevronDown } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAssetBrowser } from "./useAssetBrowser";
 import { SearchBox, CategoryChips, CountLine, EmptyState } from "./assetBrowserParts";
@@ -11,22 +11,13 @@ export default function PosePicker({ poses, selected, onSelect, onClear }) {
   const browser = useAssetBrowser({ items, categories, pageSize: 25 });
 
   return (
-    <section className="rounded-2xl ring-1 ring-white/8 bg-white/[0.02] p-4">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-[12px] font-semibold text-zinc-300 flex items-center gap-1.5">
-          <PersonStanding className="h-3.5 w-3.5" /> Pose
-        </h3>
-        {selected && (
-          <button onClick={onClear} className="text-[11px] text-zinc-500 hover:text-zinc-300">clear</button>
-        )}
-      </div>
-
+    <div>
       <SearchBox value={browser.query} onChange={browser.setQuery} placeholder="Search poses…" />
       <CategoryChips categories={categories} active={browser.category} onSelect={browser.setCategory} />
       <CountLine visible={browser.visible.length} total={browser.total} />
 
       {selected && (
-        <div className="mt-2 rounded-lg ring-1 ring-white/10 bg-white/[0.03] px-2.5 py-2">
+        <div className="mt-2 rounded-lg ring-1 ring-line bg-surface px-2.5 py-2">
           <div className="text-[11px] font-medium text-zinc-200">{selected.label}</div>
           <div className="text-[10px] text-zinc-500 leading-snug line-clamp-2">{selected.text}</div>
         </div>
@@ -43,11 +34,11 @@ export default function PosePicker({ poses, selected, onSelect, onClear }) {
                 "aspect-square rounded-lg ring-1 flex flex-col items-center justify-center gap-1 p-1 transition-all",
                 selected?.id === p.id
                   ? "ring-2 ring-emerald-400 bg-emerald-500/10 text-white"
-                  : "ring-white/8 bg-white/[0.02] text-zinc-400 hover:ring-white/25 hover:text-zinc-200"
+                  : "ring-line-subtle bg-surface text-zinc-400 hover:ring-white/25 hover:text-zinc-200"
               )}
             >
               <PoseIcon id={p.id} category={p.category} className="h-6 w-6" />
-              <span className="w-full text-[8px] leading-tight text-center line-clamp-2">{p.label}</span>
+              <span className="w-full text-[11px] leading-tight text-center line-clamp-2">{p.label}</span>
             </button>
           ))}
         </div>
@@ -55,13 +46,13 @@ export default function PosePicker({ poses, selected, onSelect, onClear }) {
         {browser.hasMore && (
           <button
             onClick={browser.loadMore}
-            className="mt-3 w-full rounded-lg ring-1 ring-white/10 py-2 text-[11px] text-zinc-300 hover:bg-white/5 flex items-center justify-center gap-1.5"
+            className="mt-3 w-full rounded-lg ring-1 ring-line py-2 text-[11px] text-zinc-300 hover:bg-white/5 flex items-center justify-center gap-1.5"
           >
             <ChevronDown className="h-3 w-3" /> Load more
           </button>
         )}
         {browser.total === 0 && <EmptyState label="poses" />}
       </div>
-    </section>
+    </div>
   );
 }

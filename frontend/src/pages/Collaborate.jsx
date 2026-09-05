@@ -163,9 +163,9 @@ export default function Collaborate() {
     <div className="px-5 md:px-8 py-7 max-w-[1700px] mx-auto">
       <div className="flex items-baseline justify-between mb-5">
         <div>
-          <h1 className="text-[19px] font-semibold tracking-tight">Collaborator Studio</h1>
+          <h1 className="text-[24px] font-semibold tracking-[-0.4px] leading-none text-ink">Scenes</h1>
           <p className="text-[12px] text-zinc-500 mt-0.5">
-            Name anyone with @ — the cast, and everything each of them needs, follows.
+            Two or more of them in one photograph. Name anyone with @ — the cast, and everything each of them needs, follows.
           </p>
         </div>
       </div>
@@ -174,15 +174,15 @@ export default function Collaborate() {
 
         {/* ---------------------------------------------------------- BRIEF */}
         <section className="space-y-3">
-          <div className="rounded-2xl ring-1 ring-white/8 bg-white/[0.02] p-4">
+          <div className="rounded-2xl ring-1 ring-line-subtle bg-surface p-4">
             <span className="text-[10px] uppercase tracking-[0.18em] text-zinc-600">The brief</span>
             <textarea ref={box} value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={5}
               placeholder="@kiara @alexa and @ridhi at an ice cream parlour in a Pune mall…"
-              className="mt-2 w-full rounded-lg bg-white/5 ring-1 ring-white/10 px-3 py-2.5 text-[13px] focus:ring-white/30 outline-none resize-none" />
+              className="mt-2 w-full rounded-lg bg-white/5 ring-1 ring-line px-3 py-2.5 text-[13px] focus:ring-white/30 outline-none resize-none" />
             <div className="mt-2 flex flex-wrap gap-1.5">
               {characters.filter((c) => c.has_reference).map((c) => (
                 <button key={c.id} onClick={() => insert(c.id)}
-                  className="rounded-full px-2.5 py-1 text-[11px] ring-1 ring-white/10 text-zinc-400 hover:text-white hover:ring-white/25">
+                  className="rounded-full px-2.5 py-1 text-[11px] ring-1 ring-line text-zinc-400 hover:text-white hover:ring-white/25">
                   @{c.id}
                 </button>
               ))}
@@ -190,7 +190,7 @@ export default function Collaborate() {
           </div>
 
           {lib && (
-            <div className="rounded-2xl ring-1 ring-white/8 bg-white/[0.02] p-4">
+            <div className="rounded-2xl ring-1 ring-line-subtle bg-surface p-4">
               <button onClick={() => setShowMoments(!showMoments)}
                 className="w-full flex items-center justify-between text-left">
                 <span className="text-[10px] uppercase tracking-[0.18em] text-zinc-600">Scenarios</span>
@@ -206,7 +206,7 @@ export default function Collaborate() {
                       <div className="flex flex-wrap gap-1.5">
                         {items.map((m) => (
                           <button key={m.id} onClick={() => applyMoment(m)} title={m.activity}
-                            className="rounded-lg px-2.5 py-1.5 text-[11px] ring-1 ring-white/10 text-zinc-300 hover:ring-white/30 hover:bg-white/5">
+                            className="rounded-lg px-2.5 py-1.5 text-[11px] ring-1 ring-line text-zinc-300 hover:ring-white/30 hover:bg-white/5">
                             {m.label}
                           </button>
                         ))}
@@ -221,7 +221,7 @@ export default function Collaborate() {
           {/* The written prompt. Claude drafts it; you edit it; it is used
               VERBATIM when present. The references do not change, so the @imageN
               tags it was written against still point where it thinks they do. */}
-          <div className="rounded-2xl ring-1 ring-white/8 bg-white/[0.02] p-4">
+          <div className="rounded-2xl ring-1 ring-line-subtle bg-surface p-4">
             <div className="flex items-center justify-between">
               <span className="text-[10px] uppercase tracking-[0.18em] text-zinc-600">Written prompt</span>
               <div className="flex items-center gap-2">
@@ -239,12 +239,21 @@ export default function Collaborate() {
             </div>
             <textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={draft ? 10 : 3}
               placeholder="Empty = built from the pickers below. Write or generate one here and it is used exactly as typed."
-              className="mt-2 w-full rounded-lg bg-white/[0.02] ring-1 ring-white/10 px-3 py-2.5 text-[12px] font-mono leading-relaxed focus:ring-white/30 outline-none resize-none" />
+              className="mt-2 w-full rounded-lg bg-surface ring-1 ring-line px-3 py-2.5 text-[12px] font-mono leading-relaxed focus:ring-white/30 outline-none resize-none" />
           </div>
         </section>
 
         {/* ------------------------------------------------------ CAST + AXES */}
         <section className="space-y-3">
+          {cast.length === 0 && (
+            <div className="rounded-xl bg-surface ring-1 ring-line-subtle px-5 py-10 text-center">
+              <div className="text-[13px] font-medium text-ink">No cast yet</div>
+              <p className="mx-auto mt-1.5 max-w-[320px] text-[13px] text-ink-subtle leading-relaxed">
+                Type <span className="text-ink-muted">@</span> and a name in the brief.
+                Everything each of them wears, does and stands in appears here.
+              </p>
+            </div>
+          )}
           {cast.length > 0 && (
             <div className="space-y-2">
               {cast.map((c) => c.has_reference ? (
@@ -252,15 +261,21 @@ export default function Collaborate() {
                   value={member(c.id)}
                   onChange={(v) => setMembers((m) => ({ ...m, [c.id]: v }))} />
               ) : (
-                <div key={c.id} className="rounded-xl ring-1 ring-rose-500/20 bg-rose-500/5 px-3 py-2 text-[11px] text-rose-200">
-                  {c.name} has no master face yet — choose one before shooting her
+                <div key={c.id} className="flex items-center gap-3 rounded-xl ring-1 ring-rose-500/25 bg-rose-500/[0.07] px-3 py-2.5">
+                  <span className="flex-1 text-[13px] text-rose-200">
+                    {c.name} has no master face yet
+                  </span>
+                  <a href={`/studio?char=${encodeURIComponent(c.id)}`}
+                    className="shrink-0 rounded-md bg-white/10 px-2.5 py-1 text-[11px] text-ink-muted hover:bg-white/15">
+                    Fix her face →
+                  </a>
                 </div>
               ))}
             </div>
           )}
 
           {lib && (
-            <div className="rounded-2xl ring-1 ring-white/8 bg-white/[0.02] p-4 space-y-3">
+            <div className="rounded-2xl ring-1 ring-line-subtle bg-surface p-4 space-y-3">
               <span className="text-[10px] uppercase tracking-[0.18em] text-zinc-600">The photograph</span>
 
               <div className="grid grid-cols-2 gap-2">
@@ -297,7 +312,7 @@ export default function Collaborate() {
                 <span className="text-[10px] text-zinc-500">Doing</span>
                 <input value={activity} onChange={(e) => setActivity(e.target.value)}
                   placeholder="what is happening"
-                  className="mt-1 w-full rounded-lg bg-white/5 ring-1 ring-white/10 px-2.5 py-1.5 text-[12px] outline-none focus:ring-white/30" />
+                  className="mt-1 w-full rounded-lg bg-white/5 ring-1 ring-line px-2.5 py-1.5 text-[12px] outline-none focus:ring-white/30" />
               </label>
 
               <div className="grid grid-cols-2 gap-2">
@@ -351,7 +366,7 @@ export default function Collaborate() {
                   seed
                   <input value={seed} onChange={(e) => setSeed(e.target.value.replace(/\D/g, ""))}
                     placeholder="random"
-                    className="w-24 rounded-lg bg-white/5 ring-1 ring-white/10 px-2 py-1 text-[11px] outline-none focus:ring-white/30" />
+                    className="w-24 rounded-lg bg-white/5 ring-1 ring-line px-2 py-1 text-[11px] outline-none focus:ring-white/30" />
                 </label>
               </div>
             </div>
@@ -361,7 +376,7 @@ export default function Collaborate() {
         {/* --------------------------------------------------------- OUTPUT */}
         <section className="space-y-3 lg:sticky lg:top-5">
           {preview && (
-            <div className="rounded-2xl ring-1 ring-white/8 bg-white/[0.02] p-4 space-y-3">
+            <div className="rounded-2xl ring-1 ring-line-subtle bg-surface p-4 space-y-3">
               <span className="text-[10px] uppercase tracking-[0.18em] text-zinc-600">What this will cost</span>
 
               {/* THE LEDGER. Every image reference is measured off the identity,
@@ -372,7 +387,7 @@ export default function Collaborate() {
                   <span key={i} className={cn("rounded-full px-2 py-0.5 text-[10px] ring-1",
                     l.mode === "image" ? "ring-emerald-400/30 text-emerald-300"
                       : l.mode === "dropped" ? "ring-white/5 text-zinc-600 line-through"
-                      : "ring-white/10 text-zinc-500")}>
+                      : "ring-line text-zinc-500")}>
                     {l.mode === "image" ? l.tag : l.mode} · {l.label}
                   </span>
                 ))}
@@ -385,7 +400,7 @@ export default function Collaborate() {
               {/* The predicted face size. An estimate, calibrated on one real
                   measurement, and the thing that decides whether the gate can
                   say anything about the result at all. */}
-              <div className="rounded-lg ring-1 ring-white/8 px-3 py-2">
+              <div className="rounded-lg ring-1 ring-line-subtle px-3 py-2">
                 <div className="flex items-baseline justify-between">
                   <span className="text-[10px] text-zinc-500">estimated face size</span>
                   <span className={cn("text-[13px] font-medium",
@@ -431,10 +446,10 @@ export default function Collaborate() {
           )}
 
           {result && (
-            <div className="rounded-2xl ring-1 ring-white/8 bg-white/[0.02] p-3 space-y-2">
+            <div className="rounded-2xl ring-1 ring-line-subtle bg-surface p-3 space-y-2">
               {/* An <img>, so the owner travels in the URL — a header cannot. */}
               <img src={`/api/images/${result.file}?character=${cast[0]?.id || ""}`} alt=""
-                   className="w-full rounded-lg ring-1 ring-white/10" />
+                   className="w-full rounded-lg ring-1 ring-line" />
               <div className="text-[11px] space-y-1">
                 <div className={cn("font-medium", v?.status === "kept" ? "text-emerald-300" : "text-amber-300")}>
                   {v?.status}

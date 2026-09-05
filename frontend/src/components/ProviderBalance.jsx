@@ -42,7 +42,7 @@ export default function ProviderBalance() {
   return (
     <Link to="/settings"
       title="Provider order and balance"
-      className={cn("block rounded-lg px-3 py-2 transition-colors hover:bg-white/[0.03]",
+      className={cn("block rounded-lg px-3 py-2 transition-colors hover:bg-surface",
         low && "bg-amber-500/[0.07]")}>
       <div className="flex items-center gap-2">
         {low ? <AlertTriangle className="h-3.5 w-3.5 text-amber-400" strokeWidth={1.5} />

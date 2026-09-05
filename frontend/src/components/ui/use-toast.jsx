@@ -1,8 +1,13 @@
 // Inspired by react-hot-toast library
 import { useState, useEffect } from "react";
 
-const TOAST_LIMIT = 20;
-const TOAST_REMOVE_DELAY = 1000000;
+// Shipped as 20 / 1000000 by the generator — a toast stayed on screen for
+// SIXTEEN MINUTES and twenty could stack. Both are the defaults nobody notices
+// until the first one fires.
+const TOAST_LIMIT = 3;
+const TOAST_REMOVE_DELAY = 200;        // after dismiss, time to animate out
+const DEFAULT_DURATION = 4500;
+const ERROR_DURATION = 8000;           // a failure is worth reading twice
 
 const actionTypes = {
   ADD_TOAST: "ADD_TOAST",
@@ -110,7 +115,7 @@ function dispatch(action) {
   });
 }
 
-function toast({ ...props }) {
+function toast({ duration, ...props }) {
   const id = genId();
 
   const update = (props) =>
@@ -134,12 +139,25 @@ function toast({ ...props }) {
     },
   });
 
+  // Nothing dismissed these. The generator's reducer only ever queues a REMOVE
+  // once something else calls dismiss(), so without this a toast is permanent.
+  const ms = duration ?? (props.variant === "destructive"
+    ? ERROR_DURATION : DEFAULT_DURATION);
+  if (ms > 0) setTimeout(dismiss, ms);
+
   return {
     id,
     dismiss,
     update,
   };
 }
+
+// The two shapes actually used across the app, so call sites read as intent
+// rather than as configuration.
+toast.ok = (title, description) => toast({ title, description });
+toast.err = (title, description) =>
+  toast({ title, description: String(description ?? "").slice(0, 300),
+          variant: "destructive" });
 
 function useToast() {
   const [state, setState] = useState(memoryState);

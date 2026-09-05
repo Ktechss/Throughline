@@ -1,14 +1,49 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { ChevronDown, Download, Trash2, Check, X, Eraser, Film } from "lucide-react";
+import { Chip } from "@/components/ui/chip";
 import { cn } from "@/lib/utils";
 import VerdictChip from "./VerdictChip";
 import BulkBar, { TileCheckbox } from "./BulkBar";
 import { useSelection } from "@/lib/useSelection";
+import { StatTile } from "@/components/ui/stat";
 
 export default function ReviewTab({ stats, shots, onOpenDetail, onMark, onDelete, onExportGold, onPurgeRejected, onCleanup, onBulkDelete, onBulkMark }) {
   const [expanded, setExpanded] = useState(false);
   const sel = useSelection();
   const runBulk = async (fn) => { await fn(); sel.clear(); };
+
+  // TRIAGE, not a wall.
+  //
+  // This rendered every run at once: 208 cards, a 21,000px page, and no way to
+  // ask the only question the tab exists to answer — "what still needs marking?"
+  // 170 of these are unmarked, and finding them meant scrolling past the 38 that
+  // are done.
+  const [filter, setFilter] = useState("all");
+  const [shown, setShown] = useState(60);
+
+  const counts = useMemo(() => ({
+    all: shots.length,
+    unmarked: shots.filter((s) => !s.approved && !s.rejected).length,
+    approved: shots.filter((s) => s.approved).length,
+    rejected: shots.filter((s) => s.rejected).length,
+    kept: shots.filter((s) => s.status === "kept").length,
+    clips: shots.filter((s) => s.kind === "video").length,
+  }), [shots]);
+
+  const visible = useMemo(() => {
+    const f = {
+      all: () => true,
+      unmarked: (s) => !s.approved && !s.rejected,
+      approved: (s) => s.approved,
+      rejected: (s) => s.rejected,
+      kept: (s) => s.status === "kept",
+      clips: (s) => s.kind === "video",
+    }[filter] || (() => true);
+    return shots.filter(f);
+  }, [shots, filter]);
+
+  const page = visible.slice(0, shown);
+  const pick = (id) => { setFilter(id); setShown(60); };
 
   const totalShots = stats ? stats.totalShots : 0;
   const keepRate = stats ? stats.keepRate : 0;
@@ -21,25 +56,25 @@ export default function ReviewTab({ stats, shots, onOpenDetail, onMark, onDelete
       {/* Header count */}
       <div className="flex items-center justify-between flex-wrap gap-4">
         <div className="flex items-center gap-6">
-          <Metric label="Shot images" value={totalShots} />
-          <Metric label="Keep-rate" value={`${Math.round(keepRate * 100)}%`} accent="emerald" />
-          <Metric label="Approved" value={approved} accent="emerald" />
-          <Metric label="Rejected" value={rejected} accent="rose" />
-          <Metric label="Gold set" value={goldSet} accent="amber" />
+          <StatTile label="Shot images" value={totalShots} />
+          <StatTile label="Keep-rate" value={`${Math.round(keepRate * 100)}%`} accent="emerald" />
+          <StatTile label="Approved" value={approved} accent="emerald" />
+          <StatTile label="Rejected" value={rejected} accent="rose" />
+          <StatTile label="Gold set" value={goldSet} accent="amber" />
         </div>
         <div className="flex gap-2">
-          <button onClick={onExportGold} className="rounded-lg ring-1 ring-white/10 hover:bg-white/5 px-3 py-2 text-[12px] text-zinc-300 flex items-center gap-1.5"><Download className="h-3.5 w-3.5" /> Export gold set</button>
+          <button onClick={onExportGold} className="rounded-lg ring-1 ring-line hover:bg-white/5 px-3 py-2 text-[12px] text-zinc-300 flex items-center gap-1.5"><Download className="h-3.5 w-3.5" /> Export gold set</button>
           {rejected > 0 && (
             <button onClick={onPurgeRejected} className="rounded-lg ring-1 ring-rose-500/30 hover:bg-rose-500/10 px-3 py-2 text-[12px] text-rose-300 flex items-center gap-1.5"><Trash2 className="h-3.5 w-3.5" /> Delete rejected ({rejected})</button>
           )}
-          <button onClick={onCleanup} className="rounded-lg ring-1 ring-white/10 hover:bg-white/5 px-3 py-2 text-[12px] text-zinc-300 flex items-center gap-1.5"><Eraser className="h-3.5 w-3.5" /> Clean up images</button>
+          <button onClick={onCleanup} className="rounded-lg ring-1 ring-line hover:bg-white/5 px-3 py-2 text-[12px] text-zinc-300 flex items-center gap-1.5"><Eraser className="h-3.5 w-3.5" /> Clean up images</button>
         </div>
       </div>
 
       {/* Learning stats (collapsible) */}
       {stats && (
-        <div className="rounded-xl ring-1 ring-white/8 bg-white/[0.02] overflow-hidden">
-          <button onClick={() => setExpanded(!expanded)} className="w-full flex items-center justify-between px-4 py-3 hover:bg-white/[0.02]">
+        <div className="rounded-xl ring-1 ring-line-subtle bg-surface overflow-hidden">
+          <button onClick={() => setExpanded(!expanded)} className="w-full flex items-center justify-between px-4 py-3 hover:bg-surface">
             <span className="text-[12px] font-medium text-zinc-300">Learning stats</span>
             <ChevronDown className={cn("h-4 w-4 text-zinc-500 transition-transform", expanded && "rotate-180")} />
           </button>
@@ -64,12 +99,26 @@ export default function ReviewTab({ stats, shots, onOpenDetail, onMark, onDelete
 
       {/* Gallery */}
       <div>
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-[13px] font-semibold text-zinc-200">Gallery</h3>
-          <span className="text-[11px] text-zinc-600 tabular-nums">{shots.length} shots</span>
+        {/* Counts in the chip, omitted at zero — a filter that leads to an empty
+            grid is a dead end you only discover by clicking it. */}
+        <div className="sticky top-14 z-10 -mx-1 mb-3 flex items-center gap-1.5 overflow-x-auto no-scrollbar bg-canvas/95 px-1 py-2 backdrop-blur">
+          {[
+            ["unmarked", "Unmarked"], ["all", "All"], ["kept", "Past the gate"],
+            ["approved", "Approved"], ["rejected", "Rejected"], ["clips", "Clips"],
+          ].map(([id, label]) => (
+            counts[id] > 0 || id === "all" ? (
+              <Chip key={id} selected={filter === id} onClick={() => pick(id)}
+                className="shrink-0 normal-case">
+                {label} <span className="tnum opacity-60">{counts[id]}</span>
+              </Chip>
+            ) : null
+          ))}
+          <span className="tnum ml-auto shrink-0 pl-3 text-[11px] text-ink-faint">
+            showing {Math.min(shown, visible.length)} of {visible.length}
+          </span>
         </div>
         <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 xl:grid-cols-6 gap-3">
-          {shots.map((s) => (
+          {page.map((s) => (
             <ShotCard
               key={s.id}
               shot={s}
@@ -83,12 +132,28 @@ export default function ReviewTab({ stats, shots, onOpenDetail, onMark, onDelete
             />
           ))}
         </div>
+
+        {visible.length > page.length && (
+          <div className="mt-4 flex justify-center">
+            <button onClick={() => setShown((n) => n + 60)}
+              className="h-9 rounded-md bg-surface ring-1 ring-line px-4 text-[13px] text-ink-muted hover:bg-raised">
+              Load {Math.min(60, visible.length - page.length)} more
+            </button>
+          </div>
+        )}
+        {visible.length === 0 && (
+          <div className="rounded-xl bg-surface ring-1 ring-line-subtle py-12 text-center text-[13px] text-ink-subtle">
+            Nothing here — every shot in this view has been marked.
+          </div>
+        )}
       </div>
 
+      {/* Bulk actions apply to what is ON SCREEN, so "select all" cannot
+          silently reach 208 rows while you are looking at 60. */}
       <BulkBar
         count={sel.count}
-        total={shots.length}
-        onSelectAll={() => sel.selectAll(shots.map((s) => s.id))}
+        total={page.length}
+        onSelectAll={() => sel.selectAll(page.map((s) => s.id))}
         onCancel={sel.clear}
         actions={[
           { label: "Approve", onClick: () => runBulk(() => onBulkMark(sel.ids, "approve")) },
@@ -96,15 +161,6 @@ export default function ReviewTab({ stats, shots, onOpenDetail, onMark, onDelete
           { label: `Delete ${sel.count}`, danger: true, onClick: () => runBulk(() => onBulkDelete(sel.ids)) },
         ]}
       />
-    </div>
-  );
-}
-
-function Metric({ label, value, accent }) {
-  return (
-    <div>
-      <div className={cn("text-xl font-semibold tabular-nums", accent === "emerald" && "text-emerald-300", accent === "rose" && "text-rose-300", accent === "amber" && "text-amber-300", !accent && "text-zinc-100")}>{value}</div>
-      <div className="text-[10px] text-zinc-500 uppercase tracking-wider mt-0.5">{label}</div>
     </div>
   );
 }
@@ -124,14 +180,14 @@ function BarRow({ label, rate, kept, total }) {
 
 function ShotCard({ shot, selected, selecting, onToggleSelect, onOpen, onApprove, onReject, onDelete }) {
   return (
-    <div className={cn("group rounded-xl ring-1 bg-white/[0.02] overflow-hidden transition-all", selected ? "ring-white/60" : "ring-white/8 hover:ring-white/20")}>
+    <div className={cn("group rounded-xl ring-1 bg-surface overflow-hidden transition-all", selected ? "ring-white/60" : "ring-line-subtle hover:ring-white/20")}>
       <button onClick={selecting ? onToggleSelect : onOpen} className="relative block w-full aspect-[4/5] overflow-hidden bg-zinc-900">
         <TileCheckbox checked={selected} active={selecting} onChange={onToggleSelect} />
         <img src={shot.thumb} alt={shot.brief} className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]" />
         {/* A clip's thumb is its first frame, so without this it is indistinguishable
             from the still it was animated from. */}
         {shot.kind === "video" && (
-          <div className="absolute top-2 left-2 flex items-center gap-1 rounded-md bg-black/70 px-1.5 py-0.5 text-[9px] font-medium text-zinc-200 ring-1 ring-white/15">
+          <div className="absolute top-2 left-2 flex items-center gap-1 rounded-md bg-black/70 px-1.5 py-0.5 text-[11px] font-medium text-zinc-200 ring-1 ring-white/15">
             <Film className="h-2.5 w-2.5" />{shot.duration ? `${shot.duration}s` : "clip"}
           </div>
         )}

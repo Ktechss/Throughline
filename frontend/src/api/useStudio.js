@@ -1,11 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, setApiCharacter, genView, groupPoses, outfitView, nailView, runView, ep, mergeOutfit, STAGE } from "@/api/throughline";
+import { confirm } from "@/components/ui/confirm";
+import { toast } from "@/components/ui/use-toast";
+import { api, jobStream, awaitJob, setApiCharacter, apiCharacter, genView, groupPoses, outfitView, nailView, runView, ep, mergeOutfit, STAGE } from "@/api/throughline";
 
 // The studio orchestration hub — ported from the legacy App.jsx. Loads all of the
 // active character's data and exposes every action the tabs call. Polling is
 // epoch-guarded so a character switch cancels in-flight jobs cleanly.
 export function useStudio(charParam) {
   const epoch = useRef(0);
+  // Every open job stream, so unmounting actually closes them. The old poll
+  // loops had no cleanup at all: `epoch` only moves on a CHARACTER SWITCH
+  // (inside load()), so navigating away from the Studio left every loop
+  // running against a dead component until the tab was closed.
+  const watchers = useRef(new Set());
+  useEffect(() => () => {
+    watchers.current.forEach((stop) => { try { stop(); } catch { /* already shut */ } });
+    watchers.current.clear();
+  }, []);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
 
@@ -98,29 +109,51 @@ export function useStudio(charParam) {
 
   const fail = (e) => setErr(String(e));
 
+  // EACH ANSWER LANDS AS IT ARRIVES.
+  //
+  // This was one Promise.all over twelve requests, applying no state until the
+  // slowest resolved — and /api/refs ran ArcFace over every reference, taking
+  // ten seconds. So marking a shot fired the write, fetched the new runs in
+  // 200ms, and then sat on them for another ten seconds waiting for an endpoint
+  // the Review tab does not even read. The mark HAD worked; the UI just would
+  // not say so, which is indistinguishable from a broken button.
+  //
+  // Requests still go out together — this is not slower — but a slow one now
+  // delays only its own slice of the page.
   const refresh = useCallback(async () => {
     const mine = epoch.current;
-    const [p, r, g, rf, b, wd, pl, pr, st, bd, nl, pc] = await Promise.all([
-      api.get("/api/parts"), api.get("/api/runs"), api.get("/api/gallery"),
-      api.get("/api/refs"), api.get("/api/bio"), api.get("/api/wardrobe"),
-      api.get("/api/pose-library"), api.get("/api/pose-refs"), api.get("/api/stats"),
-      api.get("/api/bodies"), api.get("/api/nails"), api.get("/api/home"),
-    ]);
-    if (mine !== epoch.current) return;
-    setParts(p.parts); setRuns(r.runs); setGallery(g); setRefs(rf.refs);
-    setBio(b); setWardrobe((wd.wardrobe || []).map(outfitView));
-    // Restore the most recent body candidate from the ledger. It used to live
-    // only here in page state, so switching tabs or reloading threw away a body
-    // you had just generated — the run was always on disk, nothing was showing
-    // it. Only restore when nothing is in flight, so a refresh mid-generation
-    // cannot yank a newer preview out from under you.
-    setBodyPreview((cur) => cur || (b.body_candidates?.[0]
-      ? { id: b.body_candidates[0].run_id, file: b.body_candidates[0].file }
-      : null));
-    setPoseGroups(groupPoses(pl.poses, pl.categories));
-    setStats(st); setBodies(bd);
-    setNails((nl.nails || []).map(nailView));
-    setHome(pc || { style: "", corners: [] });
+    const fresh = () => mine === epoch.current;
+    const put = (url, apply) =>
+      api.get(url).then((d) => { if (fresh()) apply(d); }).catch(() => {});
+
+    const all = [
+      put("/api/runs", (r) => setRuns(r.runs)),
+      put("/api/stats", setStats),
+      put("/api/gallery", setGallery),
+      put("/api/parts", (p) => setParts(p.parts)),
+      put("/api/refs", (rf) => setRefs(rf.refs)),
+      put("/api/wardrobe", (wd) => setWardrobe((wd.wardrobe || []).map(outfitView))),
+      put("/api/pose-library", (pl) => setPoseGroups(groupPoses(pl.poses, pl.categories))),
+      // /api/pose-refs was fetched here on every refresh and the response
+      // thrown away — there is no poseRefs state and nothing reads it. One
+      // fewer request per mark, per generation, per tab switch.
+      put("/api/bodies", setBodies),
+      put("/api/nails", (nl) => setNails((nl.nails || []).map(nailView))),
+      put("/api/home", (pc) => setHome(pc || { style: "", corners: [] })),
+      put("/api/bio", (b) => {
+        setBio(b);
+        // Restore the most recent body candidate from the ledger. It used to
+        // live only here in page state, so switching tabs or reloading threw
+        // away a body you had just generated — the run was always on disk,
+        // nothing was showing it. Only restore when nothing is in flight, so a
+        // refresh mid-generation cannot yank a newer preview out from under you.
+        setBodyPreview((cur) => cur || (b.body_candidates?.[0]
+          ? { id: b.body_candidates[0].run_id, file: b.body_candidates[0].file }
+          : null));
+      }),
+    ];
+    // Callers that await refresh() still get "everything has landed".
+    await Promise.all(all);
   }, []);
 
   const load = useCallback(async () => {
@@ -176,19 +209,32 @@ export function useStudio(charParam) {
   useEffect(() => { api.get("/api/shot/options").then(setShotLib).catch(() => {}); }, []);
 
   // ------------------------------------------------------------------ shoot
+  // SSE, not a poll loop. The old version swallowed every error and
+  // rescheduled unconditionally, so after a backend restart the job id 404s
+  // forever and the card span at 1.5s until the tab was closed. Now a dead job
+  // is a terminal state the card can show.
   const pollGen = (jid) => {
     const mine = epoch.current;
-    const tick = async () => {
-      if (mine !== epoch.current) return;
-      try {
-        const st = await api.get(`/api/jobs/${jid}`);
+    const stop = jobStream(jid, {
+      onStage: (st) => {
+        if (mine !== epoch.current) return stop();
+        setGenerations((gs) => gs.map((g) => (g.jid === jid
+          ? { ...g, status: st, run: st.run || g.run } : g)));
+      },
+      onDone: (run, st) => {
         if (mine !== epoch.current) return;
-        setGenerations((gs) => gs.map((g) => (g.jid === jid ? { ...g, status: st, run: st.run || g.run } : g)));
-        if (st.done) { refresh().catch(() => {}); return; }
-      } catch { /* transient */ }
-      setTimeout(tick, 1500);
-    };
-    tick();
+        setGenerations((gs) => gs.map((g) => (g.jid === jid
+          ? { ...g, status: st, run: run || g.run } : g)));
+        refresh().catch(() => {});
+      },
+      onError: (msg) => {
+        if (mine !== epoch.current) return;
+        setGenerations((gs) => gs.map((g) => (g.jid === jid
+          ? { ...g, status: { ...(g.status || {}), done: true, error: msg } } : g)));
+      },
+    });
+    watchers.current.add(stop);
+    return stop;
   };
 
   // What the shot will actually send, built from the SAME body as onGenerate.
@@ -299,14 +345,13 @@ export function useStudio(charParam) {
     try {
       const { job } = await api.send("/api/wardrobe/create", "POST",
         { outfit: mergeOutfit(outfitText, details), model: outfitModel });
-      for (;;) {
-        await new Promise((r) => setTimeout(r, 1500));
-        if (mine !== epoch.current) return;
-        const st = await api.get(`/api/jobs/${job}`);
-        if (mine !== epoch.current) return;
-        setCreating(STAGE[st.stage] || st.stage || "generating…");
-        if (st.done) { if (st.error) setErr(st.error); else setOutfitPreview(st.run); break; }
-      }
+      // awaitJob, not a poll loop: the loop threw on any non-2xx, so ONE
+      // dropped request abandoned a job that was still running and still
+      // billing. EventSource rides out a blip and only gives up for real.
+      const run = await awaitJob(job, (st) =>
+        setCreating(STAGE[st.stage] || st.stage || "generating…"));
+      if (mine !== epoch.current) return;
+      setOutfitPreview(run);
     } catch (e) { if (mine === epoch.current) fail(e); }
     finally { if (mine === epoch.current) setCreating(null); }
   };
@@ -333,7 +378,10 @@ export function useStudio(charParam) {
       const fd = new FormData();
       fd.append("file", file);
       fd.append("color", color || "other");
-      const r = await fetch("/api/nails/upload", { method: "POST", body: fd });
+      // Was a bare fetch with no X-Character: the upload landed in whichever
+      // character was globally active, not the one this tab is showing.
+      const r = await fetch("/api/nails/upload", { method: "POST", body: fd,
+        headers: apiCharacter() ? { "X-Character": apiCharacter() } : {} });
       if (!r.ok) throw new Error((await r.text()).slice(0, 300));
       const saved = await r.json();
       await refresh();
@@ -343,7 +391,7 @@ export function useStudio(charParam) {
   const deleteNail = async (id) => {
     const item = nails.find((n) => n.id === id);
     if (!item) return;
-    try { await fetch(`/api/nails/${item.file}`, { method: "DELETE" }); if (selectedNail?.id === id) setSelectedNail(null); await refresh(); }
+    try { await api.del(`/api/nails/${item.file}`); if (selectedNail?.id === id) setSelectedNail(null); await refresh(); }
     catch (e) { fail(e); }
   };
 
@@ -362,20 +410,14 @@ export function useStudio(charParam) {
     setHomeBusy((b) => ({ ...b, [key]: "starting…" })); setErr(null);
     try {
       const { job } = await api.send(`/api/home/${key}/generate`, "POST", {});
-      for (;;) {
-        await new Promise((r) => setTimeout(r, 1800));
-        if (mine !== epoch.current) return;
-        const st = await api.get(`/api/jobs/${job}`);
-        if (mine !== epoch.current) return;
-        setHomeBusy((b) => ({ ...b, [key]: STAGE[st.stage] || st.stage || "generating…" }));
-        if (st.done) { if (st.error) setErr(st.error); break; }
-      }
+      await awaitJob(job, (st) =>
+        setHomeBusy((b) => ({ ...b, [key]: STAGE[st.stage] || st.stage || "generating…" })));
       if (mine === epoch.current) await refresh();
     } catch (e) { if (mine === epoch.current) fail(e); }
     finally { if (mine === epoch.current) setHomeBusy((b) => { const n = { ...b }; delete n[key]; return n; }); }
   };
   const deleteCorner = async (key) => {
-    try { await fetch(`/api/home/${key}`, { method: "DELETE" }); await refresh(); }
+    try { await api.del(`/api/home/${key}`); await refresh(); }
     catch (e) { fail(e); }
   };
 
@@ -385,25 +427,27 @@ export function useStudio(charParam) {
     catch (e) { fail(e); }
   };
   const deleteRun = async (id) => {
-    if (!window.confirm("Delete this image permanently?")) return;
-    try { await fetch(`/api/runs/${id}`, { method: "DELETE" }); await refresh(); }
+    if (!(await confirm({ title: "Delete this image?", body: "The file is removed from disk. This cannot be undone.", danger: true }))) return;
+    try { await api.del(`/api/runs/${id}`); await refresh(); }
     catch (e) { fail(e); }
   };
   const exportGold = async () => {
     try { const r = await api.send("/api/gold/export", "POST", {}); await refresh();
-      window.alert(`Gold set exported: ${r.exported} approved shots → data/gold/ (${r.gold_on_disk} on disk).`); }
+      toast.ok("Gold set exported",
+        `${r.exported} approved shots → data/gold/ · ${r.gold_on_disk} on disk`); }
     catch (e) { fail(e); }
   };
   const purgeRejected = async () => {
-    if (!window.confirm("Delete all rejected images from disk? This cannot be undone.")) return;
+    if (!(await confirm({ title: "Delete every rejected image?", body: "They are removed from disk. This cannot be undone.", danger: true }))) return;
     try { const r = await api.send("/api/runs/purge-rejected", "POST", {}); await refresh();
-      window.alert(`Deleted ${r.deleted} rejected images · freed ${r.freed_mb} MB.`); }
+      toast.ok(`Deleted ${r.deleted} rejected images`, `freed ${r.freed_mb} MB`); }
     catch (e) { fail(e); }
   };
   const cleanupImages = async () => {
-    if (!window.confirm("Reclaim disk by deleting orphaned images and spent outfit/body/calibration intermediates? Review shots are kept.")) return;
+    if (!(await confirm({ title: "Reclaim disk space?", body: "Deletes orphaned images and spent outfit, body and calibration intermediates. Your review shots are kept.", confirmLabel: "Clean up", danger: true }))) return;
     try { const r = await api.send("/api/images/cleanup", "POST", {}); await refresh();
-      window.alert(`Cleaned up · ${r.intermediates} intermediates · ${r.orphans} orphans · ${r.stale_thumbs} stale thumbnails · freed ${r.freed_mb} MB.`); }
+      toast.ok(`Freed ${r.freed_mb} MB`,
+        `${r.intermediates} intermediates · ${r.orphans} orphans · ${r.stale_thumbs} stale thumbnails`); }
     catch (e) { fail(e); }
   };
 
@@ -420,18 +464,14 @@ export function useStudio(charParam) {
     setAnimating((a) => ({ ...a, [runId]: "starting…" })); setErr(null);
     try {
       const { job } = await api.send("/api/video", "POST", { run_id: runId, ...opts });
-      for (;;) {
-        await new Promise((r) => setTimeout(r, 3000));
-        if (mine !== epoch.current) return null;
-        const st = await api.get(`/api/jobs/${job}`);
-        if (mine !== epoch.current) return null;
-        setAnimating((a) => ({ ...a, [runId]: STAGE[st.stage] || st.stage || "rendering…" }));
-        if (st.done) {
-          if (st.error) { setErr(st.error); return null; }
-          await refresh();
-          return st.run;
-        }
-      }
+      // A clip renders in MINUTES and the old 3s poll had the same fatal
+      // property as the rest: one blip in ~800 requests reported failure for a
+      // render that completed fine, and the user re-rendered it.
+      const run = await awaitJob(job, (st) =>
+        setAnimating((a) => ({ ...a, [runId]: STAGE[st.stage] || st.stage || "rendering…" })));
+      if (mine !== epoch.current) return null;
+      await refresh();
+      return run;
     } catch (e) {
       if (mine === epoch.current) fail(e);
       return null;
@@ -453,7 +493,7 @@ export function useStudio(charParam) {
 
   // ------------------------------------------------- bulk + CRUD (multi-select)
   const bulkDeleteRuns = async (ids) => {
-    if (!ids.length || !window.confirm(`Delete ${ids.length} image${ids.length > 1 ? "s" : ""} permanently?`)) return;
+    if (!ids.length || !(await confirm({ title: `Delete ${ids.length} image${ids.length > 1 ? "s" : ""}?`, body: "The files are removed from disk. This cannot be undone.", danger: true }))) return;
     try { await api.send("/api/runs/delete", "POST", { ids }); await refresh(); } catch (e) { fail(e); }
   };
   const bulkMarkRuns = async (ids, decision) => {
@@ -461,30 +501,30 @@ export function useStudio(charParam) {
     try { await api.send("/api/runs/mark-bulk", "POST", { ids, decision }); await refresh(); } catch (e) { fail(e); }
   };
   const deleteOutfit = async (id) => {
-    if (!window.confirm("Delete this outfit?")) return;
-    try { await fetch(`/api/wardrobe/${id}`, { method: "DELETE" }); await refresh(); } catch (e) { fail(e); }
+    if (!(await confirm({ title: "Delete this outfit?", danger: true }))) return;
+    try { await api.del(`/api/wardrobe/${id}`); await refresh(); } catch (e) { fail(e); }
   };
   const updateOutfit = async (id, patch) => {
     try { await api.send(`/api/wardrobe/${id}`, "PUT", patch); await refresh(); } catch (e) { fail(e); }
   };
   const bulkDeleteOutfits = async (ids) => {
-    if (!ids.length || !window.confirm(`Delete ${ids.length} outfit${ids.length > 1 ? "s" : ""}?`)) return;
-    try { for (const id of ids) await fetch(`/api/wardrobe/${id}`, { method: "DELETE" }); await refresh(); } catch (e) { fail(e); }
+    if (!ids.length || !(await confirm({ title: `Delete ${ids.length} outfit${ids.length > 1 ? "s" : ""}?`, danger: true }))) return;
+    try { for (const id of ids) await api.del(`/api/wardrobe/${id}`); await refresh(); } catch (e) { fail(e); }
   };
   const updateNail = async (id, patch) => {
     try { await api.send(`/api/nails/${id}`, "PUT", patch); await refresh(); } catch (e) { fail(e); }
   };
   const bulkDeleteNails = async (ids) => {
-    if (!ids.length || !window.confirm(`Delete ${ids.length} manicure${ids.length > 1 ? "s" : ""}?`)) return;
+    if (!ids.length || !(await confirm({ title: `Delete ${ids.length} manicure${ids.length > 1 ? "s" : ""}?`, danger: true }))) return;
     const byId = Object.fromEntries((nails || []).map((n) => [n.id, n.file || n.id]));
-    try { for (const id of ids) await fetch(`/api/nails/${byId[id] || id}`, { method: "DELETE" }); await refresh(); } catch (e) { fail(e); }
+    try { for (const id of ids) await api.del(`/api/nails/${byId[id] || id}`); await refresh(); } catch (e) { fail(e); }
   };
   const bulkDeleteRefs = async (names) => {
-    if (!names.length || !window.confirm(`Delete ${names.length} reference${names.length > 1 ? "s" : ""}?`)) return;
-    try { for (const n of names) await fetch(`/api/refs/${n}`, { method: "DELETE" }); await refresh(); } catch (e) { fail(e); }
+    if (!names.length || !(await confirm({ title: `Delete ${names.length} reference${names.length > 1 ? "s" : ""}?`, body: "References are how identity is carried — a face cannot be described back.", danger: true }))) return;
+    try { for (const n of names) await api.del(`/api/refs/${n}`); await refresh(); } catch (e) { fail(e); }
   };
   const removeGalleryEntry = async (name) => {
-    if (!window.confirm(`Remove "${name}" from the identity gallery? The threshold re-derives from what's left.`)) return;
+    if (!(await confirm({ title: `Remove "${name}" from the gallery?`, body: "The threshold re-derives from what is left, so every later verdict shifts with it.", confirmLabel: "Remove", danger: true }))) return;
     try { await api.send("/api/gallery/remove", "POST", { name }); await refresh(); } catch (e) { fail(e); }
   };
   const renameBody = async (id, name) => {
@@ -494,7 +534,7 @@ export function useStudio(charParam) {
 
   // ------------------------------------------------------------------ bio
   const setBioRef = async (name) => { try { await api.send("/api/bio/reference", "PUT", { reference: name }); await refresh(); } catch (e) { fail(e); } };
-  const deleteRef = async (name) => { try { await fetch(`/api/refs/${name}`, { method: "DELETE" }); await refresh(); } catch (e) { fail(e); } };
+  const deleteRef = async (name) => { try { await api.del(`/api/refs/${name}`); await refresh(); } catch (e) { fail(e); } };
   const toGallery = async (name, view) => { try { await api.send("/api/gallery/from-ref", "POST", { name, view }); await refresh(); } catch (e) { fail(e); } };
   const importRef = async (path) => { try { await api.send("/api/refs/import", "POST", { path }); await refresh(); } catch (e) { fail(e); } };
   const uploadRef = async (file) => { try { await api.upload("/api/refs/upload", file); await refresh(); } catch (e) { fail(e); } };
@@ -504,7 +544,7 @@ export function useStudio(charParam) {
     try { await api.send("/api/parts", "PUT", { parts: next }); } catch (e) { fail(e); }
   };
   const resetParts = async () => {
-    if (!window.confirm("Reset every part to defaults? Your edits are lost.")) return;
+    if (!(await confirm({ title: "Reset every part to defaults?", body: "Your edits to her part tree are lost — that tree is her written identity, not settings.", confirmLabel: "Reset", danger: true }))) return;
     try { const r = await api.send("/api/parts/reset", "POST", {}); setParts(r.parts); } catch (e) { fail(e); }
   };
 
@@ -516,14 +556,9 @@ export function useStudio(charParam) {
     try {
       const body = { model }; if (shapeRef) body.shape_ref = shapeRef; if (shape) body.shape = shape;
       const { job } = await api.send("/api/bio/body-ref/create", "POST", body);
-      for (;;) {
-        await new Promise((r) => setTimeout(r, 1500));
-        if (mine !== epoch.current) return;
-        const st = await api.get(`/api/jobs/${job}`);
-        if (mine !== epoch.current) return;
-        setBodyBusy(st.stage || "generating…");
-        if (st.done) { if (st.error) setErr(st.error); else setBodyPreview(st.run); break; }
-      }
+      const run = await awaitJob(job, (st) => setBodyBusy(st.stage || "generating…"));
+      if (mine !== epoch.current) return;
+      setBodyPreview(run);
     } catch (e) { if (mine === epoch.current) fail(e); }
     finally { if (mine === epoch.current) setBodyBusy(null); }
   };
@@ -543,28 +578,25 @@ export function useStudio(charParam) {
     if (id) { try { await api.send("/api/bio/body-ref/dismiss", "POST", { run_id: id }); } catch { /* local clear is enough */ } }
   };
   const selectBody = async (id) => { try { await api.send("/api/bodies/select", "POST", { id }); await refresh(); } catch (e) { fail(e); } };
-  const deleteBody = async (id) => { try { await fetch(`/api/bodies/${id}`, { method: "DELETE" }); await refresh(); } catch (e) { fail(e); } };
+  const deleteBody = async (id) => { try { await api.del(`/api/bodies/${id}`); await refresh(); } catch (e) { fail(e); } };
 
   // ------------------------------------------------------------------ calibrate
   const pollCalib = (jid) => {
     const mine = epoch.current;
-    const tick = async () => {
+    const settle = (patch) => {
       if (mine !== epoch.current) return;
-      try {
-        const st = await api.get(`/api/jobs/${jid}`);
-        if (mine !== epoch.current) return;
-        if (st.done) {
-          setCalibCands((cs) => cs.map((c) => (c.jid === jid
-            ? (st.error ? { ...c, running: false, error: String(st.error).slice(0, 100) }
-              : { ...c, running: false, id: st.run.id, url: `/api/images/${st.run.file}`, yaw: st.run.verdict?.yaw, facePx: st.run.verdict?.face_px })
-            : c)));
-          return;
-        }
-        setCalibCands((cs) => cs.map((c) => (c.jid === jid ? { ...c, stage: st.stage } : c)));
-      } catch { /* transient */ }
-      setTimeout(tick, 2000);
+      setCalibCands((cs) => cs.map((c) => (c.jid === jid ? { ...c, ...patch } : c)));
     };
-    tick();
+    const stop = jobStream(jid, {
+      onStage: (st) => (mine === epoch.current ? settle({ stage: st.stage }) : stop()),
+      onDone: (run) => settle({
+        running: false, id: run.id, url: `/api/images/${run.file}`,
+        yaw: run.verdict?.yaw, facePx: run.verdict?.face_px,
+      }),
+      onError: (msg) => settle({ running: false, error: String(msg).slice(0, 100) }),
+    });
+    watchers.current.add(stop);
+    return stop;
   };
   const generateFaces = async (count) => {
     setErr(null);
@@ -587,7 +619,7 @@ export function useStudio(charParam) {
   };
   const recalibrate = async () => { try { return await api.send("/api/calibrate/recalibrate", "POST", {}); } catch (e) { fail(e); } };
   const resetGallery = async () => {
-    if (!window.confirm("Wipe the fingerprint to start a fresh calibration?")) return;
+    if (!(await confirm({ title: "Wipe the identity fingerprint?", body: "The gallery and threshold are cleared, so every run comes back ungated until you calibrate again.", confirmLabel: "Wipe", danger: true }))) return;
     try { await api.send("/api/calibrate/reset", "POST", {}); await refresh(); } catch (e) { fail(e); }
   };
   const uploadSeed = async (file) => {

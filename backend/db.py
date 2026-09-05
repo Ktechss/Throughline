@@ -370,3 +370,48 @@ def chars_delete(cid: str) -> None:
         con.execute("DELETE FROM wardrobe WHERE character_id=?", (cid,))
         con.execute("DELETE FROM characters WHERE id=?", (cid,))
         con.execute("COMMIT")
+
+
+def runs_reserve(run_id: str, character_id: str, doc: dict) -> bool:
+    """Claim a run id BEFORE the money is spent. True if we claimed it.
+
+    The ledger row used to be written only after the provider returned, the
+    image downloaded, the gate scored it and the archive re-encoded it —
+    minutes after the spend. Everything in between was a hole: kill the server
+    (run.sh uses --reload, so an edit is enough) and the provider still renders
+    and still bills, but there is no row, no task id and no file, and nothing
+    can ever find it again. main.py's own comment records this happening:
+    "five /api/shot calls, four rows, one finished and billed poyo image
+    reachable only by hand."
+
+    So the row goes in first, `status='pending'`, and every later stage patches
+    it. A crash now leaves evidence the sweeper can act on instead of silence.
+
+    INSERT OR IGNORE, not INSERT: the id may already be claimed by an
+    idempotent retry of the same request, and stepping on it would be the very
+    duplicate-spend this exists to prevent.
+    """
+    with _conn() as con:
+        cur = con.execute(
+            "INSERT OR IGNORE INTO runs (id, character_id, doc) VALUES (?, ?, ?)",
+            (run_id, character_id, json.dumps(doc)))
+        return cur.rowcount == 1
+
+
+def runs_find_by_token(character_id: str, token: str) -> dict | None:
+    """The row a previous identical submission already created, if any.
+
+    Idempotency for a generation that costs real money. Without it a double
+    click, a refresh-resubmit or a proxy retry each start their own provider
+    call and each get billed — and the UI makes that likely, because a browser
+    refresh mid-shot loses the job id and the obvious response is to press
+    Generate again.
+    """
+    if not token:
+        return None
+    with _conn() as con:
+        r = con.execute(
+            "SELECT doc FROM runs WHERE character_id=? "
+            "AND json_extract(doc,'$.client_token')=? "
+            "ORDER BY seq DESC LIMIT 1", (character_id, token)).fetchone()
+    return json.loads(r[0]) if r else None

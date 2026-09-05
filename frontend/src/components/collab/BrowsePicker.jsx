@@ -26,7 +26,7 @@ export default function BrowsePicker({ label, hint, groups, selected, onSelect,
   const chosen = items.find((p) => p.id === selected);
 
   return (
-    <div className="rounded-lg ring-1 ring-white/8 bg-white/[0.02]">
+    <div className="rounded-lg ring-1 ring-line-subtle bg-surface">
       <button type="button" onClick={() => setOpen(!open)}
         className="w-full flex items-center gap-2 px-2.5 py-2 text-left">
         <span className="flex-1 min-w-0">
@@ -56,7 +56,7 @@ export default function BrowsePicker({ label, hint, groups, selected, onSelect,
               What an arrangement SAYS is the whole point — "cheek to cheek"
               turns both heads 30 degrees, and that is only visible in the text. */}
           {chosen && (
-            <div className="mt-2 rounded-lg ring-1 ring-white/10 bg-white/[0.03] px-2.5 py-2">
+            <div className="mt-2 rounded-lg ring-1 ring-line bg-surface px-2.5 py-2">
               <div className="text-[10px] text-zinc-400 leading-snug">{chosen.text}</div>
             </div>
           )}
@@ -70,9 +70,9 @@ export default function BrowsePicker({ label, hint, groups, selected, onSelect,
                     className={cn("aspect-square rounded-lg ring-1 flex flex-col items-center justify-center gap-1 p-1",
                       selected === p.id
                         ? "ring-2 ring-emerald-400 bg-emerald-500/10 text-white"
-                        : "ring-white/8 bg-white/[0.02] text-zinc-400 hover:ring-white/25 hover:text-zinc-200")}>
+                        : "ring-line-subtle bg-surface text-zinc-400 hover:ring-white/25 hover:text-zinc-200")}>
                     <PoseIcon id={p.id} category={p.category} className="h-6 w-6" />
-                    <span className="w-full text-[8px] leading-tight text-center line-clamp-2">{p.label}</span>
+                    <span className="w-full text-[11px] leading-tight text-center line-clamp-2">{p.label}</span>
                   </button>
                 ))}
               </div>
@@ -84,9 +84,9 @@ export default function BrowsePicker({ label, hint, groups, selected, onSelect,
                     className={cn("rounded-lg ring-1 px-2 py-1.5 text-left",
                       selected === p.id
                         ? "ring-2 ring-emerald-400 bg-emerald-500/10"
-                        : "ring-white/8 bg-white/[0.02] hover:ring-white/25")}>
+                        : "ring-line-subtle bg-surface hover:ring-white/25")}>
                     <span className="block text-[10px] text-zinc-200 leading-tight">{p.label}</span>
-                    <span className="block text-[9px] text-zinc-500 leading-snug line-clamp-2 mt-0.5">{p.text}</span>
+                    <span className="block text-[11px] text-zinc-500 leading-snug line-clamp-2 mt-0.5">{p.text}</span>
                   </button>
                 ))}
               </div>
@@ -95,7 +95,7 @@ export default function BrowsePicker({ label, hint, groups, selected, onSelect,
 
           {browser.hasMore && (
             <button type="button" onClick={browser.loadMore}
-              className="mt-1.5 w-full rounded-lg ring-1 ring-white/10 py-1 text-[10px] text-zinc-400 hover:text-zinc-200 hover:ring-white/25">
+              className="mt-1.5 w-full rounded-lg ring-1 ring-line py-1 text-[10px] text-zinc-400 hover:text-zinc-200 hover:ring-white/25">
               show more
             </button>
           )}

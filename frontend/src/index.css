@@ -4,6 +4,11 @@
 
 @layer base {
   :root {
+    --bg-canvas:#fff; --bg-panel:#fafafa; --bg-surface:#f4f4f5;
+    --bg-raised:#ebebed; --bg-selected:#e4e4e7;
+    --line-subtle:rgba(0,0,0,.06); --line:rgba(0,0,0,.10); --line-strong:rgba(0,0,0,.18);
+    --ink:#09090b; --ink-muted:#3f3f46; --ink-subtle:#71717a; --ink-faint:#a1a1aa;
+
     --background: 0 0% 100%;
     --foreground: 0 0% 3.9%;
     --card: 0 0% 100%;
@@ -44,6 +49,38 @@
   }
 
   .dark {
+  /* ------------------------------------------------------------------ DEPTH
+     Opaque surface steps, ~+9/255 each.
+
+     These replace `bg-white/[0.02]`, which composites to #0f0f10 over the page
+     — a 2% luminance step, below the threshold where an edge reads on its own.
+     That is WHY the app needed `ring-white/10` on 121 elements: the ring was
+     doing the work the surface should have been doing, and a border that
+     appears 121 times separates nothing.
+
+     Opaque, not translucent: a translucent card composites differently over the
+     page than inside a panel, so the "same" surface was two different colours
+     depending on where it sat. Translucency stays for borders and hovers, where
+     adapting to the backdrop is the point. */
+  --bg-canvas:   #08090a;
+  --bg-panel:    #0f1011;
+  --bg-surface:  #16171a;
+  --bg-raised:   #1c1d21;
+  --bg-selected: #22242a;
+
+  /* Borders on the Radix 6/7/8 split: non-interactive edge, interactive
+     component, focus. One value for all three told the user nothing about what
+     was clickable. */
+  --line-subtle: rgba(255,255,255,0.06);
+  --line:        rgba(255,255,255,0.10);
+  --line-strong: rgba(255,255,255,0.18);
+
+  /* Never #fff — off-white reads as white with far less glare. */
+  --ink:        #f7f8f8;
+  --ink-muted:  #d0d6e0;
+  --ink-subtle: #8a8f98;
+  --ink-faint:  #62666d;
+
     --background: 0 0% 3.9%;
     --foreground: 0 0% 98%;
     --card: 0 0% 3.9%;
@@ -89,7 +126,28 @@
   body {
     @apply bg-background text-foreground font-body;
   }
+
+  /* Gate scores, yaw, face_px and every stat are numbers that change in place;
+     proportional digits make them jitter and columns ragged. */
+  .tnum, .stat-value { font-variant-numeric: tabular-nums; }
 }
+
+
+  /* An unset range: no fill, and a hollow handle. Fill is what says "a value has
+     been chosen up to here", so an unset slider must not draw any. */
+  .range-unset::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    height: 14px; width: 14px; border-radius: 9999px;
+    background: var(--bg-canvas);
+    border: 2px solid var(--ink-subtle);
+    cursor: pointer;
+  }
+  .range-unset::-moz-range-thumb {
+    height: 14px; width: 14px; border-radius: 9999px;
+    background: var(--bg-canvas);
+    border: 2px solid var(--ink-subtle);
+    cursor: pointer;
+  }
 
 @layer utilities {
   .no-scrollbar::-webkit-scrollbar { display: none; }

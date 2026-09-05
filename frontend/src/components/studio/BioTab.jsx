@@ -2,6 +2,7 @@ import { refUrl, apiCharacter } from "@/api/throughline";
 import React, { useState } from "react";
 import { Lock, Star, Upload, Trash2, RefreshCw, ImageOff, ImagePlus, X, LoaderCircle, Home, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { promptText } from "@/components/ui/confirm";
 
 const SUBVIEWS = ["overview", "home", "advanced · body", "advanced · parts"];
 
@@ -51,7 +52,7 @@ export default function BioTab({
             onClick={() => setSub(s)}
             className={cn(
               "rounded-full px-3 py-1.5 text-[11px] font-medium transition-colors",
-              sub === s ? "bg-white text-black" : "ring-1 ring-white/10 text-zinc-400 hover:text-white"
+              sub === s ? "bg-white text-black" : "ring-1 ring-line text-zinc-400 hover:text-white"
             )}
           >
             {s}
@@ -105,7 +106,7 @@ function HomeSection({ home, busy, onSaveHome, onUpload, onGenerate, onDelete })
 
   return (
     <div className="space-y-6">
-      <section className="rounded-2xl ring-1 ring-white/8 bg-white/[0.02] p-5">
+      <section className="rounded-2xl ring-1 ring-line-subtle bg-surface p-5">
         <h3 className="text-[12px] font-semibold text-zinc-300 mb-1 flex items-center gap-1.5"><Home className="h-3.5 w-3.5" /> Her home</h3>
         <p className="text-[11px] text-zinc-500 mb-3">Her home is one coherent space. A shot whose brief names a room (e.g. "in her kitchen") is automatically set there.</p>
 
@@ -113,14 +114,14 @@ function HomeSection({ home, busy, onSaveHome, onUpload, onGenerate, onDelete })
         <textarea
           value={style} onChange={(e) => setStyle(e.target.value)} onBlur={() => onSaveHome?.({ style })} rows={2}
           placeholder="e.g. modern Indian flat, marble & tile floors, warm wood, neutral palette, plants, soft natural light"
-          className="mt-1 w-full rounded-lg bg-white/[0.02] ring-1 ring-white/10 px-3 py-2 text-[13px] text-zinc-200 focus:ring-white/30 outline-none resize-none"
+          className="mt-1 w-full rounded-lg bg-surface ring-1 ring-line px-3 py-2 text-[13px] text-zinc-200 focus:ring-white/30 outline-none resize-none"
         />
 
         <label className="mt-3 block text-[11px] text-zinc-400">Balcony / window view <span className="text-zinc-600">— only applied to rooms that open outward</span></label>
         <textarea
           value={surroundings} onChange={(e) => setSurroundings(e.target.value)} onBlur={() => onSaveHome?.({ surroundings })} rows={2}
           placeholder="e.g. 12th-floor north-facing view of other buildings, HSR street, an overbridge barely visible"
-          className="mt-1 w-full rounded-lg bg-white/[0.02] ring-1 ring-white/10 px-3 py-2 text-[13px] text-zinc-200 focus:ring-white/30 outline-none resize-none"
+          className="mt-1 w-full rounded-lg bg-surface ring-1 ring-line px-3 py-2 text-[13px] text-zinc-200 focus:ring-white/30 outline-none resize-none"
         />
         <p className="mt-1.5 text-[10px] text-zinc-600">Put the outside view HERE, not in House style — otherwise the city leaks into interior rooms (the bathroom shouldn't show a skyline). The view is used only for the balcony, terrace & living room. Saved on blur.</p>
       </section>
@@ -129,7 +130,7 @@ function HomeSection({ home, busy, onSaveHome, onUpload, onGenerate, onDelete })
         {(home.corners || []).map((c) => {
           const stage = busy[c.key];
           return (
-            <div key={c.key} className="rounded-xl ring-1 ring-white/8 bg-white/[0.02] overflow-hidden">
+            <div key={c.key} className="rounded-xl ring-1 ring-line-subtle bg-surface overflow-hidden">
               <div className="relative aspect-[4/3] bg-zinc-900 flex items-center justify-center">
                 {stage ? (
                   <div className="flex flex-col items-center gap-1.5 text-center px-2">
@@ -141,7 +142,7 @@ function HomeSection({ home, busy, onSaveHome, onUpload, onGenerate, onDelete })
                 ) : (
                   <span className="text-[10px] text-zinc-600">no image yet</span>
                 )}
-                {c.view && <span className="absolute left-1.5 top-1.5 rounded bg-black/55 px-1.5 py-0.5 text-[8px] text-sky-300 ring-1 ring-sky-500/30">view</span>}
+                {c.view && <span className="absolute left-1.5 top-1.5 rounded bg-black/55 px-1.5 py-0.5 text-[11px] text-sky-300 ring-1 ring-sky-500/30">view</span>}
                 {c.has_image && !stage && (
                   <button onClick={() => onDelete?.(c.key)} title="clear this corner"
                     className="absolute right-1.5 top-1.5 rounded bg-black/60 p-1 text-rose-300 hover:bg-black/85">
@@ -152,12 +153,12 @@ function HomeSection({ home, busy, onSaveHome, onUpload, onGenerate, onDelete })
               <div className="px-2.5 py-2">
                 <div className="text-[11px] font-medium text-zinc-200 truncate mb-1.5">{c.label}</div>
                 <div className="flex gap-1.5">
-                  <label className="flex-1 cursor-pointer rounded-md ring-1 ring-white/10 py-1 text-[10px] text-zinc-300 hover:bg-white/5 flex items-center justify-center gap-1">
+                  <label className="flex-1 cursor-pointer rounded-md ring-1 ring-line py-1 text-[10px] text-zinc-300 hover:bg-white/5 flex items-center justify-center gap-1">
                     <Upload className="h-3 w-3" /> Upload
                     <input type="file" accept="image/*" hidden onChange={pick(c.key)} disabled={!!stage} />
                   </label>
                   <button onClick={() => onGenerate?.(c.key)} disabled={!!stage}
-                    className="flex-1 rounded-md ring-1 ring-white/10 py-1 text-[10px] text-zinc-300 hover:bg-white/5 disabled:opacity-40 flex items-center justify-center gap-1">
+                    className="flex-1 rounded-md ring-1 ring-line py-1 text-[10px] text-zinc-300 hover:bg-white/5 disabled:opacity-40 flex items-center justify-center gap-1">
                     <Sparkles className="h-3 w-3" /> Generate
                   </button>
                 </div>
@@ -183,17 +184,17 @@ function Overview({ bio, gallery, parts, hasIdentity, refs, onSetBio, onDeleteRe
   return (
     <div className="space-y-6">
       {/* Identity reference — summary on the left, face management fills the space on the right */}
-      <section className="rounded-2xl ring-1 ring-white/8 bg-white/[0.02] p-5">
+      <section className="rounded-2xl ring-1 ring-line-subtle bg-surface p-5">
         <h3 className="text-[12px] font-semibold text-zinc-300 mb-4">Identity reference</h3>
         <div className="grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-6">
           {/* left: identity summary */}
           <div>
             <div className="flex gap-4">
-              <div className="relative h-40 w-32 rounded-xl overflow-hidden ring-1 ring-white/10 flex-shrink-0 bg-zinc-900 flex items-center justify-center">
+              <div className="relative h-40 w-32 rounded-xl overflow-hidden ring-1 ring-line flex-shrink-0 bg-zinc-900 flex items-center justify-center">
                 {bio.reference ? (
                   <>
                     <img src={refUrl(bio.reference)} alt="identity" className="h-full w-full object-cover" />
-                    <div className="absolute top-1.5 left-1.5 rounded bg-black/60 backdrop-blur px-1.5 py-0.5 text-[9px] font-bold text-amber-300 ring-1 ring-amber-500/30">BIO</div>
+                    <div className="absolute top-1.5 left-1.5 rounded bg-black/60 backdrop-blur px-1.5 py-0.5 text-[11px] font-bold text-amber-300 ring-1 ring-amber-500/30">BIO</div>
                   </>
                 ) : (
                   <span className="text-[10px] text-zinc-600 px-2 text-center">no identity ref</span>
@@ -210,7 +211,7 @@ function Overview({ bio, gallery, parts, hasIdentity, refs, onSetBio, onDeleteRe
               <div className="flex flex-wrap gap-1.5">
                 {entries.length ? (
                   entries.map((a) => (
-                    <span key={a} className="inline-flex items-center gap-1.5 rounded-full bg-white/5 ring-1 ring-white/10 px-2.5 py-1 text-[10px] text-zinc-300">{a}</span>
+                    <span key={a} className="inline-flex items-center gap-1.5 rounded-full bg-white/5 ring-1 ring-line px-2.5 py-1 text-[10px] text-zinc-300">{a}</span>
                   ))
                 ) : (
                   <span className="text-[11px] text-zinc-600">no gallery angles yet</span>
@@ -231,7 +232,7 @@ function Overview({ bio, gallery, parts, hasIdentity, refs, onSetBio, onDeleteRe
       </section>
 
       {/* Body-part text */}
-      <section className="rounded-2xl ring-1 ring-white/8 bg-white/[0.02] p-5">
+      <section className="rounded-2xl ring-1 ring-line-subtle bg-surface p-5">
         <h3 className="text-[12px] font-semibold text-zinc-300 mb-4">Body-part text</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4">
           {Object.keys(grouped).length ? (
@@ -301,9 +302,15 @@ function FaceManager({ bio, refs, onSetBio, onDeleteRef, onToGallery, onImport, 
     if (f) onUploadRef?.(f);
   };
 
-  const handleToGallery = (name) => {
-    const view = window.prompt("Gallery view? (front / side / three_quarter)", "front");
-    if (view) onToGallery?.(name, view.trim());
+  const handleToGallery = async (name) => {
+    const view = await promptText({
+      title: "Add to the identity gallery",
+      body: "Which view is this? The gallery compares like with like — "
+          + "scoring a profile against a frontal measures head angle, not identity.",
+      placeholder: "front / side / three_quarter",
+      defaultValue: "front", confirmLabel: "Add",
+    });
+    if (view) onToGallery?.(name, view);
   };
 
   return (
@@ -315,16 +322,16 @@ function FaceManager({ bio, refs, onSetBio, onDeleteRef, onToGallery, onImport, 
             value={path}
             onChange={(e) => setPath(e.target.value)}
             placeholder="C:\path\to\face.png"
-            className="flex-1 rounded-lg bg-white/[0.02] ring-1 ring-white/10 px-3 py-2 text-[12px] text-zinc-200 focus:ring-white/30 outline-none"
+            className="flex-1 rounded-lg bg-surface ring-1 ring-line px-3 py-2 text-[12px] text-zinc-200 focus:ring-white/30 outline-none"
           />
           <button
             onClick={handleImport}
-            className="rounded-lg ring-1 ring-white/10 px-4 py-2 text-[12px] text-zinc-300 hover:bg-white/5 flex items-center justify-center gap-2"
+            className="rounded-lg ring-1 ring-line px-4 py-2 text-[12px] text-zinc-300 hover:bg-white/5 flex items-center justify-center gap-2"
           >
             <Upload className="h-3.5 w-3.5" /> Import by path
           </button>
         </div>
-        <label className="rounded-lg ring-1 ring-white/10 px-4 py-2 text-[12px] text-zinc-300 hover:bg-white/5 flex items-center justify-center gap-2 cursor-pointer">
+        <label className="rounded-lg ring-1 ring-line px-4 py-2 text-[12px] text-zinc-300 hover:bg-white/5 flex items-center justify-center gap-2 cursor-pointer">
           <Upload className="h-3.5 w-3.5" /> Upload face image
           <input type="file" accept="image/*" hidden onChange={handleUpload} />
         </label>
@@ -335,11 +342,11 @@ function FaceManager({ bio, refs, onSetBio, onDeleteRef, onToGallery, onImport, 
         {refs.map((r) => {
           const isBio = r.name === bio.reference;
           return (
-            <div key={r.name} className={cn("rounded-xl ring-1 ring-white/8 bg-white/[0.02] overflow-hidden", isBio && "ring-amber-500/40")}>
+            <div key={r.name} className={cn("rounded-xl ring-1 ring-line-subtle bg-surface overflow-hidden", isBio && "ring-amber-500/40")}>
               <div className="relative aspect-square overflow-hidden bg-zinc-900">
                 <img src={refUrl(r.name, "thumb")} alt={r.name} className={cn("h-full w-full object-cover", !r.usable && "opacity-40")} />
                 {isBio && (
-                  <span className="absolute top-2 left-2 rounded bg-black/60 px-1.5 py-0.5 text-[9px] font-bold text-amber-300 ring-1 ring-amber-500/30">
+                  <span className="absolute top-2 left-2 rounded bg-black/60 px-1.5 py-0.5 text-[11px] font-bold text-amber-300 ring-1 ring-amber-500/30">
                     BIO
                   </span>
                 )}
@@ -348,7 +355,7 @@ function FaceManager({ bio, refs, onSetBio, onDeleteRef, onToGallery, onImport, 
                     <span className="absolute inset-0 flex items-center justify-center">
                       <ImageOff className="h-5 w-5 text-rose-400" />
                     </span>
-                    <span className="absolute top-2 right-2 rounded bg-rose-950/70 px-1.5 py-0.5 text-[9px] text-rose-300 ring-1 ring-rose-500/30">
+                    <span className="absolute top-2 right-2 rounded bg-rose-950/70 px-1.5 py-0.5 text-[11px] text-rose-300 ring-1 ring-rose-500/30">
                       no face
                     </span>
                   </>
@@ -367,19 +374,19 @@ function FaceManager({ bio, refs, onSetBio, onDeleteRef, onToGallery, onImport, 
                   <button
                     disabled={!r.usable || isBio}
                     onClick={() => onSetBio?.(r.name)}
-                    className="flex-1 rounded bg-white/5 hover:bg-white/10 py-1 text-[9px] text-zinc-300 disabled:opacity-30 flex items-center justify-center gap-0.5"
+                    className="flex-1 rounded bg-white/5 hover:bg-white/10 py-1 text-[11px] text-zinc-300 disabled:opacity-30 flex items-center justify-center gap-0.5"
                   >
                     <Star className="h-2.5 w-2.5" /> {isBio ? "is BIO" : "set BIO"}
                   </button>
                   <button
                     onClick={() => handleToGallery(r.name)}
-                    className="flex-1 rounded bg-white/5 hover:bg-white/10 py-1 text-[9px] text-zinc-300 flex items-center justify-center gap-0.5"
+                    className="flex-1 rounded bg-white/5 hover:bg-white/10 py-1 text-[11px] text-zinc-300 flex items-center justify-center gap-0.5"
                   >
                     → gal
                   </button>
                   <button
                     onClick={() => onDeleteRef?.(r.name)}
-                    className="rounded bg-white/5 hover:bg-rose-500/20 py-1 px-1.5 text-[9px] text-zinc-400 hover:text-rose-300"
+                    className="rounded bg-white/5 hover:bg-rose-500/20 py-1 px-1.5 text-[11px] text-zinc-400 hover:text-rose-300"
                   >
                     <Trash2 className="h-2.5 w-2.5" />
                   </button>
@@ -414,26 +421,27 @@ function AdvancedBody({ bodies, bodyPreview, bodyBusy, onUploadShape, onCreateBo
     }
   };
 
-  const handleSaveBody = () => {
-    const name = window.prompt("Save as body type — name?");
-    if (name && name.trim()) onSaveBody?.(name.trim());
+  const handleSaveBody = async () => {
+    const name = await promptText({ title: "Save as a body type",
+      placeholder: "e.g. Original 48", confirmLabel: "Save" });
+    if (name) onSaveBody?.(name);
   };
 
   return (
     <div className="grid grid-cols-1 xl:grid-cols-[280px_1fr] gap-6">
       {/* Left: body-type library + optional shape ref */}
       <div className="space-y-6">
-        <section className="rounded-2xl ring-1 ring-white/8 bg-white/[0.02] p-5">
+        <section className="rounded-2xl ring-1 ring-line-subtle bg-surface p-5">
           <h3 className="text-[12px] font-semibold text-zinc-300 mb-3">Body-type library</h3>
           <div className="space-y-1.5">
             {list.length ? (
               list.map((b) => (
-                <div key={b.id} className={cn("flex items-center gap-2 rounded-lg px-3 py-2 ring-1 ring-white/8 bg-white/[0.02]", b.active && "ring-emerald-500/40")}>
+                <div key={b.id} className={cn("flex items-center gap-2 rounded-lg px-3 py-2 ring-1 ring-line-subtle bg-surface", b.active && "ring-emerald-500/40")}>
                   <button onClick={() => onSelectBody?.(b.id)} title={b.build} className="flex items-center gap-2 flex-1 min-w-0 text-left">
                     <span className={cn("h-2 w-2 rounded-full flex-shrink-0", b.active ? "bg-emerald-400" : "bg-zinc-600")} />
                     <span className="text-[12px] text-zinc-300 truncate">{b.id}</span>
                   </button>
-                  {b.active && <span className="text-[9px] text-emerald-300">active</span>}
+                  {b.active && <span className="text-[11px] text-emerald-300">active</span>}
                   <button onClick={() => onDeleteBody?.(b.id)} className="text-zinc-600 hover:text-rose-400"><Trash2 className="h-3 w-3" /></button>
                 </div>
               ))
@@ -443,13 +451,13 @@ function AdvancedBody({ bodies, bodyPreview, bodyBusy, onUploadShape, onCreateBo
           </div>
         </section>
 
-        <section className="rounded-2xl ring-1 ring-white/8 bg-white/[0.02] p-5">
+        <section className="rounded-2xl ring-1 ring-line-subtle bg-surface p-5">
           <h3 className="text-[12px] font-semibold text-zinc-300 mb-1">Body-shape reference</h3>
           <p className="text-[10px] text-zinc-600 mb-3">Optional — a figure whose proportions to match (headless/faceless is fine).</p>
           {shapeRef ? (
             <div className="relative inline-block">
               <img src={refUrl(shapeRef)} alt="shape ref" className="h-28 w-24 rounded-md ring-1 ring-sky-500/40 object-cover" />
-              <button onClick={() => setShapeRef(null)} title="remove shape reference" className="absolute -right-2 -top-2 rounded-full bg-zinc-800 p-0.5 text-rose-400 ring-1 ring-white/10"><X className="h-3 w-3" /></button>
+              <button onClick={() => setShapeRef(null)} title="remove shape reference" className="absolute -right-2 -top-2 rounded-full bg-zinc-800 p-0.5 text-rose-400 ring-1 ring-line"><X className="h-3 w-3" /></button>
             </div>
           ) : (
             <label className="rounded-lg border border-dashed border-white/15 p-5 flex flex-col items-center text-center hover:border-white/30 cursor-pointer">
@@ -462,7 +470,7 @@ function AdvancedBody({ bodies, bodyPreview, bodyBusy, onUploadShape, onCreateBo
       </div>
 
       {/* Right: generator (controls) + preview, side by side on wide screens */}
-      <section className="rounded-2xl ring-1 ring-white/8 bg-white/[0.02] p-5">
+      <section className="rounded-2xl ring-1 ring-line-subtle bg-surface p-5">
         <h3 className="text-[12px] font-semibold text-zinc-300 mb-4">Generate body reference</h3>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* controls */}
@@ -473,7 +481,7 @@ function AdvancedBody({ bodies, bodyPreview, bodyBusy, onUploadShape, onCreateBo
               value={figure}
               onChange={(e) => setFigure(e.target.value)}
               placeholder="e.g. dramatically curvy voluptuous hourglass — full bust, cinched waist, wide hips; blank = use her bio build"
-              className="w-full flex-1 rounded-lg bg-white/[0.02] ring-1 ring-white/10 px-3 py-2 text-[13px] text-zinc-200 focus:ring-white/30 outline-none resize-none"
+              className="w-full flex-1 rounded-lg bg-surface ring-1 ring-line px-3 py-2 text-[13px] text-zinc-200 focus:ring-white/30 outline-none resize-none"
             />
             <button
               onClick={() => onCreateBody?.(shapeRef || null, figure.trim() || null)}
@@ -488,7 +496,7 @@ function AdvancedBody({ bodies, bodyPreview, bodyBusy, onUploadShape, onCreateBo
           {/* preview */}
           <div className="flex flex-col">
             <label className="text-[11px] text-zinc-500 mb-1.5">Preview</label>
-            <div className="flex-1 rounded-lg ring-1 ring-white/8 bg-white/[0.02] overflow-hidden flex items-center justify-center min-h-[280px]">
+            <div className="flex-1 rounded-lg ring-1 ring-line-subtle bg-surface overflow-hidden flex items-center justify-center min-h-[280px]">
               {bodyBusy ? (
                 <div className="flex flex-col items-center gap-2 text-center px-4">
                   <LoaderCircle className="h-6 w-6 animate-spin text-sky-400" />
@@ -503,7 +511,7 @@ function AdvancedBody({ bodies, bodyPreview, bodyBusy, onUploadShape, onCreateBo
             {bodyPreview && !bodyBusy && (
               <div className="mt-3 flex gap-2">
                 <button onClick={handleSaveBody} className="flex-1 rounded-lg bg-white/10 hover:bg-white/15 px-4 py-2 text-[12px] text-zinc-200">Save as body type</button>
-                <button onClick={() => onDiscardBody?.()} className="flex-1 rounded-lg ring-1 ring-white/10 px-4 py-2 text-[12px] text-zinc-300 hover:bg-white/5">Discard</button>
+                <button onClick={() => onDiscardBody?.()} className="flex-1 rounded-lg ring-1 ring-line px-4 py-2 text-[12px] text-zinc-300 hover:bg-white/5">Discard</button>
               </div>
             )}
           </div>
@@ -535,7 +543,7 @@ function AdvancedParts({ parts, onSavePart, onResetParts }) {
               {parts
                 .filter((p) => p.section === sec)
                 .map((p) => (
-                  <div key={p.id} className={cn("rounded-xl ring-1 ring-white/8 bg-white/[0.02] p-4", !p.enabled && "opacity-50")}>
+                  <div key={p.id} className={cn("rounded-xl ring-1 ring-line-subtle bg-surface p-4", !p.enabled && "opacity-50")}>
                     <div className="flex items-center gap-2.5 mb-2">
                       <button
                         type="button"
@@ -545,15 +553,15 @@ function AdvancedParts({ parts, onSavePart, onResetParts }) {
                         <span className={cn("absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform", p.enabled ? "translate-x-4" : "translate-x-0")} />
                       </button>
                       <span className="text-[12px] font-medium text-zinc-200 truncate">{p.label}</span>
-                      {p.identity && <span className="rounded bg-amber-500/15 text-amber-300 px-1.5 py-0.5 text-[9px] font-semibold shrink-0">identity</span>}
-                      {p.critical && <span className="rounded bg-sky-500/15 text-sky-300 px-1.5 py-0.5 text-[9px] font-semibold shrink-0">load-bearing</span>}
+                      {p.identity && <span className="rounded bg-amber-500/15 text-amber-300 px-1.5 py-0.5 text-[11px] font-semibold shrink-0">identity</span>}
+                      {p.critical && <span className="rounded bg-sky-500/15 text-sky-300 px-1.5 py-0.5 text-[11px] font-semibold shrink-0">load-bearing</span>}
                       <code className="ml-auto font-mono text-[10px] text-zinc-600 truncate">{p.id}</code>
                     </div>
                     <input
                       defaultValue={p.text}
                       onBlur={(e) => onSavePart?.(p.id, { text: e.target.value })}
                       disabled={!p.enabled}
-                      className="w-full rounded-lg bg-white/[0.02] ring-1 ring-white/10 px-3 py-2 text-[12px] text-zinc-200 focus:ring-white/30 outline-none disabled:opacity-40"
+                      className="w-full rounded-lg bg-surface ring-1 ring-line px-3 py-2 text-[12px] text-zinc-200 focus:ring-white/30 outline-none disabled:opacity-40"
                     />
                     {p.note && <p className="mt-2 text-[11px] text-zinc-500 leading-snug">{p.note}</p>}
                   </div>

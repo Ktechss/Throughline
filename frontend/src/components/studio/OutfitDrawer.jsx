@@ -1,6 +1,8 @@
 import React, { useState } from "react";
-import { X, Loader2, Wand2, Sparkles, ImagePlus, Check } from "lucide-react";
+import { Loader2, Wand2, Sparkles, ImagePlus, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Modal } from "@/components/ui/modal";
+import { promptText } from "@/components/ui/confirm";
 import { DETAIL_FIELDS, OUTFIT_PICKERS, WARDROBE_CATEGORIES } from "@/api/throughline";
 import ModelPicker from "@/components/ModelPicker";
 
@@ -22,26 +24,24 @@ export default function OutfitDrawer({
   const missing = details ? DETAIL_FIELDS.filter((f) => !(details[f.key] || "").trim()).length : 0;
   const allCats = [...new Set([...WARDROBE_CATEGORIES, ...categories])];
 
-  const addCategory = () => {
-    const c = window.prompt("New category name:");
-    if (c && c.trim()) setSaveCategory(c.trim());
+  const addCategory = async () => {
+    const c = await promptText({
+      title: "New outfit category",
+      placeholder: "e.g. brunch, festive, gym",
+      confirmLabel: "Add",
+    });
+    if (c) setSaveCategory(c);
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-sm" onMouseDown={onClose}>
-      <aside className="flex h-full w-full max-w-md flex-col border-l border-white/10 bg-[#0d0d0f]" onMouseDown={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between border-b border-white/5 px-5 py-4">
-          <h2 className="text-[15px] font-semibold">Outfit designer</h2>
-          <button onClick={onClose} className="text-zinc-400 hover:text-white"><X className="h-5 w-5" /></button>
-        </div>
-
-        <div className="flex-1 overflow-y-auto px-5 py-4">
+    <Modal open onClose={onClose} title="Outfit designer" size="drawer">
+      <div>
           {/* ---- preview + save ---- */}
           {outfitPreview ? (
             <div>
               <div className="rounded-lg ring-1 ring-emerald-500/25 bg-emerald-500/[0.05] p-3">
                 <span className="text-[11px] font-medium text-emerald-300">Generated — save into a category, or discard.</span>
-                <img src={`/api/images/${outfitPreview.file}`} alt="outfit preview" className="mt-2 w-full rounded-md ring-1 ring-white/10" />
+                <img src={`/api/images/${outfitPreview.file}`} alt="outfit preview" className="mt-2 w-full rounded-md ring-1 ring-line" />
               </div>
               <div className="mt-4">
                 <div className="flex items-center justify-between mb-1.5">
@@ -51,7 +51,7 @@ export default function OutfitDrawer({
                 <div className="flex flex-wrap gap-1.5">
                   {allCats.map((c) => (
                     <button key={c} onClick={() => setSaveCategory(c)}
-                      className={cn("rounded-full px-3 py-1 text-[11px] ring-1 transition-colors", saveCategory === c ? "bg-white text-black ring-white" : "ring-white/10 text-zinc-400 hover:text-white")}>{c}</button>
+                      className={cn("rounded-full px-3 py-1 text-[11px] ring-1 transition-colors", saveCategory === c ? "bg-white text-black ring-white" : "ring-line text-zinc-400 hover:text-white")}>{c}</button>
                   ))}
                 </div>
                 {saveCategory && <p className="mt-2 text-[11px] text-zinc-500">saves as <span className="text-zinc-300 font-mono">{saveCategory}&lt;n&gt;</span></p>}
@@ -64,7 +64,7 @@ export default function OutfitDrawer({
             </div>
           ) : describing ? (
             <>
-              {imageUrl && <img src={imageUrl} alt="uploaded outfit" className="mb-4 max-h-72 w-full rounded-lg ring-1 ring-white/10 object-contain bg-black" />}
+              {imageUrl && <img src={imageUrl} alt="uploaded outfit" className="mb-4 max-h-72 w-full rounded-lg ring-1 ring-line object-contain bg-black" />}
               <div className="flex items-center gap-3 rounded-lg ring-1 ring-sky-500/30 bg-sky-950/20 p-4">
                 <Loader2 className="h-5 w-5 animate-spin text-sky-400" />
                 <span className="text-[13px] text-sky-300">Claude is reading the outfit…</span>
@@ -72,7 +72,7 @@ export default function OutfitDrawer({
             </>
           ) : (
             <>
-              {imageUrl && <img src={imageUrl} alt="uploaded outfit" className="mb-4 max-h-72 w-full rounded-lg ring-1 ring-white/10 object-contain bg-black" />}
+              {imageUrl && <img src={imageUrl} alt="uploaded outfit" className="mb-4 max-h-72 w-full rounded-lg ring-1 ring-line object-contain bg-black" />}
 
               {/* 1) upload a photo -> describe */}
               <label className="text-[11px] text-zinc-500">Reference photo — upload an outfit to describe</label>
@@ -85,7 +85,7 @@ export default function OutfitDrawer({
               <label className="text-[11px] text-zinc-500">Outfit description — edit freely</label>
               <textarea value={outfitText} onChange={(e) => setOutfitText(e.target.value)} rows={7}
                 placeholder="upload a photo above, type an outfit, then Enrich — top, bottom, footwear, accessories"
-                className="mb-4 mt-1.5 w-full rounded-lg bg-white/[0.02] ring-1 ring-white/10 px-3 py-2 text-[13px] text-zinc-200 focus:ring-white/30 outline-none resize-y leading-relaxed" />
+                className="mb-4 mt-1.5 w-full rounded-lg bg-surface ring-1 ring-line px-3 py-2 text-[13px] text-zinc-200 focus:ring-white/30 outline-none resize-y leading-relaxed" />
 
               {/* key details */}
               <div className="mb-2 flex items-center justify-between">
@@ -100,7 +100,7 @@ export default function OutfitDrawer({
                     <label key={f.key} className="block">
                       <span className="flex items-center gap-1 text-[11px] text-zinc-400">{f.label}{empty && <span className="text-amber-300">• add</span>}</span>
                       <input value={val} onChange={(e) => onDetail(f.key, e.target.value)} placeholder={f.hint}
-                        className={cn("mt-1 h-9 w-full rounded-md bg-white/[0.02] px-2.5 text-[12px] text-zinc-200 outline-none placeholder:text-zinc-600 ring-1 focus:ring-white/30", empty ? "ring-amber-600/40" : "ring-white/10")} />
+                        className={cn("mt-1 h-9 w-full rounded-md bg-surface px-2.5 text-[12px] text-zinc-200 outline-none placeholder:text-zinc-600 ring-1 focus:ring-white/30", empty ? "ring-amber-600/40" : "ring-line")} />
                     </label>
                   );
                 })}
@@ -113,7 +113,7 @@ export default function OutfitDrawer({
               <input value={idea || ""} onChange={(e) => setIdea(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter" && !enriching) onEnrich(); }}
                 placeholder="optional tweak — e.g. make it silk · add embroidery · adapt to a sangeet"
-                className="mb-3 w-full rounded-lg bg-white/[0.02] ring-1 ring-white/10 px-3 py-2 text-[13px] text-zinc-200 focus:ring-white/30 outline-none" />
+                className="mb-3 w-full rounded-lg bg-surface ring-1 ring-line px-3 py-2 text-[13px] text-zinc-200 focus:ring-white/30 outline-none" />
 
               {OUTFIT_PICKERS.map((grp) => (
                 <div key={grp.key} className="mb-2.5">
@@ -123,7 +123,7 @@ export default function OutfitDrawer({
                       const on = pickers?.[grp.key] === o;
                       return (
                         <button key={o} type="button" onClick={() => onPicker(grp.key, on ? "" : o)}
-                          className={cn("rounded-full px-2.5 py-1 text-[11px] capitalize ring-1 transition-colors", on ? "bg-white text-black ring-white" : "ring-white/10 text-zinc-400 hover:text-white")}>{o}</button>
+                          className={cn("rounded-full px-2.5 py-1 text-[11px] capitalize ring-1 transition-colors", on ? "bg-white text-black ring-white" : "ring-line text-zinc-400 hover:text-white")}>{o}</button>
                       );
                     })}
                   </div>
@@ -145,7 +145,7 @@ export default function OutfitDrawer({
             <div className="flex gap-2">
               <button onClick={() => onSave(saveCategory)} disabled={!saveCategory}
                 className="flex-1 rounded-lg bg-white text-black py-2.5 text-[13px] font-medium hover:bg-zinc-200 disabled:opacity-40 flex items-center justify-center gap-2"><Check className="h-4 w-4" /> Save to wardrobe</button>
-              <button onClick={onDiscard} className="rounded-lg ring-1 ring-white/10 px-4 py-2.5 text-[13px] text-zinc-300 hover:bg-white/5">Discard</button>
+              <button onClick={onDiscard} className="rounded-lg ring-1 ring-line px-4 py-2.5 text-[13px] text-zinc-300 hover:bg-white/5">Discard</button>
             </div>
           ) : (
             <>
@@ -154,8 +154,7 @@ export default function OutfitDrawer({
               className="w-full rounded-lg bg-white text-black py-2.5 text-[13px] font-medium hover:bg-zinc-200 disabled:opacity-40 flex items-center justify-center gap-2"><Wand2 className="h-4 w-4" /> Generate outfit</button>
             </>
           )}
-        </div>
-      </aside>
-    </div>
+      </div>
+    </Modal>
   );
 }

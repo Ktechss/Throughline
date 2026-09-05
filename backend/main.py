@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import anyio.to_thread
+import asyncio
 import json
 import re
 from datetime import date
@@ -24,7 +25,7 @@ from urllib.parse import urlparse
 
 from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
 from . import (backup, config, db, describe, gate, generate, prompt as promptlib,
@@ -45,6 +46,8 @@ async def _lifespan(_app: FastAPI):
     # reseller's result URL expires in ~24h, so the sooner the sweep runs after a
     # restart, the more likely a paid-for image is still there to fetch.
     _start_sweeper()
+    # Worker threads publish job progress by hopping back onto this loop.
+    generate.bind_loop(asyncio.get_running_loop())
     yield
 
 
@@ -4507,6 +4510,12 @@ def _framing_from_brief(brief: str) -> str:
 
 
 class ShotReq(BaseModel):
+    # IDEMPOTENCY. One token per form SUBMISSION (not per click). A shot costs
+    # 24 credits; a double click, a refresh-resubmit or a proxy retry each used
+    # to start their own provider call and each got billed. The UI makes that
+    # likely rather than exotic: a browser refresh mid-shot loses the job id, so
+    # the obvious human response is to press Generate again.
+    client_token: str | None = None
     # Compose everything and return it INSTEAD of generating. Same request shape
     # as a real shot on purpose: the only honest preview of a prompt is the
     # prompt, produced by the code that would have sent it.
@@ -5230,9 +5239,15 @@ def shot(req: ShotReq):
     # bonus on the fallback provider, not as the mechanism.
     _sys = promptlib.SYSTEM if phone_register else ""
 
+    # ONE id for the whole chain: the job, the run row, the image filename and
+    # the idempotency record. They used to be independent uuids that never met,
+    # so a finished row could not name the job that made it and vice versa.
+    gen_id = uuid.uuid4().hex
+
     def run(job: dict) -> dict:
         return generate.generate(
             prompt=text, system=_sys, refs=refs, aspect=aspect,
+            run_id=gen_id, client_token=req.client_token,
             seed=req.seed, session=session, progress=job, character=owner_cid,
             # If gpt-image-2 refuses a revealing outfit on content_policy, render
             # it on the scene model instead (weaker identity, recorded) rather
@@ -5270,7 +5285,15 @@ def shot(req: ShotReq):
                   "ai_prompt": bool(req.prompt and req.prompt.strip())},
         )
 
-    jid = generate.start_job(label, run)
+    # Already generated under this token? Hand back what exists instead of
+    # spending again. Cheap check, and it is the difference between one bill and
+    # two on the most-clicked button in the app.
+    prior = db.runs_find_by_token(owner_cid, req.client_token)
+    if prior:
+        return {"job": prior.get("job_id") or prior["id"], "run": prior,
+                "duplicate": True, "sanitised": sanitised, "ref_demoted": demoted}
+
+    jid = generate.start_job(label, run, jid=gen_id)
     return {"job": jid, "sanitised": sanitised, "ref_demoted": demoted}
 
 
@@ -5286,6 +5309,53 @@ def job(jid: str):
     if st is None:
         raise HTTPException(404, jid)
     return st
+
+
+@app.get("/api/jobs/{jid}/events")
+async def job_events(jid: str, request: Request):
+    """Stream one job's progress instead of being asked for it every 1.5s.
+
+    Replaces eight hand-rolled poll loops in the frontend. Three properties
+    matter and none of them were true of polling:
+
+      * THE TERMINAL STATE CANNOT BE MISSED. The stream opens by sending the
+        CURRENT status, so a client that connects after the job finished gets
+        the final frame immediately and closes. Polling only avoided this
+        because JOBS was never pruned — fixing that leak would have introduced
+        the bug.
+      * A DEAD JOB SAYS SO. 404 up front, and EventSource surfaces that as a
+        terminal error, so a restarted backend ends the spinner instead of
+        leaving the tab polling a job that no longer exists forever.
+      * NO WORK WHEN NOTHING CHANGES. The keepalive is a comment, not a status
+        recomputation.
+    """
+    if generate.job_status(jid) is None:
+        raise HTTPException(404, jid)
+
+    async def stream():
+        q = generate.subscribe(jid)
+        try:
+            snap = generate.job_status(jid)
+            yield f"data: {json.dumps(snap)}\n\n"
+            if not snap or snap.get("done"):
+                return
+            while not await request.is_disconnected():
+                try:
+                    snap = await asyncio.wait_for(q.get(), timeout=15)
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"      # beat idle proxy timeouts
+                    continue
+                yield f"data: {json.dumps(snap)}\n\n"
+                if snap.get("done"):
+                    return
+        finally:
+            generate.unsubscribe(jid, q)
+
+    return StreamingResponse(
+        stream(), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive",
+                 # nginx buffers SSE into uselessness without this.
+                 "X-Accel-Buffering": "no"})
 
 
 # ============================================================== scene composer

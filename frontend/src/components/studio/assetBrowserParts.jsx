@@ -9,7 +9,7 @@ export function SearchBox({ value, onChange, placeholder }) {
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="w-full rounded-lg bg-white/[0.03] ring-1 ring-white/10 pl-8 pr-7 py-1.5 text-[12px] text-zinc-200 placeholder:text-zinc-600 focus:ring-white/30 outline-none"
+        className="w-full rounded-lg bg-surface ring-1 ring-line pl-8 pr-7 py-1.5 text-[12px] text-zinc-200 placeholder:text-zinc-600 focus:ring-white/30 outline-none"
       />
       {value && (
         <button onClick={() => onChange("")} className="absolute right-2 top-1/2 -translate-y-1/2">
@@ -30,7 +30,7 @@ export function CategoryChips({ categories, active, onSelect }) {
           onClick={() => onSelect(c)}
           className={cn(
             "rounded-full px-2.5 py-1 text-[10px] whitespace-nowrap transition-colors ring-1",
-            active === c ? "bg-white/10 text-white ring-white/15" : "text-zinc-400 ring-white/10 hover:text-zinc-200 hover:ring-white/20"
+            active === c ? "bg-white/10 text-white ring-white/15" : "text-zinc-400 ring-line hover:text-zinc-200 hover:ring-white/20"
           )}
         >
           {c}

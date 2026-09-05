@@ -45,7 +45,97 @@ export const api = {
     if (!r.ok) throw new Error((await r.text()).slice(0, 300))
     return r.json()
   },
+  // Raw-body PUT, for an archive that may be gigabytes. NOT FormData: the
+  // browser streams a File sent as the body, while multipart would be buffered
+  // on both ends. The backend reads it chunk by chunk (see backup_upload).
+  async putRaw(u, file) {
+    const r = await fetch(u, {
+      method: "PUT",
+      headers: _headers({ "Content-Type": "application/x-tar" }),
+      body: file,
+    })
+    if (!r.ok) throw new Error((await r.text()).slice(0, 300))
+    return r.json()
+  },
+  // DELETE, scoped. Nine destructive call sites used a bare fetch() and so
+  // sent no X-Character at all — the server then fell back to whichever
+  // character was globally active. Two tabs on two characters, delete an image
+  // in one, and the file is unlinked from the other. That is exactly what the
+  // header exists to prevent, and it was missing on precisely the paths where
+  // the damage is permanent.
+  async del(u) {
+    const r = await fetch(u, { method: "DELETE", headers: _headers() })
+    if (!r.ok) throw new Error((await r.text()).slice(0, 300))
+    return r.json().catch(() => ({ ok: true }))
+  },
 }
+
+// ------------------------------------------------------------------ job events
+//
+// One primitive replacing eight hand-rolled poll loops. Those loops came in two
+// flavours, each broken in the opposite direction:
+//
+//   * pollGen/pollCalib swallowed every error and rescheduled unconditionally,
+//     so a restarted backend left the tab polling a job that no longer exists
+//     at 1.5s FOREVER, showing a spinner that could never resolve.
+//   * the for(;;) loops threw on any non-2xx, so one dropped poll during a
+//     40-minute video render reported failure for a job that was still running
+//     and finished fine.
+//
+// EventSource fixes both: it reconnects by itself on a transient drop, and a
+// 404 arrives as a terminal CLOSED state we can act on.
+//
+// It cannot send headers (same constraint as <img>, see refUrl), so the
+// character rides the query string — the middleware already accepts it there.
+export function jobStream(jid, { onStage, onDone, onError } = {}) {
+  const q = apiCharacter() ? `?character=${encodeURIComponent(apiCharacter())}` : ""
+  const es = new EventSource(`/api/jobs/${jid}/events${q}`)
+  let closed = false
+  const stop = () => { if (!closed) { closed = true; es.close() } }
+
+  es.onmessage = (ev) => {
+    const st = JSON.parse(ev.data)
+    if (!st.done) return onStage?.(st)
+    stop()
+    st.error ? onError?.(st.error) : onDone?.(st.run, st)
+  }
+  es.onerror = () => {
+    // readyState CLOSED means the browser has given up (a 404 does this).
+    // CONNECTING means it is retrying on its own — leave it alone.
+    if (es.readyState === EventSource.CLOSED) {
+      stop()
+      onError?.("lost the job — the server may have restarted")
+    }
+  }
+  return stop
+}
+
+// Promise form, for the call sites that were `await`ing a for(;;) loop.
+export function awaitJob(jid, onStage) {
+  return new Promise((resolve, reject) => {
+    jobStream(jid, { onStage, onDone: (run) => resolve(run),
+                     onError: (e) => reject(new Error(e)) })
+  })
+}
+
+// Save a file the backend serves. The first download-to-disk in this app —
+// everything else consumes FileResponse as an <img> or <video> src.
+//
+// A plain anchor click rather than fetch+Blob: a Blob would pull the whole
+// archive into memory before writing it, which for an 11 GB backup is exactly
+// the failure the streaming backend was written to avoid. The browser streams
+// straight to disk and shows its own progress.
+export const saveAs = (url, name) => {
+  const a = document.createElement("a")
+  a.href = url
+  if (name) a.download = name
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+}
+
+export const mb = (n) =>
+  !n ? "0 MB" : n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : `${Math.round(n / 1e6)} MB`
 
 // Strip the provider prefix from an endpoint id for display.
 export const ep = (s) => (s || "").replace("fal-ai/", "").replace("openai/", "")
@@ -60,6 +150,9 @@ export const STAGE = {
   "leveling & gating": "Checking identity…",
   done: "Done",
   failed: "Failed",
+  // backup / restore
+  "staging database": "Staging database…",
+  "writing archive": "Writing archive…",
 }
 
 // A finished run -> the flat shape the new UI cards/verdict chip use.
