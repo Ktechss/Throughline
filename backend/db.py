@@ -223,11 +223,46 @@ def runs_owner(run_id: str) -> tuple[dict, str] | None:
 
 
 def runs_update(run_id: str, row: dict) -> dict:
+    """Blind whole-document write. Prefer `runs_patch` for anything that ran
+    concurrently with a human — see the note there."""
     with _conn() as con:
         cur = con.execute("UPDATE runs SET doc=? WHERE id=?", (json.dumps(row), run_id))
         if cur.rowcount == 0:
             raise KeyError(run_id)
     return row
+
+
+def runs_patch(run_id: str, **fields) -> dict:
+    """Merge FIELDS into one run, re-reading it inside the write lock.
+
+    `runs_update` writes back a whole document the caller has been holding, and
+    the missing-file sweeper (main.py `_sweep_missing`) holds one for MINUTES —
+    it snapshots every row, then does network I/O per row, then writes. A mark
+    clicked inside that window is silently reverted to whatever it was when the
+    sweep began: no error, no trace, and `mark` is the one field in this project
+    that cannot be regenerated. It is the only record of the axis the gate is
+    blind to (her body), which is exactly why it is a human verdict at all.
+
+    BEGIN IMMEDIATE takes the write lock before the SELECT, so the read and the
+    write are one atomic step and a concurrent patch waits on busy_timeout
+    rather than interleaving. Callers pass only what they changed, so nothing
+    they never looked at can be clobbered.
+    """
+    with _conn() as con:
+        con.execute("BEGIN IMMEDIATE")
+        try:
+            r = con.execute("SELECT doc FROM runs WHERE id=?", (run_id,)).fetchone()
+            if r is None:
+                raise KeyError(run_id)
+            doc = json.loads(r[0])
+            doc.update(fields)
+            con.execute("UPDATE runs SET doc=? WHERE id=?",
+                        (json.dumps(doc), run_id))
+            con.execute("COMMIT")
+        except BaseException:
+            con.execute("ROLLBACK")
+            raise
+    return doc
 
 
 def runs_delete(ids: set[str]) -> list[dict]:

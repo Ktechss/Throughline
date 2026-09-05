@@ -602,7 +602,8 @@ def _scorer(cid: str | None):
     return g, score
 
 
-def check(path: str | Path, threshold: float | None = None) -> Verdict:
+def check(path: str | Path, threshold: float | None = None,
+          character: str | None = None) -> Verdict:
     """Score against the POSE-MATCHED entry in the source of truth.
 
     ## Why nearest-by-pose and not nearest-by-similarity
@@ -636,7 +637,15 @@ def check(path: str | Path, threshold: float | None = None) -> Verdict:
     number whose selection rule you can't see is the kind this module exists to
     prevent.
     """
-    g, scorer = _scorer(None)
+    # `character` is not decoration. Both the gallery and the threshold are
+    # CharPath proxies resolving through get_active(), and generate() runs in a
+    # background thread that does NOT inherit the request's character scope
+    # (config.py:52). Left as None, a shot that takes 70-220s to render is
+    # scored against whichever character happens to be active when it FINISHES
+    # — so switching tabs mid-render writes a stranger's-gallery verdict onto
+    # her row, with nothing to flag it. Every number in FINDINGS.md is drawn
+    # from this corpus, so a silent mis-scoring is the worst kind of bug here.
+    g, scorer = _scorer(character)
     if not g:
         raise FileNotFoundError("gallery is empty — import an identity reference "
                                 "and seed it from data/refs")
@@ -646,7 +655,7 @@ def check(path: str | Path, threshold: float | None = None) -> Verdict:
     face = max(faces, key=lambda f: score(f)[0]) if len(faces) > 1 else faces[0]
     sim, name, src_yaw = score(face)
 
-    thr = threshold if threshold is not None else load_threshold()
+    thr = threshold if threshold is not None else load_threshold(character)
     return Verdict(sim, name, thr, face, source_yaw=src_yaw,
                    faces_in_frame=len(faces))
 

@@ -635,8 +635,13 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
             # other. One branch, so a solo shot takes exactly the path it always
             # did.
             cast = (meta or {}).get("cast")
+            # `character=owner`, not the active character: this runs in a
+            # background thread minutes after the request that started it, and
+            # the gallery + threshold are CharPath proxies. check_cast already
+            # scores each member against her own gallery; the solo path was the
+            # one place still asking "whoever is active right now".
             row["verdict"] = (gate.check_cast(dest, cast) if cast
-                              else gate.check(dest)).dict()
+                              else gate.check(dest, character=owner)).dict()
         except FileNotFoundError:
             row["verdict"] = {"status": "ungated", "reason": "gallery is empty"}
         except gate.NoFaceFound as exc:
@@ -684,11 +689,13 @@ def mark(run_id: str, decision: str | None) -> dict:
     """Human verdict. Distinct from the gate's — the gate measures her face; a
     human is the only thing that can judge her BODY, since person re-ID keys on
     clothing and clothing varies by design."""
-    for r in _runs():
-        if r["id"] == run_id:
-            r["mark"] = decision
-            return db.runs_update(run_id, r)
-    raise KeyError(run_id)
+    # A single-field patch under the write lock. The old form loaded every run,
+    # edited one dict and wrote the WHOLE document back, so a mark could both
+    # lose to and be lost by the sweeper. Writing only `mark` means the two can
+    # no longer overwrite each other's work.
+    if not any(r["id"] == run_id for r in _runs()):
+        raise KeyError(run_id)
+    return db.runs_patch(run_id, mark=decision)
 
 
 def all_runs() -> list[dict]:

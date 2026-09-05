@@ -21,13 +21,13 @@ import time
 import uuid
 from urllib.parse import urlparse
 
-from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
-from . import (config, db, describe, gate, generate, prompt as promptlib, prompter,
-               timeline)
+from . import (backup, config, db, describe, gate, generate, prompt as promptlib,
+               prompter, timeline)
 from . import framing_data, getup_data, lighting_data
 from . import providers
 from .interactions_data import INTERACTIONS
@@ -1402,9 +1402,10 @@ def _resolve_body_candidate(run_id: str, how: str) -> None:
         row, _cid = _run_and_owner(run_id)
     except HTTPException:
         return
-    row.setdefault("meta", {})["body_resolved"] = how
+    meta = dict(row.get("meta") or {})
+    meta["body_resolved"] = how
     try:
-        db.runs_update(run_id, row)
+        db.runs_patch(run_id, meta=meta)
     except KeyError:
         pass
 
@@ -1519,11 +1520,14 @@ def _sweep_missing() -> int:
                             _pull_to_disk(got["images"][0]["url"], pdest)
                         except Exception:                   # noqa: BLE001
                             continue
-                        row["source_url"] = got["images"][0]["url"]
-                        row["provider"] = task.get("provider")
-                        row["credits"] = got.get("credits")
-                        row["pending_tasks"] = None
-                        db.runs_update(row["id"], row)
+                        # patch, not update: `row` was snapshotted before the
+                        # reclaim network call and is minutes stale by now. A
+                        # whole-doc write here reverts any mark made meanwhile.
+                        db.runs_patch(row["id"],
+                                      source_url=got["images"][0]["url"],
+                                      provider=task.get("provider"),
+                                      credits=got.get("credits"),
+                                      pending_tasks=None)
                         healed += 1
                         break
 
@@ -1898,7 +1902,7 @@ def import_run(req: ImportReq):
     # project's own per-request pin.
     token = config.scope_active(cid)
     try:
-        verdict = gate.check(dest).dict()
+        verdict = gate.check(dest, character=cid).dict()
     except Exception as exc:                                # noqa: BLE001
         verdict = {"status": "error", "reason": str(exc)[:200]}
     finally:
@@ -1953,14 +1957,14 @@ def reclaim_run(req: RefetchReq):
             continue
         dest = config.char_base(cid) / "images" / doc["file"]
         _pull_to_disk(r["images"][0]["url"], dest)
-        doc["source_url"] = r["images"][0]["url"]
-        doc["provider"] = task.get("provider")
-        doc["credits"] = r.get("credits")
-        doc["pending_tasks"] = None
-        doc["verdict"] = {"status": "reclaimed",
-                          "reason": "recovered from a parked provider task; "
-                                    "not re-scored"}
-        db.runs_update(req.run_id, doc)
+        db.runs_patch(req.run_id,
+                      source_url=r["images"][0]["url"],
+                      provider=task.get("provider"),
+                      credits=r.get("credits"),
+                      pending_tasks=None,
+                      verdict={"status": "reclaimed",
+                               "reason": "recovered from a parked provider "
+                                         "task; not re-scored"})
         return {"ok": True, "file": doc["file"], "provider": task.get("provider"),
                 "credits": r.get("credits")}
     raise HTTPException(409, "; ".join(errors) or "nothing to reclaim")
@@ -2419,17 +2423,35 @@ def calibrate_reset():
 
 # ---------------------------------------------------------------- references
 
+# ArcFace on 26 references is ~10 SECONDS, and this endpoint is in the studio's
+# refresh — so every mark, every generation, every tab switch paid it again for
+# an answer that had not changed. A reference is an immutable file (the whole
+# point of _unique_ref_path is that a name never gets new bytes), so the verdict
+# is keyed on identity + mtime + size and computed once.
+_REF_INFO_CACHE: dict[tuple, dict] = {}
+
+
 def _ref_info(p: Path) -> dict:
     """A reference is only useful if ArcFace can see a face in it — report that
     up front rather than letting a faceless reference fail silently at
     generation time."""
-    row = {"name": p.name, "bytes": p.stat().st_size}
+    st = p.stat()
+    key = (str(p), st.st_mtime_ns, st.st_size)
+    hit = _REF_INFO_CACHE.get(key)
+    if hit is not None:
+        return dict(hit)
+
+    row = {"name": p.name, "bytes": st.st_size}
     try:
         f = gate.analyze(p)
         row |= {"face_px": f.width, "yaw": round(f.yaw, 1),
                 "pose_class": f.pose_class, "usable": True}
     except (gate.NoFaceFound, ValueError) as exc:
         row |= {"usable": False, "reason": str(exc)[:100]}
+
+    # Unbounded growth is not a risk: the key includes mtime, so a re-saved file
+    # adds one entry, and a character has tens of references, not thousands.
+    _REF_INFO_CACHE[key] = dict(row)
     return row
 
 
@@ -3470,13 +3492,40 @@ def wardrobe_update(name: str, req: WardrobeEditReq):
 
 @app.delete("/api/wardrobe/{name}")
 def wardrobe_delete(name: str):
-    stem = Path(name).stem
-    (WARDROBE / Path(name).name).unlink(missing_ok=True)
+    """Delete an outfit: its IMAGE and its row, together.
+
+    This used to unlink `WARDROBE / name` — but the caller sends the outfit KEY
+    ("Anime"), not a filename, so it looked for a file with no extension, found
+    nothing, and `missing_ok=True` swallowed the miss. The row went; the .webp
+    stayed. And because the listing is built by walking the folder, the outfit
+    reappeared on the next refresh with its description and category gone — a
+    delete that silently became "strip this outfit's metadata".
+
+    Match on the STEM, any extension, case-insensitively, the same way
+    _unique_wardrobe_path decides a name is taken. Report what was removed
+    rather than returning a bare ok, so a miss is visible instead of silent.
+    """
+    stem = Path(name).stem.lower()
+    removed = []
+    if WARDROBE.exists():
+        for p in list(WARDROBE.iterdir()):
+            if p.is_file() and p.stem.lower() == stem:
+                p.unlink(missing_ok=True)
+                removed.append(p.name)
+    # The derived thumbnail keys off the same stem and would otherwise outlive
+    # its source, leaving a ghost in any view that reads the cache first.
+    thumbs = WARDROBE / ".thumbs"
+    if thumbs.exists():
+        for p in list(thumbs.iterdir()):
+            if p.is_file() and p.stem.lower() == stem:
+                p.unlink(missing_ok=True)
+
     meta = _wardrobe_meta()
-    if stem in meta:
-        del meta[stem]
+    key = next((k for k in meta if k.lower() == stem), None)
+    if key is not None:
+        del meta[key]
         _save_wardrobe_meta(meta)
-    return {"ok": True}
+    return {"ok": True, "deleted": removed, "row": key is not None}
 
 
 @app.get("/api/pose-library")
@@ -4291,6 +4340,12 @@ _INDOORS_RE = re.compile(
     r"\bdesk\b|\bat home\b|\bher (room|flat|apartment|place)\b|\bbathroom\b", re.I)
 
 
+# _infer_capture writes its notes as "<axis>=<value> inferred …"; this maps the
+# request field names onto the axis names those notes use.
+_NOTE_KEY = {"holder": "camera_holder", "flaws": "flaws", "optics": "optics",
+             "grooming_state": "grooming_state", "clutter": "clutter"}
+
+
 def _infer_capture(brief: str, pose_id: str | None, holder: str, flaws: str,
                    optics: str = "", grooming_state: str = "",
                    shot_type: str = "candid", clutter: str = ""
@@ -4718,6 +4773,25 @@ def shot(req: ShotReq):
         req.brief, req.pose_id, req.camera_holder, req.flaws,
         req.optics, req.grooming_state, req.shot_type, req.clutter)
     demoted.extend(_inferred)
+
+    # WHAT "AUTO" ACTUALLY RESOLVED TO, per axis, for the ones the caller left
+    # blank. _infer_capture has always known this — it was folded into `demoted`
+    # as prose and thrown away as structure, so the UI could only ever show an
+    # empty control labelled "from brief". An empty control cannot tell you
+    # whether the system made a choice or failed to.
+    #
+    # Only blank axes appear here: an explicit value is the caller's, not the
+    # inference's, and reporting it as "auto" would be a lie.
+    _requested = {"holder": req.camera_holder, "flaws": req.flaws,
+                  "optics": req.optics, "grooming_state": req.grooming_state,
+                  "clutter": req.clutter}
+    _resolved = {"holder": holder_id, "flaws": flaws_id, "optics": optics_id,
+                 "grooming_state": groom_id, "clutter": clutter_id}
+    auto_axes = {
+        k: {"value": v, "why": next((n for n in _inferred if n.startswith(f"{_NOTE_KEY[k]}=")), "")}
+        for k, v in _resolved.items()
+        if v and not (_requested.get(k) or "").strip()
+    }
     # POV is a specific faceless first-person framing that a generic AI prompt (which
     # references @image1 and describes her posing) would fight — so POV always uses
     # the template's POV branch and ignores any AI prompt.
@@ -5056,6 +5130,9 @@ def shot(req: ShotReq):
             "references": [{"tag": f"@image{i + 1}", "file": p.name}
                            for i, p in enumerate(refs)],
             "demoted": demoted,
+            # Per-axis resolutions, so a picker left on Auto can show what it
+            # will actually be rather than an empty box.
+            "auto": auto_axes,
             "sanitised": sanitised,
             "aspect": aspect,
             "resolution": req.resolution or RESOLUTION,
@@ -6163,6 +6240,176 @@ def images_cleanup():
                 t.unlink(missing_ok=True); counts["stale_thumbs"] += 1
 
     return {**counts, "freed_mb": round(freed / 1e6, 1)}
+
+
+# ============================================================ backup / restore
+#
+# Maintenance-shaped, so it lives beside purge/cleanup rather than in the middle
+# of the shoot path. Everything real is in backend/backup.py; these are thin
+# handlers.
+#
+# The long operations go through start_job so the UI polls /api/jobs/{id} exactly
+# as it does for a generation. INSPECT is deliberately synchronous — it reads one
+# small member and answers in well under a second even on an 11 GB archive, and
+# making the user poll for that would be theatre.
+
+
+class BackupReq(BaseModel):
+    characters: list[str]
+    parts: list[str] | str = "all"
+    dest: str | None = None          # a folder; defaults to data/backups
+
+
+class InspectReq(BaseModel):
+    path: str
+
+
+class RestoreReq(BaseModel):
+    path: str
+    decisions: list[dict]            # [{archive_id, mode: replace|new, name?}]
+
+
+def _backup_dir() -> Path:
+    d = config.DATA / "backups"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+@app.get("/api/backup/options")
+def backup_options(characters: str = ""):
+    """The parts checklist, and what each would cost for the chosen characters.
+
+    Sizes come from backup.plan(), the same function that writes the manifest, so
+    the number in the UI and the number in the archive cannot drift apart.
+    """
+    cids = [c for c in characters.split(",") if c] or [c["id"] for c in db.chars_all()]
+    parts = [{"key": k, "label": v["label"], "note": v["note"],
+              "required": bool(v.get("required")),
+              "couples_rows": bool(v["rows"])} for k, v in backup.PARTS.items()]
+    sizes = {}
+    for key in backup.PARTS:
+        try:
+            sizes[key] = backup.plan(cids, [key])["bytes"]
+        except backup.BackupError:
+            sizes[key] = 0
+    return {"parts": parts, "presets": backup.PRESETS, "sizes": sizes,
+            "characters": [{"id": c["id"], "name": c["name"]} for c in db.chars_all()],
+            "dir": str(_backup_dir()),
+            "free": shutil.disk_usage(config.DATA).free}
+
+
+@app.post("/api/backup")
+def backup_create(req: BackupReq):
+    dest = Path(req.dest).expanduser() if req.dest else _backup_dir()
+    cids = list(req.characters)
+    parts = req.parts
+    try:
+        backup.plan(cids, parts)          # validate BEFORE starting a thread, so a
+    except backup.BackupError as exc:     # bad request is a 400 and not a failed job
+        raise HTTPException(400, str(exc)) from exc
+
+    def work(job):
+        return backup.create(dest, cids, parts, job=job)
+
+    return {"job": generate.start_job("backup", work)}
+
+
+@app.get("/api/backup/archives")
+def backup_archives():
+    """Everything in the backup folder, newest first, with its manifest."""
+    out = []
+    for p in sorted(_backup_dir().rglob("*.tar"), key=lambda x: -x.stat().st_mtime):
+        row = {"name": p.name, "path": str(p), "bytes": p.stat().st_size,
+               "created": time.strftime("%Y-%m-%dT%H:%M:%S",
+                                        time.localtime(p.stat().st_mtime)),
+               "snapshot": ".snapshots" in p.parts}
+        try:
+            m = backup.inspect(p)
+            row["characters"] = [{"id": c["id"], "name": c.get("name"),
+                                  "runs": c.get("runs")} for c in m["characters"]]
+            row["parts"] = m["parts"]
+        except backup.BackupError as exc:
+            row["error"] = str(exc)
+        out.append(row)
+    return {"archives": out, "dir": str(_backup_dir())}
+
+
+@app.get("/api/backup/archives/{name}/file")
+def backup_download(name: str):
+    """Stream one archive to the browser.
+
+    FileResponse reads in chunks and sets Content-Length from stat(), so an 11 GB
+    file costs a chunk of memory rather than 11 GB, the browser shows a real
+    progress bar, and a dropped download can resume via Range. Building the tar
+    on the fly into a StreamingResponse would give up all three and hand the
+    browser a truncated archive it saves WITHOUT an error.
+    """
+    p = _backup_dir() / Path(name).name          # no traversal out of the folder
+    if not p.exists():
+        raise HTTPException(404, name)
+    return FileResponse(p, media_type="application/x-tar", filename=p.name)
+
+
+@app.put("/api/backup/upload/{name}")
+async def backup_upload(name: str, request: Request):
+    """Accept an archive as a RAW body, streamed to disk.
+
+    Every other upload in this file does `dest.write_bytes(await file.read())`,
+    which is fine for a 1 MB reference and fatal here: an 11 GB restore would be
+    pulled entirely into memory. request.stream() yields socket chunks and
+    Starlette buffers none of it.
+
+    The `.part` name until the last byte lands means an interrupted upload never
+    leaves something that looks like a complete archive.
+    """
+    safe = Path(name).name
+    if not safe.endswith(".tar"):
+        raise HTTPException(400, "only .tar archives")
+    up = _backup_dir() / "uploads"
+    up.mkdir(parents=True, exist_ok=True)
+    dest = up / safe
+    tmp = dest.with_suffix(".tar.part")
+    n = 0
+    try:
+        with open(tmp, "wb") as fh:
+            async for chunk in request.stream():
+                fh.write(chunk)
+                n += len(chunk)
+        tmp.replace(dest)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
+    return {"path": str(dest), "bytes": n}
+
+
+@app.post("/api/backup/inspect")
+def backup_inspect(req: InspectReq):
+    """What is in this archive and what would collide — writing nothing.
+
+    Step 1 of restore. Answers the questions the manual recovery had to work out
+    with tar, sqlite3 and a lot of guessing.
+    """
+    try:
+        return backup.inspect(req.path)
+    except backup.BackupError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/backup/restore")
+def backup_restore(req: RestoreReq):
+    try:
+        backup.inspect(req.path)          # fail fast on a bad path/archive
+        backup._guard_jobs()              # and on work in flight, as a 409 not a
+    except backup.BackupError as exc:     # job that dies a second later
+        raise HTTPException(409 if "still running" in str(exc) else 400,
+                            str(exc)) from exc
+
+    path, decisions = req.path, list(req.decisions)
+
+    def work(job):
+        return backup.restore(path, decisions, job=job)
+
+    return {"job": generate.start_job("restore", work)}
 
 
 @app.get("/api/health")
