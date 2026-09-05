@@ -27,6 +27,21 @@ import os
 
 from . import config  # noqa: F401 — importing it runs load_dotenv(.env)
 
+
+# The SDK defaults to a 600s timeout with 2 retries — i.e. up to ~30 minutes of
+# a handler holding whatever it is holding. These calls are interactive (the
+# user is watching a spinner), so a minute is already past useful, and one of
+# the callers runs on the event loop where a stall freezes the whole server.
+_CLIENT_TIMEOUT_S = 60.0
+_CLIENT_RETRIES = 1
+
+
+def _client():
+    return anthropic.Anthropic(timeout=_CLIENT_TIMEOUT_S,
+                               max_retries=_CLIENT_RETRIES)
+
+
+
 _MEDIA = {
     "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
     "webp": "image/webp", "gif": "image/gif",
@@ -130,7 +145,7 @@ def describe_outfit(image_bytes: bytes, media: str = "image/png") -> dict:
 
     image_bytes, media = _fit_image(image_bytes, media)   # keep under Claude's 10 MB cap
     b64 = base64.standard_b64encode(image_bytes).decode("ascii")
-    client = anthropic.Anthropic()   # key from ANTHROPIC_API_KEY
+    client = _client()   # key from ANTHROPIC_API_KEY
     try:
         msg = client.messages.create(
             model="claude-opus-4-8",
@@ -403,7 +418,7 @@ def suggest_motion(image_bytes: bytes, media: str = "image/png", *,
     if idea.strip():
         task.append(_MOTION_IDEA.format(idea=idea.strip()))
 
-    client = anthropic.Anthropic()
+    client = _client()
     try:
         msg = client.messages.create(
             model="claude-opus-5",

@@ -19,6 +19,21 @@ import os
 
 from . import config  # noqa: F401 — runs load_dotenv(.env)
 
+
+# The SDK defaults to a 600s timeout with 2 retries — i.e. up to ~30 minutes of
+# a handler holding whatever it is holding. These calls are interactive (the
+# user is watching a spinner), so a minute is already past useful, and one of
+# the callers runs on the event loop where a stall freezes the whole server.
+_CLIENT_TIMEOUT_S = 60.0
+_CLIENT_RETRIES = 1
+
+
+def _client():
+    return anthropic.Anthropic(timeout=_CLIENT_TIMEOUT_S,
+                               max_retries=_CLIENT_RETRIES)
+
+
+
 # The identity rule is non-negotiable (measured); the photographic STYLE follows
 # the brief. The project DEFAULTS to candid-phone realism, but an explicit brief
 # ("studio", "high-res camera", "editorial lighting") must win — the prompter's
@@ -202,7 +217,7 @@ def rewrite(brief: str, *, shot_type: str = "candid", has_wardrobe: bool = False
         "Requirements for this prompt:\n- " + "\n- ".join(directives) +
         "\n\nWrite the single prompt now.")
 
-    client = anthropic.Anthropic()
+    client = _client()
     try:
         msg = client.messages.create(
             model="claude-opus-4-8",
@@ -310,7 +325,7 @@ def write_bio(name: str, description: str, fields: list[dict]) -> dict:
             f"Write a value for each field (id, label, example style):\n{field_lines}\n\n"
             "Return ONLY the JSON object {id: value, ...}.")
 
-    client = anthropic.Anthropic()
+    client = _client()
     try:
         msg = client.messages.create(
             model="claude-opus-4-8", max_tokens=1500,
@@ -415,7 +430,7 @@ def write_outfit(base: str = "", idea: str = "", *, occasion: str = "",
             "Design one outfit from these constraints (use only the ones given)")
     user = f"{verb}:\n" + "\n".join(lines) + "\n\nWrite the single outfit description now."
 
-    client = anthropic.Anthropic()
+    client = _client()
     try:
         msg = client.messages.create(
             model="claude-opus-4-8", max_tokens=700,

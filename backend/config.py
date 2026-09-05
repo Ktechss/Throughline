@@ -81,7 +81,7 @@ def set_active(cid: str) -> None:
     job gets. Deliberately separate from the per-request scope above."""
     global _active_id
     _active_id = cid
-    _ACTIVE_FILE.write_text(json.dumps({"id": cid}))
+    write_json_atomic(_ACTIVE_FILE, {"id": cid})
 
 
 def char_base(cid: str | None = None) -> Path:
@@ -302,3 +302,50 @@ RESOLUTION = "4K"
 # second provider is only an asset while the first still works. Override with
 # THROUGHLINE_PROVIDER=fal, or per call via generate(provider=...).
 PROVIDER = os.environ.get("THROUGHLINE_PROVIDER", "kie").strip().lower()
+
+
+# ---------------------------------------------------------------- atomic writes
+#
+# NOTHING in this project used to write state atomically. `Path.write_text` and
+# `np.savez` both TRUNCATE the target first, so the window between "file is
+# empty" and "file is complete" is a real file on disk that other code will
+# happily read.
+#
+# What that costs, concretely:
+#
+#   * `gallery.npz` is the gate's yardstick and has no backup. Die inside
+#     np.savez — Ctrl-C, an OOM, uvicorn --reload — and it is a truncated zip.
+#     `load_gallery` raises rather than degrading, so "is this still her?" has
+#     no answer at all until it is rebuilt by hand from references.
+#   * `gallery.npz` and `gallery.json` are written as a PAIR, one after the
+#     other. Die between them and the npz holds a vector whose yaw is unknown,
+#     which makes `_scorer` fall back to nearest-by-similarity — silently
+#     dropping rule 2 ("never read a similarity score without its yaw") while
+#     still returning confident numbers.
+#   * `nails.json` / `home.json` have handlers that swallow a decode error and
+#     return {}. A truncated read therefore becomes a clean {} which the next
+#     save writes back — the truncation is laundered into permanent loss.
+#
+# os.replace is atomic on POSIX and on Windows (unlike os.rename), so a reader
+# sees either the whole old file or the whole new one, never a partial. The
+# temp file is made in the SAME directory because rename across filesystems is
+# not atomic.
+
+def write_atomic(path, data: bytes) -> None:
+    """Replace `path` with `data` in one step, or leave it untouched."""
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_name(f".{p.name}.{os.getpid()}.tmp")
+    try:
+        with open(tmp, "wb") as fh:
+            fh.write(data)
+            fh.flush()
+            os.fsync(fh.fileno())       # the bytes, before the rename
+        os.replace(tmp, p)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
+def write_json_atomic(path, obj) -> None:
+    write_atomic(path, (json.dumps(obj, indent=2) + "\n").encode())

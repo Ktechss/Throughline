@@ -54,9 +54,34 @@ import cv2
 import numpy as np
 from insightface.app import FaceAnalysis
 
+import io
+import threading
+
+from . import config
 from .config import GALLERY_META, GALLERY_PATH, THRESHOLD_PATH
 
 _app: FaceAnalysis | None = None
+# insightface's FaceAnalysis is built lazily and _parallel runs four generation
+# threads: two can both see `None`, both construct it, and on a cold machine
+# both DOWNLOAD buffalo_l into the same path, which can leave a corrupt archive.
+_APP_LOCK = threading.Lock()
+
+# The gallery is read-modify-written by add/remove, and `def` endpoints run in
+# Starlette's threadpool, so two concurrent /api/gallery/add genuinely race and
+# one entry is simply lost. One lock covers both files as a unit.
+_GALLERY_LOCK = threading.RLock()
+
+
+def _write_gallery(g: dict) -> None:
+    """np.savez, atomically. It truncates the target before writing, and this
+    file is the yardstick with no backup — see config.write_atomic."""
+    buf = io.BytesIO()
+    np.savez(buf, **g)
+    config.write_atomic(GALLERY_PATH, buf.getvalue())
+
+
+def _write_meta(meta: dict) -> None:
+    config.write_json_atomic(GALLERY_META, meta)
 
 # Below this, ArcFace has too little signal to make a claim either way.
 MIN_FACE_PX = 160
@@ -85,10 +110,14 @@ DEFAULT_THRESHOLD = 0.55
 
 def _get_app() -> FaceAnalysis:
     global _app
-    if _app is None:
-        _app = FaceAnalysis(name="buffalo_l",
-                            providers=["CUDAExecutionProvider", "CPUExecutionProvider"])
-        _app.prepare(ctx_id=0, det_size=(640, 640))
+    if _app is None:                       # fast path, no lock once built
+        with _APP_LOCK:
+            if _app is None:               # re-check: another thread may have won
+                app = FaceAnalysis(
+                    name="buffalo_l",
+                    providers=["CUDAExecutionProvider", "CPUExecutionProvider"])
+                app.prepare(ctx_id=0, det_size=(640, 640))
+                _app = app                 # publish only once fully prepared
     return _app
 
 
@@ -368,16 +397,20 @@ def add_to_gallery(path: str | Path, name: str) -> Face:
     way. Enforced at the API layer, documented here.
     """
     face = analyze(path)
-    g = load_gallery()
-    g[name] = face.vector
-    GALLERY_PATH.parent.mkdir(parents=True, exist_ok=True)
-    np.savez(GALLERY_PATH, **g)
-
-    meta = load_meta()
-    meta[name] = {"yaw": round(face.yaw, 2), "pitch": round(face.pitch, 2),
-                  "face_px": face.width, "pose_class": face.pose_class,
-                  "source": str(Path(path).name)}
-    GALLERY_META.write_text(json.dumps(meta, indent=2) + "\n")
+    with _GALLERY_LOCK:
+        g = load_gallery()
+        g[name] = face.vector
+        meta = load_meta()
+        meta[name] = {"yaw": round(face.yaw, 2), "pitch": round(face.pitch, 2),
+                      "face_px": face.width, "pose_class": face.pose_class,
+                      "source": str(Path(path).name)}
+        # META FIRST, then the vectors. The pair is two files and cannot be made
+        # one transaction, so order it by which half-state is survivable: meta
+        # naming an entry the npz lacks is invisible (nothing iterates meta), a
+        # vector whose yaw is unknown is not — it silently demotes _scorer to
+        # nearest-by-similarity and the verdicts keep looking confident.
+        _write_meta(meta)
+        _write_gallery(g)
     return face
 
 
@@ -385,17 +418,21 @@ def remove_from_gallery(name: str) -> bool:
     """Drop ONE entry from the gallery (npz + meta) so a bad seed can be pulled
     without wiping the whole fingerprint. Returns False if the entry is absent.
     Only ever removes — never re-admits generated output."""
-    g = load_gallery()
-    meta = load_meta()
-    if name not in g and name not in meta:
-        return False
-    g.pop(name, None)
-    if g:
-        np.savez(GALLERY_PATH, **g)
-    else:
-        Path(GALLERY_PATH).unlink(missing_ok=True)
-    meta.pop(name, None)
-    GALLERY_META.write_text(json.dumps(meta, indent=2) + "\n")
+    with _GALLERY_LOCK:
+        g = load_gallery()
+        meta = load_meta()
+        if name not in g and name not in meta:
+            return False
+        g.pop(name, None)
+        meta.pop(name, None)
+        # Vectors first on the way OUT, for the same reason meta goes first on
+        # the way in: the survivable half-state is always "meta knows about an
+        # entry the npz does not".
+        if g:
+            _write_gallery(g)
+        else:
+            Path(GALLERY_PATH).unlink(missing_ok=True)
+        _write_meta(meta)
     return True
 
 
@@ -730,7 +767,7 @@ def calibrate_from_gallery(sigma: float = 2.0) -> dict:
                               f"lowest genuine pair {round(lo, 3)} — at n={len(sims)} "
                               f"the tail is not normal; consider a larger sigma.")
     THRESHOLD_PATH.parent.mkdir(parents=True, exist_ok=True)
-    THRESHOLD_PATH.write_text(json.dumps(result, indent=2) + "\n")
+    config.write_json_atomic(THRESHOLD_PATH, result)
     return result
 
 
@@ -763,5 +800,5 @@ def calibrate(paths: list[Path], sigma: float = 2.0) -> dict:
               "n_images": len(vecs), "n_pairs": len(sims), "sigma": sigma,
               "warning": "This is a stranger threshold, not a quality bar."}
     THRESHOLD_PATH.parent.mkdir(parents=True, exist_ok=True)
-    THRESHOLD_PATH.write_text(json.dumps(result, indent=2) + "\n")
+    config.write_json_atomic(THRESHOLD_PATH, result)
     return result

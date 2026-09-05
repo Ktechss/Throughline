@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import anyio.to_thread
 import json
 import re
 from datetime import date
@@ -707,7 +708,7 @@ def _write_bio(cid: str, updates: dict) -> None:
     cfg = json.loads(path.read_text()) if path.exists() else {}
     cfg.update(updates)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(cfg, indent=2) + "\n")
+    config.write_json_atomic(path, cfg)
 
 
 def _bodies_available() -> list[dict]:
@@ -846,8 +847,8 @@ def _copy_body_from(src_cid: str, dst_cid: str) -> str | None:
                        "build": build_text or f"figure copied from {src_name} (head cropped)",
                        "created": time.strftime("%Y-%m-%dT%H:%M:%S")})
         meta_path.parent.mkdir(parents=True, exist_ok=True)
-        meta_path.write_text(json.dumps({"active": entry_id, "bodies": bodies},
-                                        indent=2) + "\n")
+        config.write_json_atomic(meta_path,
+                                 {"active": entry_id, "bodies": bodies})
     except Exception:  # noqa: BLE001 — the reference is what matters; the
         pass                          # library entry is convenience on top
     return dst.name
@@ -867,8 +868,8 @@ def _build_home(job: dict, cid: str, style: str, surroundings: str) -> int:
     """
     style, surroundings = style.strip(), surroundings.strip()
     if style or surroundings:
-        _state_path("home.json", cid).write_text(json.dumps(
-            {"style": style, "surroundings": surroundings}, indent=2) + "\n")
+        config.write_json_atomic(_state_path("home.json", cid),
+                                 {"style": style, "surroundings": surroundings})
     if not style:
         job["note"] = ("home skipped — no house style given; "
                        "generate corners from the Home tab")
@@ -1236,7 +1237,7 @@ def set_master_face(cid: str, req: MasterFaceReq):
     cfg = json.loads(bio_path.read_text()) if bio_path.exists() else {}
     cfg["reference"] = dest.name        # the fix: she is shootable from here on
     cfg["calib_seed"] = dest.name
-    bio_path.write_text(json.dumps(cfg, indent=2) + "\n")
+    config.write_json_atomic(bio_path, cfg)
 
     # NO BODY REFERENCE. Creation used to generate one here and the results were
     # consistently poor: a full-body activewear studio shot made from a single
@@ -1319,16 +1320,22 @@ def _load_parts(cid: str | None = None) -> list[promptlib.Part]:
         added = [p for p in promptlib.default_parts() if p.id not in have]
         if added:
             stored += added
-            _save_parts(stored)
+            _save_parts(stored, cid)
         return stored
     parts = promptlib.default_parts()
-    _save_parts(parts)
+    # `cid`, not the active character. This runs inside the guided-creation
+    # thread (which cannot see the request's ContextVar), and a new character
+    # has no parts.json — so the bare call wrote the DEFAULT part tree over
+    # whichever character happened to be active, silently replacing a
+    # hand-edited identity with a stranger's defaults. The part tree is her
+    # written identity, not settings.
+    _save_parts(parts, cid)
     return parts
 
 
 def _save_parts(parts: list[promptlib.Part], cid: str | None = None) -> None:
-    _state_path("parts.json", cid).write_text(
-        json.dumps([p.dict() for p in parts], indent=2) + "\n")
+    config.write_json_atomic(_state_path("parts.json", cid),
+                             [p.dict() for p in parts])
 
 
 @app.get("/api/parts")
@@ -1477,6 +1484,13 @@ def _pull_to_disk(url: str, dest: Path) -> int:
 # download is recoverable only inside that window, and after it the credits are
 # spent for nothing. 20h leaves margin; older rows stay refetchable by hand.
 SWEEP_WINDOW_H = 20
+
+# How recently a file may have been touched and still be judged an orphan by
+# /api/images/cleanup. generate() writes the image, then gates it (ArcFace,
+# seconds), then archives it, then inserts the row — so a real, paid image can
+# legitimately have no ledger row for a while. Ten minutes is far past that gap
+# and far short of anything genuinely abandoned.
+CLEANUP_MIN_AGE_S = 600
 SWEEP_EVERY_S = 600
 
 
@@ -2299,9 +2313,15 @@ def calibrate_faces(req: CalibFacesReq):
             # and deletes by hand; we never drop one automatically. No-clobber
             # naming means repeated calibrations accumulate (calib-front-1, …).
             try:
-                src = IMAGES / row["file"]
+                # Resolve from the PINNED cid. IMAGES and _unique_ref_path's
+                # REFS are CharPath proxies read here in the worker thread, so
+                # a character switch mid-calibration copied from the wrong
+                # images/ (silently swallowed below) or filed her calibration
+                # face into someone else's refs/, where it is then offered as
+                # one of THEIR references.
+                src = config.char_base(cid) / "images" / row["file"]
                 if src.exists():
-                    dst = _unique_ref_path(f"calib-{angle}.png")
+                    dst = _unique_ref_path(f"calib-{angle}.png", cid)
                     shutil.copy2(src, dst)
                     row.setdefault("meta", {})["calib_ref"] = dst.name
             except Exception:  # noqa: BLE001 — a failed copy must not fail the gen
@@ -2361,7 +2381,7 @@ def set_calib_seed(req: CalibSeedReq):
         raise HTTPException(400, f"no such reference: {name}")
     cfg = _bio_cfg_raw()
     cfg["calib_seed"] = name
-    BIO_REF_PATH.write_text(json.dumps(cfg, indent=2) + "\n")
+    config.write_json_atomic(BIO_REF_PATH, cfg)
     return {"calib_seed": name}
 
 
@@ -2465,22 +2485,28 @@ class ImportReq(BaseModel):
     path: str
 
 
-def _unique_ref_path(filename: str) -> Path:
+def _unique_ref_path(filename: str, cid: str | None = None) -> Path:
     """Never clobber an existing reference. Overwriting a ref in place rewrites
     history: every past run records the ref's *filename*, so if that name later
     points at different bytes, the run's provenance silently lies (and old
     origin panels show the wrong face). If the name is taken, suffix it
     (-1, -2, …) so a changed identity becomes a NEW file and old runs keep
     resolving to the exact image they used.
+
+    `cid` matters for background callers: REFS is a CharPath proxy resolving
+    through get_active(), which a worker thread does not inherit. Pass the
+    pinned owner and the file lands in HER refs/ rather than whoever is active.
     """
-    p = REFS / Path(filename or "reference.png").name
+    refs = config.char_base(cid) / "refs" if cid else REFS
+    refs.mkdir(parents=True, exist_ok=True)
+    p = refs / Path(filename or "reference.png").name
     if not p.exists():
         return p
     stem, suf = p.stem, p.suffix
     n = 1
-    while (REFS / f"{stem}-{n}{suf}").exists():
+    while (refs / f"{stem}-{n}{suf}").exists():
         n += 1
-    return REFS / f"{stem}-{n}{suf}"
+    return refs / f"{stem}-{n}{suf}"
 
 
 @app.post("/api/refs/import")
@@ -2505,13 +2531,24 @@ def import_ref(req: ImportReq):
 
 @app.post("/api/refs/upload")
 async def upload_ref(file: UploadFile = File(...)):
-    dest = _unique_ref_path(file.filename)
-    dest.write_bytes(await file.read())
-    info = _ref_info(dest)
-    if not info["usable"]:
-        dest.unlink(missing_ok=True)
-        raise HTTPException(400, f"no face detected in {file.filename}")
-    return info
+    data = await file.read()
+
+    def work() -> dict:
+        # ArcFace off the event loop. _ref_info runs buffalo_l, which on the
+        # FIRST call in a process also LOADS (and possibly downloads) the model
+        # — seconds to tens of seconds. Run inline in an `async def` that
+        # froze the entire server: no job polling, no thumbnails, no health
+        # check, for every user, for the whole detect. This is the single
+        # biggest reason the backend "feels broken".
+        dest = _unique_ref_path(file.filename)
+        dest.write_bytes(data)
+        info = _ref_info(dest)
+        if not info["usable"]:
+            dest.unlink(missing_ok=True)
+            raise HTTPException(400, f"no face detected in {file.filename}")
+        return info
+
+    return await anyio.to_thread.run_sync(work)
 
 
 @app.delete("/api/refs/{name}")
@@ -2709,7 +2746,7 @@ def set_bio_ref(req: BioRefReq):
         raise HTTPException(400, f"no such reference: {name}")
     cfg = _bio_cfg_raw()
     cfg["reference"] = name
-    BIO_REF_PATH.write_text(json.dumps(cfg, indent=2) + "\n")
+    config.write_json_atomic(BIO_REF_PATH, cfg)
     return {"reference": name}
 
 
@@ -2737,7 +2774,7 @@ def bio_reference_from_run(payload: dict = Body(...)):
         raise HTTPException(400, "no face detected in that image") from None
     cfg = _bio_cfg_raw()
     cfg["reference"] = dest.name
-    BIO_REF_PATH.write_text(json.dumps(cfg, indent=2) + "\n")
+    config.write_json_atomic(BIO_REF_PATH, cfg)
     return {"reference": dest.name}
 
 
@@ -2857,7 +2894,7 @@ def body_ref_save(payload: dict = Body(...)):
     _resolve_body_candidate(run_id, "saved")
     cfg = _bio_cfg_raw()
     cfg["body_reference"] = dest.name
-    BIO_REF_PATH.write_text(json.dumps(cfg, indent=2) + "\n")
+    config.write_json_atomic(BIO_REF_PATH, cfg)
     return {"body_reference": dest.name}
 
 
@@ -2874,7 +2911,7 @@ def _bodies() -> dict:
 
 
 def _save_bodies(data: dict) -> None:
-    BODIES_META.write_text(json.dumps(data, indent=2) + "\n")
+    config.write_json_atomic(BODIES_META, data)
 
 
 def _bust_text() -> str:
@@ -2928,7 +2965,7 @@ def body_select(req: BodySelectReq):
     dest = _promote(src, REFS / "body-canonical.png")   # the active body reference
     cfg = _bio_cfg_raw()
     cfg["body_reference"] = dest.name
-    BIO_REF_PATH.write_text(json.dumps(cfg, indent=2) + "\n")
+    config.write_json_atomic(BIO_REF_PATH, cfg)
     # restore the matching bust text so the figure stays consistent
     if b.get("build"):
         parts = _load_parts()
@@ -3235,7 +3272,11 @@ async def wardrobe_describe(file: UploadFile = File(...)):
     data = await file.read()
     media = describe.media_type(file.filename or "", file.content_type)
     try:
-        out = describe.describe_outfit(data, media)
+        # A synchronous Claude vision call. On the event loop it blocked every
+        # other request for its whole duration — and the SDK's default is a
+        # 600s timeout with 2 retries, so worst case was ~30 minutes of a dead
+        # server. (describe now also passes an explicit 60s timeout.)
+        out = await anyio.to_thread.run_sync(describe.describe_outfit, data, media)
     except describe.DescribeError as exc:
         raise HTTPException(400, str(exc)) from exc
     # outfit = the garment prose; details = the small fields (empty ones the UI
@@ -3557,16 +3598,23 @@ def list_pose_refs():
 
 @app.post("/api/pose-refs/upload")
 async def pose_ref_upload(file: UploadFile = File(...)):
-    dest = POSE_REFS / Path(file.filename).name
-    dest.write_bytes(await file.read())
-    # Verify it's her with a detectable face; a poseref with no face is useless
-    # and one of a stranger would corrupt identity.
-    try:
-        gate.analyze(dest)
-    except (gate.NoFaceFound, ValueError):
-        dest.unlink(missing_ok=True)
-        raise HTTPException(400, "no face in the pose reference — it must show her") from None
-    return {"id": dest.stem, "file": dest.name}   # saved as-is, never rotated
+    data = await file.read()
+
+    def work() -> dict:
+        dest = POSE_REFS / Path(file.filename).name
+        dest.write_bytes(data)
+        # Verify it's her with a detectable face; a poseref with no face is
+        # useless and one of a stranger would corrupt identity. ArcFace again,
+        # so again in a thread rather than on the loop.
+        try:
+            gate.analyze(dest)
+        except (gate.NoFaceFound, ValueError):
+            dest.unlink(missing_ok=True)
+            raise HTTPException(
+                400, "no face in the pose reference — it must show her") from None
+        return {"id": dest.stem, "file": dest.name}   # saved as-is, never rotated
+
+    return await anyio.to_thread.run_sync(work)
 
 
 @app.post("/api/pose-refs/from-run")
@@ -3614,6 +3662,18 @@ def _nails_dir(cid: str | None = None) -> Path:
     return config.char_base(cid) / "nails"
 
 
+def _quarantine(p: Path, exc: BaseException) -> None:
+    """Move an unreadable state file aside instead of silently treating it as
+    empty. The copy is what a human can repair; the log line is how they learn
+    it happened at all."""
+    try:
+        bad = p.with_name(f"{p.name}.corrupt-{time.strftime('%Y%m%d-%H%M%S')}")
+        p.rename(bad)
+        print(f"[state] {p.name} was unreadable ({exc}); kept as {bad.name}")
+    except Exception:  # noqa: BLE001 — never let cleanup mask the original
+        pass
+
+
 def _nails_meta_path(cid: str | None = None) -> Path:
     return config.char_base(cid) / "state" / "nails.json"
 
@@ -3623,15 +3683,21 @@ def _nails_meta(cid: str | None = None) -> dict:
     if p.exists():
         try:
             return json.loads(p.read_text())
-        except Exception:  # noqa: BLE001
-            return {}
+        except Exception as exc:  # noqa: BLE001
+            # NOT `return {}`. The caller's next save writes that {} straight
+            # back, so a file truncated by a crash became permanent loss of
+            # every nail name and category — the corruption laundered into a
+            # clean empty state with no error anywhere. Keep the evidence and
+            # refuse instead; writes are atomic now, so this should not happen,
+            # and if it does it is worth a loud failure.
+            _quarantine(p, exc)
     return {}
 
 
 def _save_nails_meta(d: dict, cid: str | None = None) -> None:
     p = _nails_meta_path(cid)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(d, indent=2) + "\n")
+    config.write_json_atomic(p, d)
 
 
 def _nails(cid: str | None = None) -> list[dict]:
@@ -3902,8 +3968,8 @@ def _home(cid: str | None = None) -> dict:
             d = json.loads(HOME_PATH.read_text())
             return {"style": (d.get("style") or "").strip(),
                     "surroundings": (d.get("surroundings") or "").strip()}
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001
+            _quarantine(HOME_PATH, exc)   # see _nails_meta
     return {"style": "", "surroundings": ""}
 
 
@@ -3946,7 +4012,7 @@ class HomeStyleReq(BaseModel):
 @app.put("/api/home")
 def set_home_style(req: HomeStyleReq):
     data = {"style": req.style.strip(), "surroundings": req.surroundings.strip()}
-    HOME_PATH.write_text(json.dumps(data, indent=2) + "\n")
+    config.write_json_atomic(HOME_PATH, data)
     return data
 
 
@@ -4036,8 +4102,14 @@ def home_generate(key: str):
     if key not in _CORNER:
         raise HTTPException(400, f"unknown corner: {key}")
     corner = _CORNER[key]
+    # Pin the owner BEFORE going async: a thread does not inherit X-Character,
+    # and every other start_job call site here already does this. Left unpinned,
+    # this wrote the room into whichever character was globally active — and
+    # _promote deletes any same-stem file first, so it overwrote HER kitchen.
+    # Corner keys collide across characters by design.
+    owner = config.get_active()
     jid = generate.start_job(f"home: {corner['label']}",
-                             lambda job: _render_corner(key, job))
+                             lambda job: _render_corner(key, job, owner))
     return {"job": jid}
 
 
@@ -4186,7 +4258,7 @@ def put_timeline(payload: dict = Body(...)):
         except ValueError:
             raise HTTPException(400, f"era needs a valid 'from' date: {e!r}") from None
     TIMELINE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    TIMELINE_PATH.write_text(json.dumps({"eras": eras}, indent=2) + "\n")
+    config.write_json_atomic(TIMELINE_PATH, {"eras": eras})
     return {"eras": eras}
 
 
@@ -6192,10 +6264,26 @@ def images_cleanup():
          already copied out or embedded; drop the image AND its now-dangling row.
       3. STALE THUMBS — thumbnails whose source image is gone.
 
-    Real shots (everything in the review grid) are never touched. Run this when no
-    generation is mid-flow: an outfit/body PREVIEW still awaiting save counts as a
-    spent intermediate and will be reclaimed.
+    Real shots (everything in the review grid) are never touched.
+
+    ⚠ "Run this when no generation is mid-flow" used to be a sentence in this
+    docstring and nothing else, which made it a data-loss bug rather than
+    advice: generate() downloads the image to data/<char>/images/ BEFORE it
+    inserts the row (generate.py, the row is written after the gate), so a
+    cleanup landing in that window sees a file with no ledger row, calls it an
+    orphan, and deletes an image that was just paid for. The run then records a
+    file that no longer exists.
+
+    So it is enforced now, the same way backup/restore enforces it, plus an
+    mtime floor for the gap between "file closed" and "row committed".
     """
+    busy = [j for j in generate.all_jobs() if not j.get("done")]
+    if busy:
+        raise HTTPException(
+            409, f"{len(busy)} generation(s) still running — cleanup would "
+                 f"delete an image whose row has not been written yet. "
+                 f"Wait for: {', '.join(j.get('label', '?') for j in busy[:3])}")
+
     runs = generate.all_runs()
     keep = {r["file"] for r in runs if not _is_intermediate(r)}
     intermediate = {r["id"]: r["file"] for r in runs if _is_intermediate(r)}
@@ -6218,7 +6306,19 @@ def images_cleanup():
     exts = (".png", ".jpg", ".jpeg", ".webp")
     on_disk = [p for p in IMAGES.iterdir()
                if p.is_file() and p.suffix.lower() in exts] if IMAGES.exists() else []
+    # Second belt on the same trousers as the busy-job check above. A job can
+    # start the instant after that check passes, and "no row yet" is
+    # indistinguishable from "orphan" by inspection — the only thing that tells
+    # them apart is age. Nothing legitimately orphaned is also brand new.
+    settle = time.time() - CLEANUP_MIN_AGE_S
+    counts["too_new_to_judge"] = 0
     for p in on_disk:
+        try:
+            if p.stat().st_mtime > settle:
+                counts["too_new_to_judge"] += 1
+                continue
+        except OSError:
+            continue
         if p.name in inter_files:
             _rm(p.name); counts["intermediates"] += 1
         elif p.name not in keep:

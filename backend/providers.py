@@ -101,6 +101,14 @@ def _get(url: str, key: str, timeout: int = 60) -> dict:
     return json.loads(urllib.request.urlopen(req, timeout=timeout).read())
 
 
+# A key that is still the .env.example placeholder is not a key. Probing with it
+# can only ever time out, and the balance is a sidebar convenience — spending a
+# network round trip to learn nothing, on every page load, is the wrong trade.
+def _placeholder(key: str) -> bool:
+    k = (key or "").strip().lower()
+    return (not k) or "your-" in k or k.endswith("-here")
+
+
 def kie_key() -> str:
     k = os.environ.get("KIE_API_KEY", "").strip()
     if not k:
@@ -110,6 +118,7 @@ def kie_key() -> str:
 
 _CREDIT_CACHE: tuple[float, float | None] = (0.0, None)
 CREDIT_TTL = 60          # seconds
+CREDIT_TIMEOUT = 4       # a sidebar nicety must never hold a page open
 
 
 def kie_credits(force: bool = False) -> float | None:
@@ -123,11 +132,24 @@ def kie_credits(force: bool = False) -> float | None:
     """
     global _CREDIT_CACHE
     age, val = _CREDIT_CACHE
-    if not force and val is not None and (time.time() - age) < CREDIT_TTL:
+    # The cache is checked on AGE ALONE, so a failure is remembered as long as a
+    # success. Previously `val is not None` meant a failed probe was never
+    # cached: every caller paid the full network timeout again, and since
+    # /api/providers awaits this, the Settings page and the sidebar balance both
+    # hung — a placeholder key in .env froze two pieces of UI for a minute at a
+    # time. A balance nobody can read is a missing number, not a reason to wait.
+    if not force and age and (time.time() - age) < CREDIT_TTL:
         return val
+    if _placeholder(os.environ.get("KIE_API_KEY", "")):
+        _CREDIT_CACHE = (time.time(), None)
+        return None
     try:
-        val = float(_get(_KIE_CREDIT, kie_key())["data"])
+        # Seconds, not the 60s default: this is a convenience figure on a
+        # sidebar, and nothing downstream needs it to render.
+        val = float(_get(_KIE_CREDIT, kie_key(), timeout=CREDIT_TIMEOUT)["data"])
     except Exception:                                     # noqa: BLE001
+        # Remember the miss too, with the last known value (often None).
+        _CREDIT_CACHE = (time.time(), _CREDIT_CACHE[1])
         return _CREDIT_CACHE[1]      # last known beats nothing
     _CREDIT_CACHE = (time.time(), val)
     return val
