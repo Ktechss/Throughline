@@ -416,10 +416,11 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
             try:
                 if progress is not None:
                     progress["stage"] = f"generating on {prov.name}"
-                r = prov.render(spec=spec, prompt=prompt, refs=refs,
-                                aspect=aspect, resolution=resolution or RESOLUTION,
-                                system=system, seed=seed, progress=progress,
-                                safety_tolerance=safety_tolerance, extra=extra)
+                with _slot(progress):
+                    r = prov.render(spec=spec, prompt=prompt, refs=refs,
+                                    aspect=aspect, resolution=resolution or RESOLUTION,
+                                    system=system, seed=seed, progress=progress,
+                                    safety_tolerance=safety_tolerance, extra=extra)
                 use, used_spec = prov.name, spec
                 if prov.name == "kie":
                     # Refresh the cached balance so the sidebar drops
@@ -466,9 +467,10 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
             try:
                 if progress is not None:
                     progress["stage"] = f"generating on {name}"
-                r = run_it(prompt=prompt, refs=refs, aspect=aspect,
-                           resolution=resolution or RESOLUTION, progress=progress,
-                           model=model, seed=seed)
+                with _slot(progress):
+                    r = run_it(prompt=prompt, refs=refs, aspect=aspect,
+                               resolution=resolution or RESOLUTION,
+                               progress=progress, model=model, seed=seed)
                 use = name
                 if name == "kie":
                     try:
@@ -560,10 +562,11 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
                 if progress is not None:
                     progress["stage"] = ("scene-model fallback" if falling_back
                                          else "generating")
-                r = fal_client.subscribe(ep, arguments=build_args(ep),
-                                         with_logs=False,
-                                         start_timeout=START_TIMEOUT,
-                                         client_timeout=CLIENT_TIMEOUT)
+                with _slot(progress):
+                    r = fal_client.subscribe(ep, arguments=build_args(ep),
+                                             with_logs=False,
+                                             start_timeout=START_TIMEOUT,
+                                             client_timeout=CLIENT_TIMEOUT)
                 used_ep = ep
                 break
             except Exception as exc:  # noqa: BLE001
@@ -835,7 +838,60 @@ def delete_runs(ids: set[str]) -> list[dict]:
 # generating -> gating -> done, plus explicit retry visibility for the
 # moderation coin-flip that used to look like a silent hang.
 
+import os          # noqa: E402
 import threading  # noqa: E402
+
+# HOW MANY GENERATIONS MAY BE IN FLIGHT AT THE PROVIDER AT ONCE.
+#
+# There was no cap: start_job spawned an unbounded OS thread per click, and
+# _parallel adds up to BUILD_CONCURRENCY more for a guided build. Firing six at
+# once does not finish them sooner — kie serialises them at its end and every
+# one waits. Measured on a real outfit with six in flight: 509s wall clock
+# against kie's own render time of 76.8s, and the job stream showed the stage
+# sitting at "generating (waiting)", which is kie reporting the task QUEUED
+# rather than rendering.
+#
+# So the queue moves here, where it is visible and where a waiting job can say
+# so. Same total throughput, far better feedback — and it bounds the spend a
+# stuck retry loop can reach.
+#
+# The slot is held only for the PROVIDER CALL, released before the download, so
+# one shot can be pulling its 4K image (measured: 78s) while the next renders.
+GEN_CONCURRENCY = max(1, int(os.environ.get("THROUGHLINE_GEN_CONCURRENCY", "2")))
+_GEN_SLOTS = threading.BoundedSemaphore(GEN_CONCURRENCY)
+_GEN_WAITING = 0
+_GEN_LOCK = threading.Lock()
+
+
+class _slot:
+    """Hold a provider slot, telling the job it is queued while it waits."""
+
+    def __init__(self, progress):
+        self.progress = progress
+
+    def __enter__(self):
+        global _GEN_WAITING
+        if _GEN_SLOTS.acquire(blocking=False):
+            return self
+        with _GEN_LOCK:
+            _GEN_WAITING += 1
+            ahead = _GEN_WAITING
+        # Say it out loud. A job blocked on a local semaphore looks identical
+        # to a hung one from outside, which is the failure this project keeps
+        # hitting — the whole reason the stage string exists.
+        if self.progress is not None:
+            self.progress["stage"] = (f"queued — {ahead} ahead"
+                                      if ahead > 1 else "queued")
+        try:
+            _GEN_SLOTS.acquire()
+        finally:
+            with _GEN_LOCK:
+                _GEN_WAITING -= 1
+        return self
+
+    def __exit__(self, *exc):
+        _GEN_SLOTS.release()
+        return False
 
 JOBS: dict[str, dict] = {}
 
