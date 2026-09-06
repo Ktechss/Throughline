@@ -37,6 +37,12 @@ _CLIENT_RETRIES = 1
 
 
 def _client():
+    # Imported HERE, not at module scope. Every call site imports anthropic
+    # lazily inside its own function so this module can be imported without the
+    # SDK installed; hoisting the import into a module-level helper broke that
+    # and every Claude call raised "name 'anthropic' is not defined" — which
+    # surfaced as a character build failing at the "writing bio" stage.
+    import anthropic
     return anthropic.Anthropic(timeout=_CLIENT_TIMEOUT_S,
                                max_retries=_CLIENT_RETRIES)
 

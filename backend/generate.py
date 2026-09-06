@@ -325,7 +325,13 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
         # a seed that may never be honoured.
         "seed_requested": seed, "seed": None, "aspect": aspect,
         "resolution": resolution or RESOLUTION,
-        "endpoint": primary, "model": model, "provider": provider,
+        # `endpoint`/`provider` stay NULL until something actually renders.
+        # They used to be seeded with `primary` — a fal string like
+        # "fal-ai/nano-banana-pro/edit" — so an in-flight row claimed fal while
+        # the chain was routing it to kie. Same shape of lie as the seed field:
+        # a reserved row must record the REQUEST, not a guess at the outcome.
+        "endpoint": None, "provider": None, "model": model,
+        "purpose": getattr(purpose, "value", purpose),
         "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "mark": None, "meta": meta or {},
         "verdict": {"status": "pending", "reason": "generation in flight"},

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import uuid
 from contextvars import ContextVar
 from pathlib import Path
 
@@ -335,7 +336,12 @@ def write_atomic(path, data: bytes) -> None:
     """Replace `path` with `data` in one step, or leave it untouched."""
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_name(f".{p.name}.{os.getpid()}.tmp")
+    # uuid4, NOT os.getpid(): every thread in this process shares a pid, so two
+    # concurrent writes to the same path built the SAME temp name — one renamed
+    # it away and the other's os.replace raised FileNotFoundError. Observed on
+    # parts.json during a character build. The data survived (os.replace is
+    # atomic, so the winner landed) but a write was lost and the request threw.
+    tmp = p.with_name(f".{p.name}.{uuid.uuid4().hex}.tmp")
     try:
         with open(tmp, "wb") as fh:
             fh.write(data)
