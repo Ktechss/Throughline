@@ -90,3 +90,21 @@ def test_defaults_are_in_range():
         assert 0 <= spec["default"] < len(spec["steps"]), axis
         for build, rungs in BUILD_AXIS_DEFAULTS.items():
             assert 0 <= rungs[axis] < len(spec["steps"]), f"{build}/{axis}"
+
+
+def test_height_part_keeps_its_weight():
+    """body.height carries TWO facts and must be written with both.
+
+    prompt.py ships it as "168cm (5'6\"), 58kg". _height_text emitted only the
+    height, and the wizard always sets height — so every character born through
+    creation had her weight silently deleted. Verified on a real one before the
+    fix: neha-dubey's part read "168cm (5'6\")" with no kg at all.
+    """
+    from backend.main import _height_text
+    default = next(p.text for p in promptlib.default_parts()
+                   if p.id == "body.height")
+    assert "kg" in default, "the default no longer carries a weight"
+    assert _height_text(168, 58) == default, (
+        f"round-trip lost something: {_height_text(168, 58)!r} != {default!r}")
+    # No weight given is the one case where dropping it is correct.
+    assert "kg" not in _height_text(168)

@@ -791,9 +791,19 @@ def _parallel(items, work, job: dict | None = None, label: str = "") -> tuple[li
     return [r for r in results if r is not None], errors
 
 
-def _height_text(cm: int) -> str:
+def _height_text(cm: int, kg: int | None = None) -> str:
+    """The body.height sentence — height AND weight.
+
+    `body.height` is a COMPOUND part: prompt.py ships it as
+    "168cm (5'6\"), 58kg". This used to emit only the height half, and the
+    wizard always sets height, so every character born through creation had her
+    weight silently deleted — verified on a real one: neha-dubey's part reads
+    "168cm (5'6\")" with no kg at all. A part that carries two facts must be
+    written with both or not written at all.
+    """
     total_in = round(cm / 2.54)
-    return f"{cm}cm ({total_in // 12}'{total_in % 12}\")"
+    out = f"{cm}cm ({total_in // 12}'{total_in % 12}\")"
+    return f"{out}, {kg}kg" if kg else out
 
 
 def _write_bio(cid: str, updates: dict) -> None:
@@ -989,6 +999,7 @@ async def create_character_guided(
     face_shape: str = Form(""),
     build: str = Form(""),
     height_cm: str = Form(""),
+    weight_kg: str = Form(""),   # the other half of body.height; see _height_text
     age: str = Form(""),
     faces: str = Form(""),          # how many candidates to generate (1..MASTER_FACE_CANDIDATES)
     look: str = Form(""),           # register: see LOOKS
@@ -1045,6 +1056,12 @@ async def create_character_guided(
             height = 0
     except (ValueError, TypeError):
         height = 0
+    try:
+        weight = int(float(weight_kg))
+        if not (35 <= weight <= 200):
+            weight = 0
+    except (ValueError, TypeError):
+        weight = 0
     try:
         years = int(float(age))
         if not (18 <= years <= 60):
@@ -1174,7 +1191,7 @@ async def create_character_guided(
         if build:
             desc += f"\nHer body build is {build}."
         if height:
-            desc += f"\nHer height is {_height_text(height)}."
+            desc += f"\nHer height is {_height_text(height, weight)}."
         for key, val in picks.items():
             desc += f"\nHer {key.replace('_', ' ')}: {PICKERS[key][val]}."
         if skin:
@@ -1203,7 +1220,7 @@ async def create_character_guided(
         # read the same rung.
         updates.update(_body_axis_parts(_build_axes(build, body_axes)))
         if height:
-            updates["body.height"] = _height_text(height)
+            updates["body.height"] = _height_text(height, weight)
         for key, val in picks.items():
             updates[_PICKER_PART[key]] = PICKERS[key][val]
         if skin:

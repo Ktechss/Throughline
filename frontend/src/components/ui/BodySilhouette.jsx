@@ -26,6 +26,17 @@ import React, { useMemo } from "react";
 const CX = 50;
 const VB = { w: 100, h: 220 };
 
+// 7.5 HEADS, because that is what body.frame says next to it.
+//
+// Drawn at r=9.6 this figure was 10.2 heads tall — past even the 8.5 that
+// prompt.py's body.frame note calls out as "the fashion-illustration
+// proportion", which "reads as uncanny". So the diagram was contradicting the
+// sentence printed beside it, and flattering the figure while doing it.
+// FLOOR - HEAD_TOP over 7.5, halved.
+const FLOOR = 206;
+const HEAD_R = 13.1;
+const HEAD_CY = 4 + HEAD_R;
+
 const at = (arr, i, dflt) => arr[Math.max(0, Math.min(arr.length - 1, i ?? dflt))];
 
 // Half-widths in viewBox units. Index matches BODY_AXES on the server, so a
@@ -163,7 +174,7 @@ export function BodySilhouette({ axes = {}, className, showGuides = false }) {
         ))}
         {g.legs.map((d, i) => <path key={`l${i}`} d={d} />)}
         <path d={g.torso} />
-        <circle cx={CX} cy={19} r={9.6} />
+        <circle cx={CX} cy={HEAD_CY} r={HEAD_R} />
       </g>
     </svg>
   );

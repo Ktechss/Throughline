@@ -62,6 +62,7 @@ export default function CreateCharacter() {
   const [look, setLook] = useState(null);
   const [age, setAge] = useState(null);
   const [height, setHeight] = useState(168);
+  const [weight, setWeight] = useState(58);
   const [faces, setFaces] = useState(4);
   // "inspiration" = hair/mood only, she is a different person (N generations).
   // "identity"    = the upload IS her face (0 generations).
@@ -131,6 +132,7 @@ export default function CreateCharacter() {
       fd.append("face_shape", picks.face_shape || "");
       fd.append("build", picks.build || "");
       fd.append("height_cm", height || "");
+      fd.append("weight_kg", weight || "");
       fd.append("faces", String(faces ?? 4));
       fd.append("look", look || "");
       fd.append("age", age || "");
@@ -371,6 +373,15 @@ export default function CreateCharacter() {
             <RangeField label="Height" value={height} onChange={setHeight}
               min={148} max={190} unit=" cm"
               format={(v) => `${v} cm · ${Math.floor(v / 30.48)}′${Math.round((v / 2.54) % 12)}″`} />
+
+            {/* body.height is a COMPOUND part — "168cm (5'6\"), 58kg" — and
+                creation used to write only the height half, so every character
+                born here had her weight silently deleted. It needs a control
+                for the same reason it needs writing: it is half of a sentence
+                that reaches the model. */}
+            <RangeField label="Weight" value={weight} onChange={setWeight}
+              min={40} max={120} unit=" kg"
+              format={(v) => `${v} kg · ${Math.round(v * 2.205)} lb`} />
 
             <div className="pt-1 space-y-4">
               <div className="text-[11px] text-zinc-500">
