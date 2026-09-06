@@ -4,6 +4,7 @@ import { ChevronsUpDown, Plus, ShieldAlert, ShieldCheck, Loader2 } from "lucide-
 import { api, charView } from "@/api/throughline";
 import { nextStep, studioUrl } from "@/lib/nextStep";
 import { cn } from "@/lib/utils";
+import { Popover } from "@/components/ui/popover";
 
 // WHO YOU ARE WORKING ON, and how to change it — from anywhere.
 //
@@ -35,19 +36,10 @@ export default function CharacterSwitcher({ variant = "sidebar", activeId, onPic
   useEffect(() => { load(); }, []);
   useEffect(() => { if (activeId) setActive(activeId); }, [activeId]);
 
-  // Close on an outside click or Escape — the two things every popover needs and
-  // the two this app's hand-rolled ones kept forgetting.
-  useEffect(() => {
-    if (!open) return undefined;
-    const onDown = (e) => { if (box.current && !box.current.contains(e.target)) setOpen(false); };
-    const onKey = (e) => { if (e.key === "Escape") setOpen(false); };
-    document.addEventListener("mousedown", onDown);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
+  // Outside-click and Escape belong to Popover now. A copy here would be
+  // actively wrong: the panel is portalled to document.body, so it is no longer
+  // inside `box`, and `!box.contains(target)` would fire on mousedown over a
+  // menu item and close the panel before its click could land.
 
   const cur = rows.find((r) => r.id === active);
 
@@ -107,11 +99,15 @@ export default function CharacterSwitcher({ variant = "sidebar", activeId, onPic
         <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
       </button>
 
-      {open && (
-        <div className={cn(
-          "absolute z-50 w-[240px] rounded-xl bg-[#141417] ring-1 ring-line shadow-2xl p-1.5",
-          variant === "sidebar" ? "bottom-full mb-2 left-0" : "top-full mt-2 left-0",
-        )}>
+      {/* Portalled for the same reason as the roster menu: this renders in the
+          sidebar footer and in the Studio header, and neither call site can
+          promise it has no clipping or transformed ancestor. `absolute` here
+          was working by luck, not by design. Popover keeps the outside-click
+          and Escape handling this component already had. */}
+      <Popover open={open} onClose={() => setOpen(false)} anchorRef={box}
+        align="start"
+        className="w-[240px] rounded-xl bg-[#141417] p-1.5">
+        <div>
           <div className="px-2 py-1.5 text-[10px] uppercase tracking-[0.16em] text-zinc-600">
             Characters
           </div>
@@ -142,7 +138,7 @@ export default function CharacterSwitcher({ variant = "sidebar", activeId, onPic
             </button>
           </div>
         </div>
-      )}
+      </Popover>
     </div>
   );
 }

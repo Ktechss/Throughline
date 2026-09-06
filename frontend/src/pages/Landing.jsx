@@ -1,9 +1,10 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   ArrowRight, Loader2, MoreHorizontal, Pencil, Plus, ShieldAlert, ShieldCheck, Trash2,
 } from "lucide-react";
 import { confirm, promptText } from "@/components/ui/confirm";
+import { Popover } from "@/components/ui/popover";
 import { toast } from "@/components/ui/use-toast";
 import { api, setApiCharacter, charView, runView } from "@/api/throughline";
 import { nextStep, studioUrl } from "@/lib/nextStep";
@@ -213,26 +214,31 @@ function Avatar({ c, className = "h-14 w-14" }) {
   );
 }
 
+// The panel is PORTALLED (see ui/popover.jsx). It used to be a plain
+// `absolute ... z-30` child, and the roster grid above carries overflow-hidden
+// to make rounded-xl clip its gap-px hairlines — so the menu was sliced off at
+// the card edge. z-index cannot escape an ancestor's clip; only leaving the
+// subtree can.
 function Menu({ open, onMenu, onRename, onRemove, canDelete }) {
+  const btn = useRef(null);
   return (
-    <div className="relative shrink-0">
-      <button onClick={onMenu} aria-label="More"
+    <div className="shrink-0">
+      <button ref={btn} onClick={onMenu} aria-label="More"
+        aria-haspopup="menu" aria-expanded={open}
         className="grid h-8 w-8 place-items-center rounded-md text-ink-subtle hover:text-ink hover:bg-raised">
         <MoreHorizontal className="h-4 w-4" />
       </button>
-      {open && (
-        <div className="absolute right-0 top-full mt-1 z-30 w-44 rounded-lg bg-raised ring-1 ring-line shadow-2xl p-1">
-          <button onClick={onRename}
-            className="w-full flex items-center gap-2 rounded-md px-2 py-1.5 text-[13px] text-ink-muted hover:bg-selected">
-            <Pencil className="h-3.5 w-3.5" /> Rename
-          </button>
-          <button onClick={canDelete ? onRemove : undefined} disabled={!canDelete}
-            title={canDelete ? undefined : "The last character cannot be deleted"}
-            className="w-full flex items-center gap-2 rounded-md px-2 py-1.5 text-[13px] text-rose-300 hover:bg-rose-500/10 disabled:opacity-40 disabled:hover:bg-transparent">
-            <Trash2 className="h-3.5 w-3.5" /> Delete
-          </button>
-        </div>
-      )}
+      <Popover open={open} onClose={onMenu} anchorRef={btn} align="end">
+        <button role="menuitem" onClick={onRename}
+          className="w-full flex items-center gap-2 rounded-md px-2 py-1.5 text-[13px] text-ink-muted hover:bg-selected">
+          <Pencil className="h-3.5 w-3.5" /> Rename
+        </button>
+        <button role="menuitem" onClick={canDelete ? onRemove : undefined} disabled={!canDelete}
+          title={canDelete ? undefined : "The last character cannot be deleted"}
+          className="w-full flex items-center gap-2 rounded-md px-2 py-1.5 text-[13px] text-rose-300 hover:bg-rose-500/10 disabled:opacity-40 disabled:hover:bg-transparent">
+          <Trash2 className="h-3.5 w-3.5" /> Delete
+        </button>
+      </Popover>
     </div>
   );
 }

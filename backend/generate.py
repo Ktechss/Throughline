@@ -436,7 +436,18 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
                 continue
 
         if r is None:
-            raise RuntimeError("every provider refused: " + " | ".join(_prov_errors))
+            # Close the reserved row before raising. Reserving before the spend
+            # is what stops a paid generation vanishing, but a row left at
+            # `pending` forever reads as work still in flight — three of them
+            # sat that way after a build died, indistinguishable from a live
+            # job. A failure is a fact worth recording too.
+            why = " | ".join(_prov_errors) or "no provider produced an image"
+            try:
+                db.runs_patch(rid, status="failed",
+                              verdict={"status": "error", "reason": why[:400]})
+            except Exception:                               # noqa: BLE001
+                pass
+            raise RuntimeError("every provider refused: " + why)
 
     elif refs:
         # LEGACY PATH — an explicit endpoint was given. Unchanged so a caller
