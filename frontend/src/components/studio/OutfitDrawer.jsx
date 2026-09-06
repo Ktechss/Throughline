@@ -60,7 +60,7 @@ export default function OutfitDrawer({
           ) : creating ? (
             <div className="flex items-center gap-3 rounded-lg ring-1 ring-sky-500/30 bg-sky-950/20 p-4">
               <Loader2 className="h-5 w-5 animate-spin text-sky-400" />
-              <span className="text-[13px] text-sky-300">{creating} · ~1 min</span>
+              <span className="text-[13px] text-sky-300">{creating}</span>
             </div>
           ) : describing ? (
             <>

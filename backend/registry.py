@@ -63,9 +63,24 @@ class Mode(str, Enum):
 
 # What each purpose asks for. `refs_expected` is a default: SHOT with no
 # references is still a SHOT, and the registry picks the text2img variant.
+# `prefer` names models this purpose wants FIRST, best first, ahead of price.
+#
+# Everything else falls back to cheapest-that-can-do-it, which is right when
+# the measured quality spread between providers (0.016) is inside this
+# project's own seed-to-seed variance. FACE_SEED is the exception, and the
+# codebase already argues why in two places: the master face is "the one image
+# that compounds forever", and gpt-image-2 measured 0.813 against nano-banana's
+# 0.678 on exactly that frontal studio close-up.
+#
+# Without this, faces rendered on nano-banana-2 because it is $0.09 against
+# nano-banana-pro's $0.12 — three cents, on the single image every later shot
+# is scored against. Owner observed the quality difference before the code
+# admitted it.
 PURPOSE_NEEDS: dict[Purpose, dict] = {
     Purpose.SHOT:       {"mode": Mode.EDIT,     "gated": True},
-    Purpose.FACE_SEED:  {"mode": Mode.TEXT2IMG, "gated": False},
+    Purpose.FACE_SEED:  {"mode": Mode.TEXT2IMG, "gated": False,
+                         "prefer": ("gpt-image-2", "gpt-image-2-edit",
+                                    "nano-banana-pro", "fal-nano-banana-pro")},
     Purpose.TURNAROUND: {"mode": Mode.EDIT,     "gated": False},
     Purpose.ROOM:       {"mode": Mode.TEXT2IMG, "gated": False},
     Purpose.SCENE:      {"mode": Mode.EDIT,     "gated": True},
@@ -211,10 +226,16 @@ class Registry:
                 continue
             out.append((prov, spec))
 
+        prefer = need.get("prefer") or ()
+
         def sort_key(pair):
             prov, spec = pair
+            # Provider order is the user's Settings and always wins. Within a
+            # provider: the purpose's preference, then an explicitly requested
+            # model, then price.
+            pref = prefer.index(spec.key) if spec.key in prefer else len(prefer)
             asked = model and spec.key == model
-            return (rank[spec.provider], 0 if asked else 1, spec.usd_4k)
+            return (rank[spec.provider], pref, 0 if asked else 1, spec.usd_4k)
 
         return sorted(out, key=sort_key)
 

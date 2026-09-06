@@ -349,7 +349,13 @@ export function useStudio(charParam) {
       // dropped request abandoned a job that was still running and still
       // billing. EventSource rides out a blip and only gives up for real.
       const run = await awaitJob(job, (st) =>
-        setCreating(STAGE[st.stage] || st.stage || "generating…"));
+        // Real elapsed, from the job. The UI used to append a hardcoded
+        // "~1 min" which was pure fiction: an outfit measured 509s today while
+        // kie's own render was 76.8s, and a small-reference upload finishes in
+        // seconds. A number that is always the same is worse than no number —
+        // it told the owner he was in the wrong phase.
+        setCreating(`${STAGE[st.stage] || st.stage || "generating…"}`
+          + (st.elapsed ? ` · ${Math.round(st.elapsed)}s` : "")));
       if (mine !== epoch.current) return;
       setOutfitPreview(run);
     } catch (e) { if (mine === epoch.current) fail(e); }

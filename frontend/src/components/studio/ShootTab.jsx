@@ -399,7 +399,7 @@ function OutfitGenPanel({ creating, preview, categories, onSave, onDiscard }) {
         </div>
       ) : (
         <div className="flex items-center gap-3 text-[13px] text-sky-300">
-          <Loader2 className="h-5 w-5 animate-spin" /> {creating} · ~1 min · you can keep working — it lands here when done.
+          <Loader2 className="h-5 w-5 animate-spin" /> {creating} · you can keep working — it lands here when done.
         </div>
       )}
     </section>

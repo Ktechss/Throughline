@@ -155,17 +155,43 @@ def kie_credits(force: bool = False) -> float | None:
     return val
 
 
+# Cap a reference's long side before uploading it. Mirrors what the fal path
+# has always done (generate.upload), and for the same measured reason: a model
+# reads a reference at modest resolution, so the pixels above this buy nothing
+# and cost latency on every single generation.
+UPLOAD_MAX_PX = 2048
+UPLOAD_RAW_MAX = 4_000_000      # below this, send it untouched
+
+
 def kie_upload(path: Path) -> str:
     """Host one local reference and return its public URL.
 
-    Uploads are base64 rather than multipart because the references are small —
-    identity 1.1MB, a headless outfit crop 0.7MB — and base64's 33% overhead is
-    cheaper than another code path. Files are deleted by kie after 3 days, which
-    is irrelevant: they are re-uploaded per generation and the run keeps its own
-    copy on disk.
+    Uploads are base64 rather than multipart, and base64 adds 33% — which was
+    fine when this docstring was written ("the references are small — identity
+    1.1MB") and stopped being true. Kiara's live references are 15.6MB and
+    16.9MB, so a two-reference shot pushed ~43MB per generation, re-uploaded
+    every time because kie deletes after 3 days. Measured: 49 seconds in
+    "uploading references" before kie saw a task at all.
+
+    So oversized references are downscaled first, exactly as generate.upload
+    already did for fal. Identity survives it — the reference is read at modest
+    resolution — and it takes that 43MB under 2MB. Any failure falls back to
+    the raw bytes: a resize must never be the thing that loses a generation.
     """
     mime = mimetypes.guess_type(path.name)[0] or "image/webp"
-    b = base64.b64encode(path.read_bytes()).decode()
+    raw = path.read_bytes()
+    if len(raw) > UPLOAD_RAW_MAX:
+        try:
+            import io
+            from PIL import Image
+            im = Image.open(path).convert("RGB")
+            im.thumbnail((UPLOAD_MAX_PX, UPLOAD_MAX_PX))
+            buf = io.BytesIO()
+            im.save(buf, "JPEG", quality=92)
+            raw, mime = buf.getvalue(), "image/jpeg"
+        except Exception:       # noqa: BLE001 — see the docstring
+            pass
+    b = base64.b64encode(raw).decode()
     d = _post(_KIE_UPLOAD,
               {"base64Data": f"data:{mime};base64,{b}",
                "uploadPath": "throughline", "fileName": path.name},
