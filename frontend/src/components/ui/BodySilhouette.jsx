@@ -4,12 +4,32 @@ import React, { useMemo } from "react";
 //
 // Why a drawn silhouette rather than photographs:
 //
-//   * LICENCE. The obvious open-source body datasets are not usable here —
-//     SMPL/SMPL-X and most parametric body research are research-only or
-//     non-commercial. A path we generate has no licence and nothing to vendor.
+//   * LICENCE — but not the way this comment first claimed. SMPL/SMPL-X/STAR
+//     really are out (non-commercial, and their terms forbid distributing the
+//     model even inside a private repo). MakeHuman v1.3.0 assets, however, ARE
+//     usable: CC0 per its LICENSE.md section C, and its base mesh is
+//     Homunculus08, modelled from scratch in 2013 — no scanned person in it,
+//     which matters more here than the licence does. So a mesh was available
+//     and was rejected on the merits below, not for want of one.
+//     (On the likeness rule generally: the hook is CC0 section 4(c), where the
+//     affirmer disclaims responsibility for clearing OTHER people's rights —
+//     not, as previously written here, that CC0 omits publicity rights.
+//     Section 1(iii) does purport to waive them; a waiver simply cannot reach
+//     rights the affirmer never owned.)
+//   * LEGIBILITY AT 92px, which is the whole argument and was measured. These
+//     ladders are deliberate CARICATURE: bust spans 11.5 -> 21.5 half-units, a
+//     near-2x swing no real body performs. An anatomically correct mesh driven
+//     by real measure targets moves one notch by 1-3 PIXELS at this size,
+//     against ~4 here — and the swing cannot be restored without pushing the
+//     targets past +/-1, which tears normals and forfeits the correctness that
+//     was the reason to use a mesh at all. Exaggeration is the feature.
 //   * CONTINUITY. Six axes at five rungs is 15,625 combinations. A library of
 //     stock figures snaps to the nearest of N; this moves WITH the slider, so
 //     "thighs one notch thicker" is visible as exactly that.
+//   * NO DEPTH DATUM EXISTS. Every axis here is a width, a length, or one
+//     indentation ratio, and build_clause's vocabulary has no projection in it.
+//     A side view or a rotatable mesh would have to INVENT depth the pipeline
+//     never sends — and nothing in this repo could see that it was invented.
 //   * HONESTY. It is unmistakably a diagram. A photoreal preview would imply
 //     the pipeline reproduces it, and this project MEASURED that it does not —
 //     text regresses toward slim, which is the whole reason these controls
