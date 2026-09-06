@@ -287,13 +287,6 @@ FACE_SHAPES = ["oval", "round", "square", "heart", "diamond", "oblong"]
 # regresses to slim). The FRAME text is the tasteful version stored in the bio and
 # attached to every shot.
 BUILDS = ["slim", "athletic", "curvy", "voluptuous", "full-figured"]
-_BUILD_FIGURE = {
-    "slim": "a slim, slender build with a narrow frame and a modest bust",
-    "athletic": "a toned, athletic build — lean and fit with subtle muscle definition",
-    "curvy": "a curvy hourglass figure: a full rounded bust, a clearly defined narrow waist, and full rounded hips",
-    "voluptuous": "a dramatically curvy, voluptuous hourglass: a very full, heavy bust, a deeply cinched narrow waist, and wide, full, rounded hips; distinctly full-figured, not slim",
-    "full-figured": "a full-figured, plus-size build: a full bust, a soft rounded midsection, and wide, full hips",
-}
 _BUILD_FRAME = {
     "slim": "slim, slender build",
     "athletic": "toned athletic build",
@@ -302,47 +295,6 @@ _BUILD_FRAME = {
     "full-figured": "soft, full-figured build",
 }
 
-# The other three body parts the build owns. FRAME above is one line; these are
-# the parts that actually carry the shape, and until now the picker did not
-# write them — it set body.frame and left body.bust/waist/hips at prompt.py's
-# defaults, which are Kiara's spec-sheet numbers. Picking "voluptuous" therefore
-# produced a bio reading "pronounced curvy, full-figured hourglass" directly
-# above "a full chest ... 40-inch hips", and compose() rebuilds the whole body
-# section into the Subject line of every shot — so the picker was contradicted
-# on every generation from the moment the character was created.
-#
-# Register matches _BUILD_FRAME, not _BUILD_FIGURE: this text rides on ordinary
-# shots through the standard model, where _BUILD_FIGURE's explicit wording is
-# both unnecessary and closer to the moderation boundary. Proportional rather
-# than absolute — height is its own picker (168cm and 185cm cannot share a hip
-# measurement), so these describe ratios and let body.height set the scale.
-_BUILD_PARTS = {
-    "slim": {
-        "body.bust": "a small, neat bust",
-        "body.waist": "a narrow, straight waist",
-        "body.hips": "narrow hips, roughly in line with her shoulders",
-    },
-    "athletic": {
-        "body.bust": "a small to average bust on a lean chest",
-        "body.waist": "a lean, firm waist with visible definition",
-        "body.hips": "narrow, strong hips and a firm seat",
-    },
-    "curvy": {
-        "body.bust": "a full, rounded bust with a natural weight and a natural hang",
-        "body.waist": "a clearly indented waist, distinctly narrower than both bust and hips",
-        "body.hips": "full, rounded hips balancing the bust",
-    },
-    "voluptuous": {
-        "body.bust": "a very full, heavy, rounded bust with a natural weight and a natural hang",
-        "body.waist": "a dramatically narrow, deeply indented waist",
-        "body.hips": "wide, full, rounded hips balancing the bust",
-    },
-    "full-figured": {
-        "body.bust": "a full, heavy bust with a natural weight and a natural hang",
-        "body.waist": "a soft, rounded midsection with a gently defined waist",
-        "body.hips": "wide, full, soft hips",
-    },
-}
 
 
 # ---------------------------------------------------------------- body axes
@@ -361,7 +313,7 @@ _BUILD_PARTS = {
 # joins the part TEXT and that is what reaches the model, so a control that
 # changed only a picture would be decoration. The sentence IS the control.
 #
-# Register matches _BUILD_PARTS (proportional, not absolute) for the same
+# Register matches _BUILD_FRAME (proportional, not absolute) for the same
 # reason: height is its own axis, and 168cm and 185cm cannot share a hip
 # measurement. sanitise() leaves size and shape wording alone — it guards
 # exposure and sexualised mood — so these pass through untouched. Avoided
@@ -443,6 +395,25 @@ BUILD_AXIS_DEFAULTS = {
     "voluptuous":   {"bust": 3, "waist": 4, "hips": 3, "thighs": 3, "legs": 3, "shoulders": 1},
     "full-figured": {"bust": 4, "waist": 1, "hips": 4, "thighs": 4, "legs": 2, "shoulders": 2},
 }
+
+
+def _build_axes(build: str | None, axes: dict | None = None) -> dict:
+    """The RESOLVED ladder position: a preset's rungs with any dialled ones on top.
+
+    ONE control, not two. BodyBuilder draws the silhouette from
+    BUILD_AXIS_DEFAULTS merged with whatever the user moved, so creation has to
+    resolve it identically or the diagram is a promise the bio does not keep.
+
+    It did not, and the gap was silent. `body_axes` carries only the axes the
+    user actually dragged, and the preset wrote only bust/waist/hips — so
+    thighs, leg length and shoulders were DRAWN from the preset and WRITTEN
+    from prompt.py's defaults. Measured across the five presets: slim diverged
+    on thighs and shoulders, athletic and voluptuous on thighs, full-figured on
+    all three. Only "curvy" agreed, and only because its rungs happen to be the
+    defaults.
+    """
+    base = BUILD_AXIS_DEFAULTS.get(build or "", {})
+    return {**base, **{k: v for k, v in (axes or {}).items() if v is not None}}
 
 
 def _axis_text(axis: str, idx) -> str | None:
@@ -1220,14 +1191,17 @@ async def create_character_guided(
             if shape not in cur.lower():
                 updates["face.shape"] = f"a {shape} face" + (f", {cur}" if cur else "")
         if build:
+            # _BUILD_FRAME survives because no axis covers it — it is the one
+            # summary line. _BUILD_PARTS is gone: it was a SECOND hand-written
+            # vocabulary for the same five words, and the two had already
+            # drifted apart on 8 of 15 cells, so the sentence the Fine-tune
+            # panel showed as verbatim was not the sentence stored.
             updates["body.frame"] = _BUILD_FRAME[build]
-            updates.update(_BUILD_PARTS[build])
-        # The granular axes go ON TOP of the preset, and only where the user
-        # actually moved something. Ordering matters: a preset is a starting
-        # position, so "curvy, but with thicker thighs" has to be expressible.
-        # Unset axes are simply absent from the dict, so the preset's value
-        # survives rather than being reset to a default nobody chose.
-        updates.update(_body_axis_parts(body_axes))
+        # Every axis, from the resolved ladder position — not just the three a
+        # preset used to cover. This is the single source now: the silhouette,
+        # the sentence shown in the panel and the text written to her bio all
+        # read the same rung.
+        updates.update(_body_axis_parts(_build_axes(build, body_axes)))
         if height:
             updates["body.height"] = _height_text(height)
         for key, val in picks.items():
@@ -3577,7 +3551,8 @@ def wardrobe_create(req: OutfitCreateReq):
         # THE ANTI-SLIM CLAUSE, which this path was missing and body_ref_create
         # has always had. Naming the build is not enough: main.py's own picker
         # comment says text alone regresses toward slim, which is why
-        # _BUILD_FIGURE ends in "distinctly full-figured, not slim".
+        # the anti-slim wording is spelled out here rather than inherited
+        # from a build word (the old _BUILD_FIGURE dict, now deleted).
         #
         # Measured here. Ethnic1's turnaround was generated from
         # body-canonical (curvy athlete full) with the proportions clause already
