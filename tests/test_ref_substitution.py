@@ -89,3 +89,41 @@ def test_it_refuses_when_nothing_can_be_recovered(char):
                           refs=[char / "refs" / "missing.jpg"],
                           character="kiara")
     assert "replaced or deleted" in str(e.value) or "reference" in str(e.value).lower()
+
+
+def test_deleting_the_master_face_is_refused(char, monkeypatch):
+    """A one-line unlink with no guard made a character unusable.
+
+    Deleting her master face left bio.json pointing at a file that no longer
+    existed: has_reference went false, the studio's mandatory face gate fired,
+    and there was no way back except re-uploading. Observed on vamika, whose
+    bio still read reference=vamika-identity.webp after the DELETE.
+
+    Refusing beats deleting-and-clearing: clearing would leave her equally
+    faceless, just consistently so. The reference is the one load-bearing file
+    here — every shot attaches it and every past run records it by name.
+    """
+    from fastapi import HTTPException
+    from backend import main
+
+    monkeypatch.setattr(main, "REFS", char / "refs")
+    monkeypatch.setattr(main, "_bio_cfg",
+                        lambda *a, **k: {"reference": "kiara-identity.webp"})
+
+    with pytest.raises(HTTPException) as e:
+        main.delete_ref("kiara-identity.webp")
+    assert e.value.status_code == 409
+    assert "master face" in str(e.value.detail)
+    assert (char / "refs" / "kiara-identity.webp").exists(), (
+        "it refused but deleted the file anyway")
+
+
+def test_an_ordinary_reference_still_deletes(char, monkeypatch):
+    from backend import main
+    spare = char / "refs" / "calib-smile.png"
+    spare.write_bytes(b"x")
+    monkeypatch.setattr(main, "REFS", char / "refs")
+    monkeypatch.setattr(main, "_bio_cfg",
+                        lambda *a, **k: {"reference": "kiara-identity.webp"})
+    main.delete_ref("calib-smile.png")
+    assert not spare.exists()

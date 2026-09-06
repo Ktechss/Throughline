@@ -2695,8 +2695,30 @@ async def upload_ref(file: UploadFile = File(...)):
 
 @app.delete("/api/refs/{name}")
 def delete_ref(name: str):
-    (REFS / Path(name).name).unlink(missing_ok=True)
-    return {"ok": True}
+    """Delete a reference — unless it is one the character is BUILT ON.
+
+    This was a one-line unlink with no guard, and deleting her master face left
+    bio.json pointing at a file that no longer existed: has_reference went
+    false, the studio's mandatory face gate fired, and the character became
+    unusable with no way back except re-uploading. Observed on vamika, whose
+    bio still read reference=vamika-identity.webp after the file was removed.
+
+    Refusing is better than deleting-and-clearing. Clearing the pointer would
+    leave her equally faceless, just consistently so, and the reference is the
+    single load-bearing file in this project — every shot attaches it, and
+    every past run records it BY NAME. Change the reference first, then the old
+    one is free to go.
+    """
+    fname = Path(name).name
+    cfg = _bio_cfg()
+    for key, what in (("reference", "master face"),
+                      ("body_reference", "body reference")):
+        if cfg.get(key) == fname:
+            raise HTTPException(
+                409, f"{fname} is her {what} — every shot is built on it. "
+                     f"Pick a different {what} first, then delete this one.")
+    (REFS / fname).unlink(missing_ok=True)
+    return {"ok": True, "deleted": fname}
 
 
 @app.get("/api/refs/{name}/file")
