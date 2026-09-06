@@ -13,8 +13,13 @@ export default function OutfitPicker({ outfits, selected, onSelect, onClear, onU
       <CategoryChips categories={categories} active={browser.category} onSelect={browser.setCategory} />
       <CountLine visible={browser.visible.length} total={browser.total} />
 
+      {/* p-0.5 on the grid, not just pr-1 on the scroller. `ring-2` paints
+          OUTSIDE the border box, and the grid sat flush against the scrollport
+          on the top, bottom and left — so the emerald ring on any first-row or
+          first-column tile was shaved flat and the selection read as a
+          three-sided outline. The gutter gives the ring somewhere to land. */}
       <div className="mt-2 max-h-[360px] overflow-y-auto pr-1">
-        <div className="grid gap-2 grid-cols-[repeat(auto-fill,minmax(90px,1fr))]">
+        <div className="grid gap-2 grid-cols-[repeat(auto-fill,minmax(90px,1fr))] p-0.5">
           {browser.visible.map((o) => (
             <div
               key={o.id}

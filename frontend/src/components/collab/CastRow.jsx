@@ -68,7 +68,11 @@ export default function CastRow({ character, lib, value, onChange, framingOrder 
             {outfits.length === 0 ? (
               <p className="text-[11px] text-zinc-600 mt-1">no outfits saved for {character.name}</p>
             ) : (
-              <div className="mt-1 grid grid-cols-[repeat(auto-fill,minmax(56px,1fr))] gap-1.5 max-h-40 overflow-y-auto">
+              /* p-0.5: `ring-2` paints OUTSIDE the border box, and this grid
+                 doubles as the scrollport with no inset — so an edge tile's
+                 selection ring fell outside the clip rect and was shaved flat.
+                 A 2px gutter gives the ring somewhere to land. */
+              <div className="mt-1 grid grid-cols-[repeat(auto-fill,minmax(56px,1fr))] gap-1.5 max-h-40 overflow-y-auto p-0.5">
                 {outfits.map((o) => (
                   <button key={o.id} title={o.description || o.name}
                     onClick={() => set("outfit", value.outfit === o.id ? null : o.id)}

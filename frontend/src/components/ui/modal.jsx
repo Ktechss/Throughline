@@ -1,6 +1,8 @@
 import React, { useEffect } from "react";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Layer } from "@/components/ui/layer";
+import { Z } from "@/lib/z";
 
 // One modal, instead of nine.
 //
@@ -45,9 +47,21 @@ export function Modal({
   const width = { sm: "max-w-[420px]", md: "max-w-[560px]", lg: "max-w-[780px]",
                   xl: "max-w-5xl" }[size] || "max-w-[560px]";
 
+  // PORTALLED (see ui/layer.jsx). `position: fixed` + z-50 is NOT enough on
+  // its own: NailUploadModal is rendered inline by NailPicker inside the Shoot
+  // tab's right rail, and that rail is `xl:sticky` — which creates a stacking
+  // context unconditionally. Above 1280px the modal's z-50 was therefore
+  // resolved INSIDE the rail and lost to the z-20 tab strip, which stayed
+  // painted over the backdrop and stayed CLICKABLE: switching tabs mid-upload
+  // unmounted ShootTab and silently dropped the pending nail file. Below xl
+  // the rail is static and the bug vanished, which is what made it read as
+  // intermittent. Leaving the tree also makes aria-modal="true" honest, which
+  // it was not while the dialog lived inside a picker shelf.
   return (
+    <Layer>
     <div
-      className={cn("fixed inset-0 z-50 flex p-4",
+      style={{ zIndex: Z.modal }}
+      className={cn("fixed inset-0 flex p-4",
         drawer ? "justify-end items-stretch" : "items-center justify-center")}
       onMouseDown={closeOnBackdrop ? onClose : undefined}
       role="dialog"
@@ -94,6 +108,7 @@ export function Modal({
         )}
       </div>
     </div>
+    </Layer>
   );
 }
 

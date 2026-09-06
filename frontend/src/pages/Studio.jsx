@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { useSearchParams, Link } from "react-router-dom";
 import { ShieldCheck, ShieldAlert, Lock, ChevronLeft, Camera, IdCard, Sliders, GalleryHorizontal, Film } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Z } from "@/lib/z";
 import { promptText } from "@/components/ui/confirm";
 import { api, runView } from "@/api/throughline";
 import { useStudio } from "@/api/useStudio";
@@ -181,10 +182,17 @@ export default function Studio() {
             </div>
           </button>
         </div>
+      </div>
 
-        {/* Tabs */}
-        <div className="sticky top-14 md:top-0 z-20 bg-[#0a0a0b]/90 backdrop-blur-md px-6 md:px-10 mt-5">
-          <div className="flex items-center gap-1 border-b border-white/5 overflow-x-auto no-scrollbar">
+      {/* Tabs — a SIBLING of the banner, not its last child.
+          position:sticky only displaces a box within its PARENT's content box.
+          While this lived inside the banner its bottom edge already coincided
+          with the banner's, so it had zero travel and simply scrolled away with
+          it: you had to scroll back to the top of the page to change tab. Out
+          here its parent is the page, so it pins for the whole scroll. */}
+      <div className="sticky top-14 md:top-0 bg-[#0a0a0b]/90 backdrop-blur-md px-6 md:px-10 border-b border-white/5"
+        style={{ zIndex: Z.sticky }}>
+          <div className="flex items-center gap-1 overflow-x-auto no-scrollbar">
             {TABS.map((t) => {
               const Icon = t.icon;
               const active = tab === t.id;
@@ -198,12 +206,11 @@ export default function Studio() {
                   {/* Where the work is, without reordering the tabs — Shoot is
                       the daily destination even though calibrate precedes it. */}
                   {attention[t.id] && <span className="ml-0.5 h-1.5 w-1.5 rounded-full bg-amber-400" />}
-                  {active && <span className="absolute inset-x-0 -bottom-px h-0.5 bg-white rounded-full" />}
+                  {active && <span className="absolute inset-x-0 bottom-0 h-0.5 bg-white rounded-full" />}
                 </button>
               );
             })}
           </div>
-        </div>
       </div>
 
       {s.err && (

@@ -2,6 +2,7 @@ import React, { useMemo, useState } from "react";
 import { ChevronDown, Download, Trash2, Check, X, Eraser, Film } from "lucide-react";
 import { Chip } from "@/components/ui/chip";
 import { cn } from "@/lib/utils";
+import { Z } from "@/lib/z";
 import VerdictChip from "./VerdictChip";
 import BulkBar, { TileCheckbox } from "./BulkBar";
 import { useSelection } from "@/lib/useSelection";
@@ -101,7 +102,14 @@ export default function ReviewTab({ stats, shots, onOpenDetail, onMark, onDelete
       <div>
         {/* Counts in the chip, omitted at zero — a filter that leads to an empty
             grid is a dead end you only discover by clicking it. */}
-        <div className="sticky top-14 z-10 -mx-1 mb-3 flex items-center gap-1.5 overflow-x-auto no-scrollbar bg-canvas/95 px-1 py-2 backdrop-blur">
+        {/* On the ladder (lib/z.js), not a literal. This bar and each tile's
+            checkbox both sat at z-10 in the ROOT stacking context — the tile's
+            `relative` parent has no z-index, so its z-10 child escaped into the
+            root and tied the bar, then won on document order. Checkboxes
+            painted over the chips while scrolling. Fixed from both ends: the
+            bar takes the sticky rung, and the card isolates below. */}
+        <div style={{ zIndex: Z.sticky }}
+          className="sticky top-14 -mx-1 mb-3 flex items-center gap-1.5 overflow-x-auto no-scrollbar bg-canvas/95 px-1 py-2 backdrop-blur">
           {[
             ["unmarked", "Unmarked"], ["all", "All"], ["kept", "Past the gate"],
             ["approved", "Approved"], ["rejected", "Rejected"], ["clips", "Clips"],
@@ -180,7 +188,10 @@ function BarRow({ label, rate, kept, total }) {
 
 function ShotCard({ shot, selected, selecting, onToggleSelect, onOpen, onApprove, onReject, onDelete }) {
   return (
-    <div className={cn("group rounded-xl ring-1 bg-surface overflow-hidden transition-all", selected ? "ring-white/60" : "ring-line-subtle hover:ring-white/20")}>
+    /* `isolate` makes this card its own stacking context, so the checkbox and
+       every other overlay inside it stack against the CARD instead of escaping
+       into the root and competing with page chrome. */
+    <div className={cn("group isolate rounded-xl ring-1 bg-surface overflow-hidden transition-all", selected ? "ring-white/60" : "ring-line-subtle hover:ring-white/20")}>
       <button onClick={selecting ? onToggleSelect : onOpen} className="relative block w-full aspect-[4/5] overflow-hidden bg-zinc-900">
         <TileCheckbox checked={selected} active={selecting} onChange={onToggleSelect} />
         <img src={shot.thumb} alt={shot.brief} className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]" />
