@@ -10,6 +10,22 @@ module.exports = {
   			sm: 'calc(var(--radius) - 4px)'
   		},
   		colors: {
+  			canvas: 'var(--bg-canvas)',
+  			panel: 'var(--bg-panel)',
+  			surface: 'var(--bg-surface)',
+  			raised: 'var(--bg-raised)',
+  			selected: 'var(--bg-selected)',
+  			line: {
+  				subtle: 'var(--line-subtle)',
+  				DEFAULT: 'var(--line)',
+  				strong: 'var(--line-strong)',
+  			},
+  			ink: {
+  				DEFAULT: 'var(--ink)',
+  				muted: 'var(--ink-muted)',
+  				subtle: 'var(--ink-subtle)',
+  				faint: 'var(--ink-faint)',
+  			},
   			background: 'hsl(var(--background))',
   			foreground: 'hsl(var(--foreground))',
   			card: {

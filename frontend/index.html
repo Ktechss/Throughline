@@ -1,5 +1,10 @@
 <!doctype html>
-<html lang="en">
+<!-- The token palette in index.css defines BOTH themes, but nothing ever set
+     this class, so :root (light) won and `body { bg-background }` was white.
+     The app only looked dark because every page paints its own surface on top;
+     the one component that used tokens (the toast) would have rendered light-on-
+     dark, which nobody saw because it was never called. -->
+<html lang="en" class="dark">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧵</text></svg>" />
