@@ -5,6 +5,7 @@ import { api } from "@/api/throughline";
 import { Field, inputClass } from "@/components/ui/field";
 import { ChipRow, Chip } from "@/components/ui/chip";
 import { RangeField } from "@/components/ui/range";
+import BodyBuilder from "@/components/studio/BodyBuilder";
 import { Button } from "@/components/ui/modal";
 import { toast } from "@/components/ui/use-toast";
 import { cn } from "@/lib/utils";
@@ -71,6 +72,10 @@ export default function CreateCharacter() {
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
   const [picks, setPicks] = useState({});
+  // Only the axes the user actually MOVED. Absent means "take the preset's
+  // value", which is what lets a preset stay authoritative underneath an edit
+  // instead of being flattened to a default nobody chose.
+  const [bodyAxes, setBodyAxes] = useState({});
 
   const objectUrl = useRef(null);
   useEffect(() => () => { if (objectUrl.current) URL.revokeObjectURL(objectUrl.current); }, []);
@@ -133,6 +138,7 @@ export default function CreateCharacter() {
         if (k === "face_shape" || k === "build") continue;   // sent above
         fd.append(k, picks[k] || "");
       }
+      fd.append("body_axes", JSON.stringify(bodyAxes || {}));
       fd.append("body_from", bodyFrom || "");
       fd.append("home_style", homeStyle || "");
       fd.append("home_surroundings", homeSurroundings || "");
@@ -332,7 +338,15 @@ export default function CreateCharacter() {
         {id === "body" && (
           <>
             <Field label="Body type">
-              <ChipRow options={pickerOpts("build")} value={picks.build ?? null} onChange={set("build")} />
+              <BodyBuilder
+                builds={opts?.builds || []}
+                axesSpec={opts?.body_axes}
+                presets={opts?.build_axis_defaults}
+                build={picks.build ?? null}
+                onBuild={(b) => set("build")(picks.build === b ? null : b)}
+                axes={bodyAxes}
+                onAxes={setBodyAxes}
+              />
             </Field>
 
             {/* Copy a figure that already exists instead of building one later. A
