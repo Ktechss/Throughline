@@ -2,6 +2,7 @@ import { refUrl, apiCharacter } from "@/api/throughline";
 import React, { useState } from "react";
 import { Lock, Star, Upload, Trash2, RefreshCw, ImageOff, ImagePlus, X, LoaderCircle, Home, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
+import BodyDials from "@/components/studio/BodyDials";
 import { promptText } from "@/components/ui/confirm";
 
 const SUBVIEWS = ["overview", "home", "advanced · body", "advanced · parts"];
@@ -539,6 +540,9 @@ function AdvancedParts({ parts, onSavePart, onResetParts }) {
         {sections.map((sec) => (
           <div key={sec}>
             <div className="text-[11px] uppercase tracking-wide text-zinc-500 mb-2.5">{sec}</div>
+            {/* The six-rung ladder, above the raw text it writes. Only on the
+                body section — the other sections have no ladder. */}
+            {sec === "body" && <BodyDials parts={parts} onSavePart={onSavePart} />}
             <div className="grid gap-3 grid-cols-[repeat(auto-fill,minmax(320px,1fr))]">
               {parts
                 .filter((p) => p.section === sec)
