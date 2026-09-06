@@ -269,7 +269,8 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
              provider: str | None = None,
              model: str | None = None,
              run_id: str | None = None,
-             client_token: str | None = None) -> dict:
+             client_token: str | None = None,
+             purpose=None) -> dict:
     """One generation, gated and recorded.
 
     gated=False for output that is not a photo OF her — a wardrobe turnaround is
@@ -378,7 +379,68 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
     # Tasks we stopped waiting on. They are still running, still billing, and
     # recoverable via providers.reclaim() — see /api/runs/reclaim.
     _pending: list[dict] = []
-    if refs:
+    used_spec = None
+
+    # ONE walk over ONE ordered list, for every provider including fal.
+    #
+    # There used to be two mechanisms: a loop over providers.RUNNERS that broke
+    # out the moment it reached "fal", and ~90 lines of inline fal handling
+    # after it. That is why an explicit `endpoint=` skipped the user's Settings
+    # entirely — it addressed the second mechanism directly. Seven call sites
+    # did exactly that, and character creation died on one of them: it asked
+    # for fal-ai/gpt-image-2 while FAL_KEY was a placeholder and kie sat first
+    # in Settings with 890 credits.
+    #
+    # `purpose` is what a call site declares now. `endpoint` survives only as an
+    # escape hatch for a caller that genuinely means one specific remote id.
+    if purpose is not None and not endpoint:
+        from . import vendors  # noqa: F401 — registers providers + models
+        from .registry import REGISTRY
+
+        cands = REGISTRY.candidates(purpose, has_refs=bool(refs), model=model,
+                                    order=providers.chain())
+        if not cands:
+            raise RuntimeError(
+                f"no provider can render {getattr(purpose, 'value', purpose)}: "
+                f"enabled={providers.chain()}, "
+                f"available={[n for n, pr in REGISTRY.providers.items() if pr.available()]}"
+                " — check the keys in .env and the order in Settings")
+
+        for prov, spec in cands:
+            try:
+                if progress is not None:
+                    progress["stage"] = f"generating on {prov.name}"
+                r = prov.render(spec=spec, prompt=prompt, refs=refs,
+                                aspect=aspect, resolution=resolution or RESOLUTION,
+                                system=system, seed=seed, progress=progress,
+                                safety_tolerance=safety_tolerance, extra=extra)
+                use, used_spec = prov.name, spec
+                if prov.name == "kie":
+                    # Refresh the cached balance so the sidebar drops
+                    # immediately rather than showing a stale figure.
+                    prov.credits(force=True)
+                break
+            except providers.ProviderTimeout as exc:
+                # NOT a failure — still running, still billing. Park the id so
+                # it can be reclaimed rather than paying twice for one picture.
+                _pending.append({"provider": exc.provider, "task_id": exc.task_id,
+                                 "model": spec.key})
+                _prov_errors.append(f"{prov.name}/{spec.key}: {exc}")
+                if progress is not None:
+                    progress["stage"] = f"{prov.name} slow — parked, trying next"
+                continue
+            except Exception as exc:                        # noqa: BLE001
+                _prov_errors.append(f"{prov.name}/{spec.key}: {exc}")
+                if progress is not None:
+                    progress["stage"] = f"{prov.name} unavailable — trying next"
+                continue
+
+        if r is None:
+            raise RuntimeError("every provider refused: " + " | ".join(_prov_errors))
+
+    elif refs:
+        # LEGACY PATH — an explicit endpoint was given. Unchanged so a caller
+        # that really wants one specific remote id still gets it.
         for name in chain:
             run_it = providers.RUNNERS.get(name)
             if run_it is None:          # "fal" — handled by the block below
@@ -391,9 +453,6 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
                            resolution=resolution or RESOLUTION, progress=progress,
                            model=model, seed=seed)
                 use = name
-                # Refresh the cached balance now that credits have actually been
-                # spent, so the sidebar drops immediately instead of showing a
-                # stale figure for up to a minute after the shot it paid for.
                 if name == "kie":
                     try:
                         providers.kie_credits(force=True)
@@ -401,11 +460,6 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
                         pass
                 break
             except providers.ProviderTimeout as exc:
-                # NOT a failure — the task is still running and will finish and
-                # bill. Falling through now pays a second provider for the same
-                # picture and abandons the first, which is the expensive half of
-                # this. Park the id so it can be reclaimed, then carry on so the
-                # owner still gets a shot.
                 _pending.append({"provider": exc.provider, "task_id": exc.task_id,
                                  "model": model})
                 _prov_error = f"{name}: {exc}"
@@ -478,9 +532,11 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
     # endpoint='kie/nano-banana-pro' while model='seedream/5-pro-image-to-image'
     # — the two fields on the same row contradicting each other. Verified on a
     # live run before this change.
-    used_ep = primary if r is None else f"{use}/{(r or {}).get('model') or model or 'nano-banana-pro'}"
+    used_ep = (f"{use}/{used_spec.key}" if used_spec
+               else (primary if r is None
+                     else f"{use}/{(r or {}).get('model') or model or 'nano-banana-pro'}"))
     last = None
-    for ep, tries in (plan if r is None else []):
+    for ep, tries in (plan if r is None else []):   # skipped when the registry rendered
         falling_back = ep != primary
         for attempt in range(tries):
             try:

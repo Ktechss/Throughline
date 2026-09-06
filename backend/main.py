@@ -28,6 +28,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
+from .registry import Purpose
 from . import (backup, config, db, describe, gate, generate, prompt as promptlib,
                prompter, timeline)
 from . import framing_data, getup_data, lighting_data
@@ -1143,11 +1144,14 @@ async def create_character_guided(
         def one_face(i: int) -> dict:
             return generate.generate(
                 prompt=prompt, refs=refs, aspect="3:4",
-                # gpt-image-2 for the one image that compounds forever:
-                # measured 0.813 against nano-banana's 0.678 on exactly this
-                # shot (a frontal studio close-up). Shots stay on nano.
-                endpoint=(EDIT if refs else TEXT2IMG),
-                fallback_endpoint=SCENE_EDIT,
+                # A PURPOSE, not an endpoint. The registry knows gpt-image-2
+                # measured 0.813 against nano's 0.678 on exactly this frontal
+                # studio close-up and prefers it WHEN IT IS REACHABLE — but it
+                # now falls through to whatever Settings says instead of dying.
+                # This exact line hardcoded fal-ai/gpt-image-2 and failed the
+                # whole build with "Authentication is required" while kie sat
+                # first in Settings with 890 credits.
+                purpose=Purpose.FACE_SEED,
                 session=session, character=cid,
                 # No gallery exists yet by definition — this IS the seed hunt.
                 # Gating would only ever record "gallery is empty".
@@ -2882,7 +2886,7 @@ def body_ref_create(req: BodyRefCreateReq):
             character=owner, model=req.model,
             meta={"body_ref_create": True, "shape": shape_clean,
                   "shape_ref": req.shape_ref, "turnaround": req.turnaround},
-            fallback_endpoint=SCENE_EDIT, extra=extra)
+            purpose=Purpose.TURNAROUND, extra=extra)
 
     return {"job": generate.start_job("body reference", run)}
 
@@ -3474,7 +3478,7 @@ def wardrobe_create(req: OutfitCreateReq):
                                  # refusal here is therefore nano-banana's own, and
                                  # safety_tolerance below — not this line — is what
                                  # answers it.
-                                 fallback_endpoint=SCENE_EDIT,
+                                 purpose=Purpose.TURNAROUND,
                                  safety_tolerance=req.safety_tolerance,
                                  # Wide canvas so four full-body panels fit side by side.
                                  extra={"image_size": {"width": 1536, "height": 1024}})
@@ -4087,7 +4091,7 @@ def _render_corner(key: str, job: dict, cid: str | None = None) -> dict:
     row = generate.generate(
         prompt=_corner_prompt(key, cid), system="", refs=None, aspect="4:3",
         character=cid,
-        endpoint=SCENE_TEXT2IMG, session=generate.new_session(f"home: {corner['label']}"),
+        purpose=Purpose.ROOM, session=generate.new_session(f"home: {corner['label']}"),
         # An empty room has no face in it by design ("NO people" above), so
         # gating one only ever records no_face — a failure that isn't one.
         gated=False,
@@ -5252,7 +5256,7 @@ def shot(req: ShotReq):
             # If gpt-image-2 refuses a revealing outfit on content_policy, render
             # it on the scene model instead (weaker identity, recorded) rather
             # than dead-spinning to a failure.
-            fallback_endpoint=SCENE_EDIT,
+            purpose=Purpose.SHOT,
             resolution=req.resolution, model=req.model,
             safety_tolerance=req.safety_tolerance,
             meta={"brief": req.brief, "bio_references": [p.name for p in refs],
@@ -6138,7 +6142,7 @@ def scene(req: SceneReq):
         return generate.generate(
             prompt=s["prompt"], system="", refs=refs, aspect=req.aspect,
             seed=req.seed, session=session, progress=job, character=owner,
-            fallback_endpoint=SCENE_EDIT, resolution=req.resolution,
+            purpose=Purpose.SCENE, resolution=req.resolution,
             safety_tolerance=req.safety_tolerance, model=req.model,
             meta={"brief": req.prompt, "scene": True, "cast": cast,
                   "wardrobe_by": req.wardrobe, "place": req.place,
