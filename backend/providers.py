@@ -317,7 +317,8 @@ def kie_model(name: str | None) -> dict:
 
 
 def kie_generate(*, prompt: str, refs: list[Path], aspect: str, resolution: str,
-                 progress: dict | None = None, model: str | None = None) -> dict:
+                 progress: dict | None = None, model: str | None = None,
+                 seed: int | None = None) -> dict:
     """Render on kie and return fal's response shape: {"images": [{"url": ...}]}.
 
     generate() unpacks r["images"][0]["url"] and knows nothing else about who
@@ -356,6 +357,15 @@ def kie_generate(*, prompt: str, refs: list[Path], aspect: str, resolution: str,
     inp = {"prompt": prompt, spec["refs_key"]: urls, "aspect_ratio": aspect,
            spec["res_key"]: spec["res_map"].get(resolution, resolution),
            **spec["extra"]}
+    # A seed is sent ONLY where the model's spec names the field it goes in.
+    # Inventing a key would be worse than not sending one: the API ignores the
+    # unknown field, the render is unseeded, and the row records a seed that was
+    # never used — which is the exact lie this is fixing. `seed_honoured` is
+    # returned so generate() can record what actually happened rather than what
+    # was asked for.
+    seed_key = spec.get("seed_key")
+    if seed is not None and seed_key:
+        inp[seed_key] = seed
     d = _post(_KIE_CREATE, {"model": spec["model"], "input": inp}, key)
     if d.get("code") != 200:
         raise ProviderError(f"kie createTask: {d.get('msg')}")
@@ -382,6 +392,9 @@ def kie_generate(*, prompt: str, refs: list[Path], aspect: str, resolution: str,
                     # from a nano one later, and every comparison built on the
                     # runs table quietly mixes renderers.
                     "model": spec["model"],
+                    # What the render ACTUALLY used, so the row cannot claim a
+                    # seed the API never received. None means "unseeded".
+                    "seed": seed if seed_key else None,
                     "seconds": round((st.get("costTime") or 0) / 1000, 1)}
         if progress is not None and state:
             progress["stage"] = f"generating ({state})"
@@ -521,7 +534,8 @@ def poyo_model(name: str | None) -> dict:
 
 
 def poyo_generate(*, prompt: str, refs: list[Path], aspect: str, resolution: str,
-                  progress: dict | None = None, model: str | None = None) -> dict:
+                  progress: dict | None = None, model: str | None = None,
+                  seed: int | None = None) -> dict:
     """Render on poyo. Same contract as kie_generate.
 
     `model` is accepted so the chain can pass it uniformly, but poyo only carries

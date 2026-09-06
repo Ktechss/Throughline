@@ -318,7 +318,11 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
         "id": rid, "status": "pending", "client_token": client_token,
         "session": session or new_session("ad-hoc"),
         "file": dest.name, "prompt": prompt, "system": system,
-        "refs": [p.name for p in refs], "seed": seed, "aspect": aspect,
+        "refs": [p.name for p in refs],
+        # `seed_requested` is what the caller asked for; `seed` stays None until
+        # a provider confirms it actually used one. A pending row must not claim
+        # a seed that may never be honoured.
+        "seed_requested": seed, "seed": None, "aspect": aspect,
         "resolution": resolution or RESOLUTION,
         "endpoint": primary, "model": model, "provider": provider,
         "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -385,7 +389,7 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
                     progress["stage"] = f"generating on {name}"
                 r = run_it(prompt=prompt, refs=refs, aspect=aspect,
                            resolution=resolution or RESOLUTION, progress=progress,
-                           model=model)
+                           model=model, seed=seed)
                 use = name
                 # Refresh the cached balance now that credits have actually been
                 # spent, so the sidebar drops immediately instead of showing a
@@ -469,7 +473,12 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
         plan.append((fallback_endpoint, 1))
 
     t0 = time.time()
-    used_ep = primary if r is None else f"kie/nano-banana-pro"
+    # What ACTUALLY rendered this, not a constant. This was hardcoded to
+    # "kie/nano-banana-pro" for every reseller run, so a row could say
+    # endpoint='kie/nano-banana-pro' while model='seedream/5-pro-image-to-image'
+    # — the two fields on the same row contradicting each other. Verified on a
+    # live run before this change.
+    used_ep = primary if r is None else f"{use}/{(r or {}).get('model') or model or 'nano-banana-pro'}"
     last = None
     for ep, tries in (plan if r is None else []):
         falling_back = ep != primary
@@ -615,6 +624,13 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
         # honestly rather than silently costing a generation.
         "source_url": source_url,
         "endpoint": used_ep,
+        # THE SEED THAT WAS ACTUALLY USED, which is not always the one asked
+        # for. The resellers take no seed parameter, so a seeded request used to
+        # render unseeded while the row recorded the seed anyway — every one of
+        # the 365 rows on this machine claims `seed: None`, and a user who set
+        # one would have been told it was honoured. A provider now reports back
+        # what it used; anything else records None.
+        "seed_requested": seed,
         # WHO rendered it and what they charged. Without this the provider
         # comparison is unrepeatable: a run's endpoint alone cannot tell you
         # whether 0.61 came from fal at $0.30 or kie at $0.12.
@@ -636,7 +652,7 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
         "prompt": prompt,
         "system": system,
         "refs": [p.name for p in refs],
-        "seed": seed,
+        "seed": (r or {}).get("seed") if use != "fal" else seed,
         "aspect": aspect,
         "resolution": resolution or RESOLUTION,
         "seconds": round(time.time() - t0, 1),
