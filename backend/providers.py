@@ -34,6 +34,7 @@ import base64
 import json
 import mimetypes
 import os
+import threading
 import time
 import urllib.request
 from pathlib import Path
@@ -163,6 +164,43 @@ UPLOAD_MAX_PX = 2048
 UPLOAD_RAW_MAX = 4_000_000      # below this, send it untouched
 
 
+# UPLOADED REFERENCE URLS, so the same file is not pushed twice.
+#
+# Measured against kie: an upload takes ~77 SECONDS REGARDLESS OF SIZE — 0.30MB
+# and 16.37MB both took 77s, so it is a fixed per-call cost at their end, not
+# bandwidth (the link here does 1.3 MB/s up). A 4-reference scene therefore
+# spent ~308s uploading before kie saw a task at all, against a 78.6s render.
+#
+# Her face reference is the same file on every shot, and kie hosts it for 3
+# days. Re-uploading it each time bought nothing and cost 77s a go. Keyed on
+# (path, mtime, size) so an edited reference re-uploads; TTL well under kie's
+# 3-day expiry so a stale URL cannot outlive the file behind it.
+_UPLOAD_TTL = 36 * 3600
+_UPLOAD_CACHE: dict[tuple, tuple[float, str]] = {}
+_UPLOAD_CACHE_LOCK = threading.Lock()
+
+
+def _upload_key(path: Path) -> tuple:
+    st = path.stat()
+    return (str(path.resolve()), st.st_mtime_ns, st.st_size)
+
+
+def kie_upload_many(refs: list[Path]) -> list[str]:
+    """Upload references CONCURRENTLY, preserving order.
+
+    They were uploaded in a list comprehension, one after another, so four
+    references cost 4x77s in series. They are independent HTTP calls to a
+    remote host; nothing about them needs ordering except the result.
+    """
+    if not refs:
+        return []
+    if len(refs) == 1:
+        return [kie_upload(refs[0])]
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=min(4, len(refs))) as pool:
+        return list(pool.map(kie_upload, refs))
+
+
 def kie_upload(path: Path) -> str:
     """Host one local reference and return its public URL.
 
@@ -178,6 +216,13 @@ def kie_upload(path: Path) -> str:
     resolution — and it takes that 43MB under 2MB. Any failure falls back to
     the raw bytes: a resize must never be the thing that loses a generation.
     """
+    key = _upload_key(path)
+    now = time.time()
+    with _UPLOAD_CACHE_LOCK:
+        hit = _UPLOAD_CACHE.get(key)
+        if hit and now - hit[0] < _UPLOAD_TTL:
+            return hit[1]
+
     mime = mimetypes.guess_type(path.name)[0] or "image/webp"
     raw = path.read_bytes()
     if len(raw) > UPLOAD_RAW_MAX:
@@ -199,6 +244,8 @@ def kie_upload(path: Path) -> str:
     url = ((d.get("data") or {}).get("downloadUrl"))
     if not url:
         raise ProviderError(f"kie upload failed: {json.dumps(d)[:200]}")
+    with _UPLOAD_CACHE_LOCK:
+        _UPLOAD_CACHE[key] = (now, url)
     return url
 
 
@@ -360,7 +407,7 @@ def kie_generate(*, prompt: str, refs: list[Path], aspect: str, resolution: str,
 
     if progress is not None:
         progress["stage"] = "uploading references"
-    urls = [kie_upload(p) for p in refs]
+    urls = kie_upload_many(refs)
 
     if progress is not None:
         progress["stage"] = "generating"
@@ -587,7 +634,7 @@ def poyo_generate(*, prompt: str, refs: list[Path], aspect: str, resolution: str
         res = spec["max_res"]
     if progress is not None:
         progress["stage"] = "uploading references"
-    urls = [kie_upload(p) for p in refs]
+    urls = kie_upload_many(refs)
 
     if progress is not None:
         progress["stage"] = "generating"
