@@ -344,6 +344,130 @@ _BUILD_PARTS = {
     },
 }
 
+
+# ---------------------------------------------------------------- body axes
+#
+# THE GRANULAR LAYER UNDER THE FIVE BUILD WORDS.
+#
+# The five presets above are a good first move and a bad last one: "curvy" and
+# "athletic" can share a height and a hip measurement and still be different
+# bodies, and the axis that separates them — thigh volume — had no slot at all,
+# so the generator picked one on its own. Per main.py's own note at the
+# regression comment, picking on its own means slim.
+#
+# Each axis is an ORDERED ladder, so a UI can render it as a slider and a
+# silhouette can morph along it, and each rung carries the exact sentence that
+# lands in the body.* part. That last bit is the whole point: build_clause()
+# joins the part TEXT and that is what reaches the model, so a control that
+# changed only a picture would be decoration. The sentence IS the control.
+#
+# Register matches _BUILD_PARTS (proportional, not absolute) for the same
+# reason: height is its own axis, and 168cm and 185cm cannot share a hip
+# measurement. sanitise() leaves size and shape wording alone — it guards
+# exposure and sexualised mood — so these pass through untouched. Avoided
+# deliberately: "breasts" (rewritten to "chest"), "cleavage", and the
+# revealing-wardrobe intensifiers.
+BODY_AXES = {
+    "bust": {
+        "label": "Bust", "part": "body.bust", "default": 2,
+        "steps": [
+            ("small",      "a small, neat bust"),
+            ("modest",     "a modest bust, in proportion with her frame"),
+            ("full",       "a full, rounded bust with a natural weight and a natural hang"),
+            ("very full",  "a very full, rounded bust with a natural weight and a natural hang"),
+            ("heavy",      "a very full, heavy bust with a natural weight and a natural hang"),
+        ],
+    },
+    "waist": {
+        "label": "Waist", "part": "body.waist", "default": 2,
+        "steps": [
+            ("straight",   "a straight waist with little indentation"),
+            ("soft",       "a soft, gently defined waist"),
+            ("defined",    "a clearly indented waist, distinctly narrower than both bust and hips"),
+            ("narrow",     "a narrow, strongly indented waist"),
+            ("very narrow","a dramatically narrow, deeply indented waist"),
+        ],
+    },
+    "hips": {
+        "label": "Hips", "part": "body.hips", "default": 2,
+        "steps": [
+            ("narrow",     "narrow hips, roughly in line with her shoulders"),
+            ("balanced",   "hips in balance with her shoulders"),
+            ("full",       "full, rounded hips balancing the bust"),
+            ("wide",       "wide, full, rounded hips balancing the bust"),
+            ("very wide",  "very wide, full hips, clearly the widest point of her figure"),
+        ],
+    },
+    # The axis the owner asked for by name, and the one with no slot before.
+    "thighs": {
+        "label": "Thighs", "part": "body.thighs", "default": 2,
+        "steps": [
+            ("slim",       "slim thighs with a slight gap"),
+            ("toned",      "toned, firm thighs"),
+            ("full",       "softly full thighs in proportion with her hips"),
+            ("thick",      "thick, full thighs that touch"),
+            ("very full",  "very full, heavy thighs, soft and rounded"),
+        ],
+    },
+    # LENGTH, not volume. body.legs only ever described length; splitting thighs
+    # out is what let each be dialled without fighting the other.
+    "legs": {
+        "label": "Leg length", "part": "body.legs", "default": 3,
+        "steps": [
+            ("short",      "shorter legs, a low leg-to-torso ratio"),
+            ("average",    "legs in average proportion to her torso"),
+            ("long",       "long legs, a high leg-to-torso ratio"),
+            ("very long",  "notably long legs, a high leg-to-torso ratio"),
+            ("statuesque", "exceptionally long legs dominating her height"),
+        ],
+    },
+    "shoulders": {
+        "label": "Shoulders", "part": "body.shoulders", "default": 1,
+        "steps": [
+            ("narrow",     "narrow, sloping shoulders"),
+            ("in line",    "shoulders roughly in line with her hips, not broadened"),
+            ("broad",      "broad, square shoulders"),
+        ],
+    },
+}
+
+
+# Where each preset sits on every ladder. This is what makes the presets and
+# the sliders one control rather than two that disagree: picking "voluptuous"
+# moves the sliders to voluptuous, and nudging a slider afterwards is a real
+# edit on top of it rather than a silent contradiction.
+BUILD_AXIS_DEFAULTS = {
+    "slim":         {"bust": 0, "waist": 0, "hips": 0, "thighs": 0, "legs": 3, "shoulders": 0},
+    "athletic":     {"bust": 1, "waist": 1, "hips": 1, "thighs": 1, "legs": 3, "shoulders": 1},
+    "curvy":        {"bust": 2, "waist": 2, "hips": 2, "thighs": 2, "legs": 3, "shoulders": 1},
+    "voluptuous":   {"bust": 3, "waist": 4, "hips": 3, "thighs": 3, "legs": 3, "shoulders": 1},
+    "full-figured": {"bust": 4, "waist": 1, "hips": 4, "thighs": 4, "legs": 2, "shoulders": 2},
+}
+
+
+def _axis_text(axis: str, idx) -> str | None:
+    """The sentence for one rung, or None if the axis was left alone."""
+    spec = BODY_AXES.get(axis)
+    if spec is None or idx is None:
+        return None
+    try:
+        return spec["steps"][int(idx)][1]
+    except (ValueError, TypeError, IndexError):
+        return None
+
+
+def _body_axis_parts(axes: dict | None) -> dict:
+    """{part_id: text} for whatever the caller dialled. Unset axes are absent,
+    so a preset's value survives underneath rather than being reset to a
+    default nobody chose."""
+    out = {}
+    for axis, idx in (axes or {}).items():
+        text = _axis_text(axis, idx)
+        if text:
+            out[BODY_AXES[axis]["part"]] = text
+    return out
+
+
 # --------------------------------------------------------------------------
 # The rest of the identity pickers.
 # --------------------------------------------------------------------------
@@ -911,6 +1035,11 @@ async def create_character_guided(
     hair_colour: str = Form(""),
     hair_length: str = Form(""),
     hair_texture: str = Form(""),
+    # The granular body ladder (see BODY_AXES). JSON, e.g. {"thighs":3,"legs":4}
+    # — an index per axis, and only the axes the user actually moved. Sent as
+    # one field rather than six so adding an axis does not change this
+    # signature, and so "untouched" stays distinguishable from "set to default".
+    body_axes: str = Form(""),
     body_from: str = Form(""),   # copy this character's FIGURE (head cropped off)
     home_style: str = Form(""),
     home_surroundings: str = Form(""),
@@ -1001,6 +1130,15 @@ async def create_character_guided(
         finally:
             tmp.unlink(missing_ok=True)
 
+    try:
+        body_axes = json.loads(body_axes) if body_axes.strip() else {}
+        if not isinstance(body_axes, dict):
+            body_axes = {}
+    except ValueError:
+        # A malformed axis blob must not lose the whole character. The presets
+        # still apply; the fine-tuning is what is dropped, and the note says so.
+        body_axes = {}
+
     cid = _unique_char_id(name)
     config.ensure_char_dirs(cid)
     char = db.chars_create(cid, name)
@@ -1084,6 +1222,12 @@ async def create_character_guided(
         if build:
             updates["body.frame"] = _BUILD_FRAME[build]
             updates.update(_BUILD_PARTS[build])
+        # The granular axes go ON TOP of the preset, and only where the user
+        # actually moved something. Ordering matters: a preset is a starting
+        # position, so "curvy, but with thicker thighs" has to be expressible.
+        # Unset axes are simply absent from the dict, so the preset's value
+        # survives rather than being reset to a default nobody chose.
+        updates.update(_body_axis_parts(body_axes))
         if height:
             updates["body.height"] = _height_text(height)
         for key, val in picks.items():
@@ -4215,6 +4359,20 @@ def character_options():
         "default_look": DEFAULT_LOOK,
         "face_shapes": FACE_SHAPES,
         "builds": BUILDS,
+        # The granular ladder under the five build words. Served, not
+        # duplicated in JS, for the reason in this docstring: a rung the
+        # backend cannot map is one the UI must not offer. The emitted
+        # SENTENCE travels too, so the wizard can show exactly what a rung
+        # will put in her bio instead of implying it from a label.
+        "body_axes": {
+            k: {"label": v["label"], "part": v["part"], "default": v["default"],
+                "steps": [{"label": lbl, "text": txt} for lbl, txt in v["steps"]]}
+            for k, v in BODY_AXES.items()
+        },
+        # Which rung each preset corresponds to, so choosing "curvy" moves the
+        # sliders to where curvy actually sits rather than leaving them at a
+        # default that contradicts the word.
+        "build_axis_defaults": BUILD_AXIS_DEFAULTS,
         "skin_tones": list(SKIN_TONES),
         "skin_undertones": list(SKIN_UNDERTONES),
         # {axis: [option, ...]} — the label IS the value; the noun phrase it maps

@@ -308,6 +308,16 @@ def default_parts() -> list[Part]:
                "back corseted; don't fight it in the brief."),
         P("body.hips", "body", "Hips", "40-inch hips, balancing the bust"),
         P("body.legs", "body", "Legs", "notably long legs, a high leg-to-torso ratio"),
+        P("body.thighs", "body", "Thighs",
+          "softly full thighs in proportion with her hips",
+          note="Split out of body.legs, which only ever described LENGTH. "
+               "Thigh volume is the axis that most visibly separates 'athletic' "
+               "from 'curvy' at the same height and hip measurement, and with no "
+               "slot for it the generator picked one on its own — which, per "
+               "main.py:2816, means slim. Kept qualitative rather than a "
+               "circumference: sanitise() is comfortable with shape words, and a "
+               "measurement here reads as a spec the model cannot verify against "
+               "anything, unlike waist/hips which anchor the hourglass ratio."),
         P("body.posture", "body", "Posture", "elegant posture, a long neck"),
 
         # -- hair / skin -----------------------------------------------------
