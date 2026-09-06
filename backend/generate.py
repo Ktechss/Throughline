@@ -6,6 +6,7 @@ gate's verdict. A generation you can't reproduce is an anecdote.
 
 from __future__ import annotations
 
+import json
 import re
 import time
 import uuid
@@ -306,6 +307,47 @@ def generate(*, prompt: str, system: str = "", refs: list[Path] | None = None,
     # character the user clicked on meanwhile. Callers that own a character for
     # the length of a job pass it; everything else keeps the active one.
     owner = character or config.get_active()
+
+    # A QUEUED JOB'S REFERENCE MAY HAVE BEEN REPLACED WHILE IT WAITED.
+    #
+    # main.py's _promote deletes any same-stem image before copying, so picking
+    # a calibration face as her master writes `<cid>-identity.webp` and removes
+    # the `.jpg` that was there. Any job still holding the old path then dies on
+    # FileNotFoundError — four of ten calibration angles were lost that way.
+    #
+    # The window existed before the concurrency cap and was near-zero; queueing
+    # widened it to ~700s, which is what made it reachable. Her identity
+    # reference genuinely changed, so the right answer is to use the new one and
+    # SAY SO on the row rather than fail a paid slot on a stale filename.
+    if refs:
+        live, swapped = [], []
+        for r in refs:
+            if r.exists():
+                live.append(r)
+                continue
+            cur = None
+            try:
+                bio = json.loads((config.char_base(owner) / "state" / "bio.json")
+                                 .read_text())
+                cand = config.char_base(owner) / "refs" / (bio.get("reference") or "")
+                cur = cand if cand.is_file() else None
+            except Exception:                                   # noqa: BLE001
+                cur = None
+            if cur is not None and cur not in live:
+                swapped.append((r.name, cur.name))
+                live.append(cur)
+            else:
+                swapped.append((r.name, None))
+        if swapped:
+            meta = dict(meta or {})
+            meta["ref_substituted"] = [
+                {"was": a, "now": b} for a, b in swapped]
+            gone = [a for a, b in swapped if b is None]
+            if gone and not live:
+                raise RuntimeError(
+                    "every reference for this run has been replaced or deleted "
+                    f"since it was queued: {', '.join(gone)}")
+            refs = live
     dest = config.char_base(owner) / "images" / f"{rid}.png"
     dest.parent.mkdir(parents=True, exist_ok=True)
     primary = endpoint or (PRIMARY_EDIT if refs else PRIMARY_T2I)
@@ -1090,6 +1132,47 @@ def generate_video(*, still: Path, prompt: str, model: str | None = None,
     from . import providers
 
     owner = character or config.get_active()
+
+    # A QUEUED JOB'S REFERENCE MAY HAVE BEEN REPLACED WHILE IT WAITED.
+    #
+    # main.py's _promote deletes any same-stem image before copying, so picking
+    # a calibration face as her master writes `<cid>-identity.webp` and removes
+    # the `.jpg` that was there. Any job still holding the old path then dies on
+    # FileNotFoundError — four of ten calibration angles were lost that way.
+    #
+    # The window existed before the concurrency cap and was near-zero; queueing
+    # widened it to ~700s, which is what made it reachable. Her identity
+    # reference genuinely changed, so the right answer is to use the new one and
+    # SAY SO on the row rather than fail a paid slot on a stale filename.
+    if refs:
+        live, swapped = [], []
+        for r in refs:
+            if r.exists():
+                live.append(r)
+                continue
+            cur = None
+            try:
+                bio = json.loads((config.char_base(owner) / "state" / "bio.json")
+                                 .read_text())
+                cand = config.char_base(owner) / "refs" / (bio.get("reference") or "")
+                cur = cand if cand.is_file() else None
+            except Exception:                                   # noqa: BLE001
+                cur = None
+            if cur is not None and cur not in live:
+                swapped.append((r.name, cur.name))
+                live.append(cur)
+            else:
+                swapped.append((r.name, None))
+        if swapped:
+            meta = dict(meta or {})
+            meta["ref_substituted"] = [
+                {"was": a, "now": b} for a, b in swapped]
+            gone = [a for a, b in swapped if b is None]
+            if gone and not live:
+                raise RuntimeError(
+                    "every reference for this run has been replaced or deleted "
+                    f"since it was queued: {', '.join(gone)}")
+            refs = live
     rid = uuid.uuid4().hex[:10]
     dest = config.char_base(owner) / "images" / f"{rid}.mp4"
     dest.parent.mkdir(parents=True, exist_ok=True)
