@@ -5777,6 +5777,39 @@ def _build_scene(req: "SceneReq") -> dict:
     if not cast:
         raise HTTPException(400, "name at least one character with @, e.g. @kiara")
 
+    # WHO HELD THE CAMERA, READ OUT OF THE BRIEF. The shot path has had this
+    # floor since _infer_capture was written; a scene never got it, and that is
+    # the whole of the bug it fixes: a night-club brief that said "selfie" in
+    # plain words came back as a third-person photograph OF two women taking a
+    # selfie, the phone plainly visible in frame.
+    #
+    # `holder` IS wired into the Collaborate page — it was simply left unset,
+    # which is the norm rather than the exception (measured over the first 607
+    # runs: set 7 times). So CAMERA_HOLDERS' selfie entry — the only place in
+    # the project that says where the lens actually is — never loaded, and the
+    # prompt described the ACT of taking a selfie instead of the VIEWPOINT of
+    # one. _is_selfie_pose already matched "selfie" in a brief; only the call
+    # was missing.
+    #
+    # A floor, never a ceiling, exactly as on the shot path: an explicit picker
+    # value passes through untouched, and everything inferred is reported back
+    # so the run says what it did rather than doing it invisibly.
+    _pose_ids = [x for x in (req.poses or {}).values() if x]
+    _sel_pose = next((x for x in _pose_ids if _is_selfie_pose(x)), None)
+    (_holder_id, _flaws_id, _optics_id, _groom_id, _clutter_id,
+     _capture_notes) = _infer_capture(
+        req.prompt, _sel_pose, req.holder, req.flaws, req.optics,
+        req.grooming_state, req.shot_type, req.clutter)
+
+    # AN ARM'S LENGTH IS NOT A FULL-BODY FRAME. The second half of the same bug.
+    # With no framing picked, the selfie brief rendered head-to-shoes — a reach
+    # of about a metre and a half. This is geometry, not taste, so it does not
+    # reopen the 2026-08-02 decision that framing is the owner's call: an
+    # explicit framing still wins, and this only fills a blank.
+    if not req.framing and _holder_id in ("selfie", "mirror"):
+        req.framing = "chest_up"
+        _capture_notes.append("framing=chest_up inferred (arm's length selfie)")
+
     owner = cast[0]
     rows = {c["id"]: c for c in db.chars_all()}
     refs: list[Path] = []
@@ -5996,10 +6029,10 @@ def _build_scene(req: "SceneReq") -> dict:
         if entry and entry.get("text"):
             parts.append(entry["text"])
 
-    holder = (promptlib.CAMERA_HOLDERS.get(req.holder) or {}).get("text", "")
+    holder = (promptlib.CAMERA_HOLDERS.get(_holder_id) or {}).get("text", "")
     if holder:
         parts.append(holder)
-    flaw = (promptlib.SNAPSHOT_FLAWS.get(req.flaws) or {}).get("text", "")
+    flaw = (promptlib.SNAPSHOT_FLAWS.get(_flaws_id) or {}).get("text", "")
     if flaw:
         parts.append(flaw)
 
@@ -6040,8 +6073,8 @@ def _build_scene(req: "SceneReq") -> dict:
     # says "in the pool" gets it whether or not anyone picked a Pool & Water
     # pose for a cast member.
     parts.extend(promptlib.late_clauses(
-        optics=req.optics, exposure=req.exposure,
-        grooming_state=req.grooming_state, clutter=req.clutter,
+        optics=_optics_id, exposure=req.exposure,
+        grooming_state=_groom_id, clutter=_clutter_id,
         wet=_is_wet_pose(None, req.prompt or ""),
         subjects=max(1, len(cast))))
 
@@ -6102,6 +6135,12 @@ def _build_scene(req: "SceneReq") -> dict:
     return {"prompt": text, "refs": refs, "cast": cast, "owner": owner,
             "ledger": ledger, "sanitised": sanitised, "assembled": assembled,
             "_roles": roles,
+            # What the request actually resolved to, so the AI-prompt path can
+            # tell Claude the camera position and a run can record it.
+            "capture": {"holder": _holder_id, "flaws": _flaws_id,
+                        "optics": _optics_id, "grooming_state": _groom_id,
+                        "clutter": _clutter_id, "framing": req.framing},
+            "capture_notes": _capture_notes,
             "face_px": framing_data.estimate_face_px(
                 req.framing, len(cast), req.aspect, req.resolution or RESOLUTION)}
 
@@ -6240,6 +6279,31 @@ def scene_ai_prompt(req: SceneReq):
         # constraint has to survive into what it writes.
         extra.append(f"Include this framing instruction near the START of the "
                      f"prompt, close to verbatim: '{frame}'")
+
+    # WHERE THE LENS IS — not what she is doing with a phone.
+    #
+    # _build_scene folds the holder into its assembled prose, but this path
+    # throws that prose away and asks Claude to write the prompt, so the camera
+    # position has to be handed over as a requirement or it is simply lost. It
+    # was: on the night-club brief Claude wrote "holding her phone up to take a
+    # selfie" and "sits at the front of a small nightclub table taking a phone
+    # selfie ... with @image3 seated just behind her". Both describe the ACT of
+    # taking a selfie, which is a thing you photograph from outside — and both
+    # came back as exactly that, one of them with the phone in shot.
+    hold = (promptlib.CAMERA_HOLDERS.get(s["capture"]["holder"]) or {}).get("text", "")
+    if hold:
+        note = ("The camera position is already decided and must be written into "
+                f"the prompt, close to verbatim: '{hold}' Never write the ACT of "
+                "taking a photograph instead — no one 'holds up a phone' and no "
+                "phone appears in the picture; the frame IS that camera's view.")
+        if len(s["cast"]) > 1 and s["capture"]["holder"] in ("selfie", "mirror"):
+            # The holder text is written for one subject. With a cast, whoever
+            # holds it is simply nearest the lens — everyone is still in frame.
+            note += (" There is more than one subject: the one holding the camera "
+                     "is nearest the lens and slightly larger in frame, and every "
+                     "other subject leans in beside her. All of their faces are "
+                     "inside the frame and all of them are looking at the lens.")
+        extra.append(note)
     if len(s["cast"]) > 1:
         extra.append("Do NOT invent an interaction or arrangement that "
                      "contradicts the reference roles above.")
@@ -6295,7 +6359,14 @@ def scene_preview(req: SceneReq):
             # the number that decides whether the gate can say anything at all
             # about the picture, so it belongs next to the button, not in the
             # verdict afterwards.
-            "face_px": s["face_px"], "plateau_px": gate.FACE_PLATEAU_PX}
+            "face_px": s["face_px"], "plateau_px": gate.FACE_PLATEAU_PX,
+            # WHAT THE BRIEF DECIDED ON THE OWNER'S BEHALF. _build_scene reads
+            # the camera holder (and, for a selfie, the framing) out of the
+            # prose when the pickers are empty. An inference nobody can see is
+            # the thing _infer_capture was explicitly written not to be — "the
+            # run says what it did rather than doing it invisibly" — so the
+            # composer shows it before the spend, next to the pickers it filled.
+            "capture": s["capture"], "capture_notes": s["capture_notes"]}
 
 
 @app.post("/api/scene")

@@ -601,7 +601,10 @@ CAMERA_HOLDERS = {
         "text": "She is taking this herself at arm's length on the front camera — "
                 "her nearer arm reaches out of frame toward the lens, the "
                 "perspective is slightly wide and close, her face fills much of "
-                "the frame and her eyes are on the lens."},
+                "the frame and her eyes are on the lens. The phone itself is NOT "
+                "in the picture and neither is the arm holding it beyond the "
+                "wrist: this frame IS what that front camera sees, not a "
+                "photograph of someone taking a selfie."},
     "mirror": {
         "label": "Mirror selfie", "face": "large",
         # The gaze and head clauses are here rather than left to the brief because

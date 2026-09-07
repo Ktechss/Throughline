@@ -397,6 +397,27 @@ export default function Collaborate() {
                 {preview.images > 2 && " — past two, identity measurably weakens (0.622 at two, 0.579 at three)"}
               </p>
 
+              {/* WHAT THE BRIEF FILLED IN FOR YOU. The camera holder — and, for
+                  a selfie, the framing — are read out of the prose when the
+                  pickers are empty, which is the norm: measured over the first
+                  607 runs, Camera was set 7 times. Writing "selfie" and getting
+                  a photograph OF someone taking a selfie is the bug that closes.
+                  It is shown because an inference nobody can see is the thing
+                  _infer_capture was written not to be. */}
+              {preview.capture_notes?.length > 0 && (
+                <div className="rounded-lg ring-1 ring-sky-400/20 bg-sky-400/5 px-3 py-2">
+                  <div className="text-[10px] text-sky-300/90">read from your brief</div>
+                  <ul className="mt-1 space-y-0.5">
+                    {preview.capture_notes.map((n, i) => (
+                      <li key={i} className="text-[10px] leading-relaxed text-zinc-400">{n}</li>
+                    ))}
+                  </ul>
+                  <p className="mt-1 text-[10px] text-zinc-500">
+                    Set a picker yourself to override any of these.
+                  </p>
+                </div>
+              )}
+
               {/* The predicted face size. An estimate, calibrated on one real
                   measurement, and the thing that decides whether the gate can
                   say anything about the result at all. */}
