@@ -1133,46 +1133,25 @@ def generate_video(*, still: Path, prompt: str, model: str | None = None,
 
     owner = character or config.get_active()
 
-    # A QUEUED JOB'S REFERENCE MAY HAVE BEEN REPLACED WHILE IT WAITED.
+    # THE FRAME THIS ANIMATES MUST STILL EXIST.
     #
-    # main.py's _promote deletes any same-stem image before copying, so picking
-    # a calibration face as her master writes `<cid>-identity.webp` and removes
-    # the `.jpg` that was there. Any job still holding the old path then dies on
-    # FileNotFoundError — four of ten calibration angles were lost that way.
+    # The still path substitutes her current master reference when a queued
+    # job's reference was deleted underneath it. That is right there and WRONG
+    # here, and this function briefly carried a copy of it that referred to a
+    # variable it does not have — an UnboundLocalError on the first call, which
+    # nothing caught because no test drove this path at all.
     #
-    # The window existed before the concurrency cap and was near-zero; queueing
-    # widened it to ~700s, which is what made it reachable. Her identity
-    # reference genuinely changed, so the right answer is to use the new one and
-    # SAY SO on the row rather than fail a paid slot on a stale filename.
-    if refs:
-        live, swapped = [], []
-        for r in refs:
-            if r.exists():
-                live.append(r)
-                continue
-            cur = None
-            try:
-                bio = json.loads((config.char_base(owner) / "state" / "bio.json")
-                                 .read_text())
-                cand = config.char_base(owner) / "refs" / (bio.get("reference") or "")
-                cur = cand if cand.is_file() else None
-            except Exception:                                   # noqa: BLE001
-                cur = None
-            if cur is not None and cur not in live:
-                swapped.append((r.name, cur.name))
-                live.append(cur)
-            else:
-                swapped.append((r.name, None))
-        if swapped:
-            meta = dict(meta or {})
-            meta["ref_substituted"] = [
-                {"was": a, "now": b} for a, b in swapped]
-            gone = [a for a, b in swapped if b is None]
-            if gone and not live:
-                raise RuntimeError(
-                    "every reference for this run has been replaced or deleted "
-                    f"since it was queued: {', '.join(gone)}")
-            refs = live
+    # It is wrong on the merits too. A clip is an animation of one APPROVED
+    # frame: /api/video refuses an ungated still precisely so identity is
+    # inherited rather than re-argued. Swapping in a different image would
+    # animate something nobody approved and quietly void that guarantee. A
+    # missing frame is a failure to report, not a gap to paper over.
+    for _what, _p in (("still", still), ("end still", end_still)):
+        if _p is not None and not Path(_p).is_file():
+            raise RuntimeError(
+                f"the {_what} this clip animates is gone ({Path(_p).name}) — a "
+                "clip inherits its identity from an approved frame, so it "
+                "cannot fall back to another image. Pick a different shot.")
     rid = uuid.uuid4().hex[:10]
     dest = config.char_base(owner) / "images" / f"{rid}.mp4"
     dest.parent.mkdir(parents=True, exist_ok=True)

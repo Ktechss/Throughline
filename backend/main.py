@@ -1808,7 +1808,8 @@ class VideoReq(BaseModel):
     run_id: str                  # the APPROVED still to animate, OR a video run
                                  # when continue_from is set
     prompt: str = ""             # what should move
-    provider: str = "poyo"       # "poyo" | "kie"
+    provider: str = ""           # "" = whichever video provider has a key;
+                                 # see providers.video_provider_default()
     model: str | None = None     # a key from that provider's video catalogue
     duration: int = 5
     resolution: str = "1080p"
@@ -1850,6 +1851,12 @@ def make_video(req: VideoReq):
     unverified claim. Animating a kept shot inherits a number that already
     exists.
     """
+    # Resolve the provider from the KEYS, not from a literal. The default named
+    # "poyo" while POYO_API_KEY was the shipped placeholder, so the Motion tab's
+    # one button could only ever fail on auth — the same shape as the character
+    # build that died on a placeholder FAL_KEY with a paid provider sitting idle.
+    req.provider = req.provider or providers.video_provider_default()
+
     row, cid = _run_and_owner(req.run_id)
     src = config.char_base(cid) / "images" / row["file"]
     if not src.exists():

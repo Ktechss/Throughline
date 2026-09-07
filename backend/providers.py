@@ -1204,6 +1204,27 @@ def kie_video(*, prompt: str, image: Path, model: str | None = None,
 VIDEO_RUNNERS = {"poyo": poyo_video, "kie": kie_video}
 
 
+def video_provider_default() -> str:
+    """The first video provider that actually has a key.
+
+    VideoReq defaulted to the literal "poyo" while POYO_API_KEY was still the
+    shipped placeholder, so the one button on the Motion tab could only fail —
+    the same shape as the character build that died on a placeholder FAL_KEY
+    while a paid, configured provider sat unused. A default that names a vendor
+    is a guess about the deployment; a default that reads the keys is not.
+
+    Order follows CATALOGUE, which is the project's own price order.
+    """
+    for name in CATALOGUE:
+        if name not in VIDEO_RUNNERS:
+            continue
+        env = CATALOGUE[name].get("key") or ""
+        v = (os.environ.get(env) or "").strip()
+        if v and not v.lower().startswith(("your-", "changeme", "xxx")):
+            return name
+    return "kie"
+
+
 def video_catalogue() -> dict:
     return {"poyo": video_rows(),
             "kie": [{"id": k, "model": s["model"], "label": s["label"],
