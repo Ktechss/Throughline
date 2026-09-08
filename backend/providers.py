@@ -1067,6 +1067,31 @@ KIE_VIDEO: dict[str, dict] = {
                     "720p": "768P", "480p": "768P"},
         "duration_str": True, "label": "Hailuo 2.3 Pro (kie)",
     },
+    # WAN 2.5 — Alibaba. Back in the catalogue at the owner's request, 2026-09-08.
+    #
+    # It was rejected on 2026-08-14 on how the footage LOOKED, beside Kling 2.1
+    # on the same two stills, and the note below DEFAULT_VIDEO_MODEL records
+    # that. This is not a reversal of that judgement: it is a newer version, and
+    # the owner has since seen results elsewhere. Kling stays the default.
+    #
+    # EVERY FIELD HERE WAS PROBED AGAINST kie, not copied from the note above,
+    # and the note was WRONG in the way this module keeps warning about: it said
+    # `image_urls` (an array), which is poyo's spelling. kie wants `image_url`,
+    # a bare string. Sending the array would not have errored — it would have
+    # rendered an unanchored clip and billed for it.
+    #
+    #   model      wan/2-5-image-to-video   (wan2.5-image-to-video is 422)
+    #   image_url  a string
+    #   duration   a STRING, "5" or "10"    ("3"/"8" -> out of range)
+    #   resolution required
+    "wan-2.5": {
+        "model": "wan/2-5-image-to-video", "image_key": "image_url",
+        "array": False, "durations": (5, 10),
+        # Only 1080p is verified. Anything unverified stays out: an unsupported
+        # value here is not a free validation error, it is a submitted task.
+        "resolutions": ("1080p",),
+        "duration_str": True, "label": "Wan 2.5 (Alibaba)",
+    },
     "kling-2.5-turbo-pro": {
         "model": "kling/v2-5-turbo-image-to-video-pro", "image_key": "image_url",
         "array": False, "durations": (5, 10), "resolutions": (),

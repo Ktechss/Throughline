@@ -32,6 +32,7 @@ from .registry import Purpose
 from . import (backup, config, db, describe, gate, generate, prompt as promptlib,
                prompter, timeline)
 from . import framing_data, getup_data, lighting_data
+from . import vlog, vlog_data
 from . import providers
 from .interactions_data import INTERACTIONS
 from .scenes_data import MOMENTS
@@ -2013,6 +2014,135 @@ def suggest_motion(req: MotionSuggestReq):
     except describe.DescribeError as exc:
         raise HTTPException(400, str(exc)) from exc
     return out
+
+
+# --------------------------------------------------------------------- vlog
+#
+# A vlog is a shot list, and the point of having one at all is that it can be
+# priced and argued with BEFORE anything is spent. Two spends per beat — a 9:16
+# still, then the clip made from it — because every kie video model is
+# image-to-video and none takes an aspect ratio, so a clip is the shape of its
+# start frame.
+
+
+class VlogPlanReq(BaseModel):
+    shape: str = ""                    # a vlog_data.SHAPES key
+    beats: list[str] = []              # or an explicit beat list, in order
+    place: str = ""                    # "a busy street in Pune" — rides on the STILL
+    idea: str = ""                     # owner steering for the front-camera beats
+    still_model: str = "seedream-5-lite"
+    clip_model: str | None = None
+
+
+@app.get("/api/vlog/library")
+def vlog_library():
+    """The beat vocabulary and the named shapes, for the composer."""
+    return {"beats": vlog_data.all_beats(),
+            "shapes": [{"id": k, **v} for k, v in vlog_data.SHAPES.items()],
+            "aspect": vlog.ASPECT}
+
+
+@app.post("/api/vlog/plan")
+def vlog_plan(req: VlogPlanReq):
+    """The shot list and what it will cost. Spends nothing.
+
+    `estimate.complete` is False until a clip has actually run, and `total_usd`
+    is then the STILLS ONLY. That is deliberate: video prices are unpublished
+    and providers.py says to read credits_amount rather than assume, so the
+    alternative to an honest floor is an invented total for the expensive half.
+    """
+    if not req.shape and not req.beats:
+        raise HTTPException(400, "pick a shape or name some beats")
+    shots = vlog.plan(req.shape or None, req.beats,
+                      place=req.place.strip(), idea=req.idea.strip())
+    if not shots:
+        raise HTTPException(400, "that shape or beat list resolved to nothing")
+    return {"shots": shots,
+            "estimate": vlog.estimate(shots, still_model=req.still_model,
+                                      clip_model=req.clip_model)}
+
+
+class PlateReq(BaseModel):
+    """A photograph with NOBODY in it."""
+    brief: str
+    aspect: str = "9:16"
+    model: str | None = None
+    character: str | None = None
+
+
+@app.post("/api/vlog/plate")
+def vlog_plate(req: PlateReq):
+    """Generate a b-roll plate — the back-camera half of a vlog.
+
+    Separate from /api/shot because a shot ATTACHES her reference, and the whole
+    point of these is that she is not in them: they are what she is looking at.
+    Sending one down the shot path would spend a reference slot to put her in a
+    frame she is meant to be absent from.
+
+    Never gated, for the reason a wardrobe turnaround is never gated — the gate
+    embeds the largest face and there is no face here, so a verdict could only
+    ever record no_face, "a failure that isn't one". /api/home says the same
+    thing about an empty room.
+
+    Not restricted to _CORNER: that vocabulary is the rooms of her home, and a
+    vlog needs a street, an auto, a café door — places she does not live in.
+    """
+    brief = (req.brief or "").strip()
+    if not brief:
+        raise HTTPException(400, "say what the plate shows")
+    cid = req.character or config.get_active()
+    if not db.chars_get(cid):
+        raise HTTPException(404, f"no such character: {cid}")
+
+    prompt, sanitised = promptlib.sanitise(
+        brief + " Shot on a phone, wide lens, natural available light, real "
+        "texture, no retouching. NO people anywhere in the frame — nobody in "
+        "the foreground, middle distance or background, and no reflections of "
+        "anyone. No text overlays or logos.")
+
+    def run(job: dict) -> dict:
+        return generate.generate(
+            prompt=prompt, system="", refs=None, aspect=req.aspect,
+            character=cid, purpose=Purpose.ROOM, gated=False,
+            model=req.model, progress=job,
+            session=generate.new_session(f"plate: {brief[:40]}"),
+            meta={"plate": True, "brief": brief})
+
+    return {"job": generate.start_job(f"plate: {brief[:40]}", run),
+            "sanitised": sanitised}
+
+
+class VlogStitchReq(BaseModel):
+    run_ids: list[str]                 # video runs, in the order they play
+    name: str = "vlog"
+
+
+@app.post("/api/vlog/stitch")
+def vlog_stitch(req: VlogStitchReq):
+    """Join finished clips into one vertical file. Spends nothing."""
+    if not req.run_ids:
+        raise HTTPException(400, "no clips given")
+
+    clips: list[Path] = []
+    owner = ""
+    for rid in req.run_ids:
+        row, cid = _run_and_owner(rid)
+        if (row.get("kind") or "") != "video":
+            raise HTTPException(400, f"{rid} is not a clip")
+        owner = owner or cid
+        f = config.char_base(cid) / "images" / row["file"]
+        if not f.exists():
+            raise HTTPException(404, f"{row['file']} is not on disk")
+        clips.append(f)
+
+    safe = re.sub(r"[^a-zA-Z0-9_-]+", "-", req.name).strip("-") or "vlog"
+    dest = config.char_base(owner) / "images" / f"{safe}-{uuid.uuid4().hex[:6]}.mp4"
+    try:
+        out = vlog.stitch(clips, dest)
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"file": out.name, "clips": len(clips),
+            "bytes": out.stat().st_size, "character": owner}
 
 
 @app.post("/api/runs/import")
