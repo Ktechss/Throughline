@@ -16,7 +16,7 @@ const RES = ["1K", "2K", "4K"];
 
 export default function ShootTab({
   gens, outfits, poseGroups,
-  brief, setBrief, aiPrompt, setAiPrompt, aiBusy, onAiPrompt,
+  brief, setBrief, aiPrompt, setAiPrompt, raw, setRaw, aiBusy, onAiPrompt,
   resolution, setResolution, faceAcc, setFaceAcc, pov, setPov, bodyRef, setBodyRef,
   aspect, setAspect, shotLib,
   holder, setHolder, flaws, setFlaws, optics, setOptics,
@@ -65,7 +65,23 @@ export default function ShootTab({
                 <Wand2 className="h-3 w-3" /> AI prompt
                 <span className="text-[10px] text-zinc-600">Claude-written from brief + outfit + pose</span>
               </label>
-              {aiPrompt && <button onClick={() => setAiPrompt("")} className="text-[11px] text-zinc-500 hover:text-zinc-300">clear → template</button>}
+              <div className="flex items-center gap-3">
+                {/* RAW. Only offered once there is a prompt to send, because it
+                    gates the doctrine appended to THAT box — with an empty box
+                    there is nothing for it to protect. */}
+                {aiPrompt.trim() && (
+                  <label className="flex items-center gap-1.5 cursor-pointer select-none"
+                         title="Send exactly this text. Skips her build, the skin/realism doctrine, the camera holder, pose and flaws — everything the house style normally appends. The reference images still apply, so it is still her.">
+                    <input type="checkbox" checked={!!raw}
+                      onChange={(e) => setRaw(e.target.checked)}
+                      className="h-3 w-3 accent-amber-400" />
+                    <span className={cn("text-[11px]", raw ? "text-amber-300" : "text-zinc-500")}>
+                      send exactly this
+                    </span>
+                  </label>
+                )}
+                {aiPrompt && <button onClick={() => setAiPrompt("")} className="text-[11px] text-zinc-500 hover:text-zinc-300">clear → template</button>}
+              </div>
             </div>
             <div className="relative">
               <textarea

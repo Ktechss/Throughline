@@ -36,6 +36,12 @@ export function useStudio(charParam) {
   // shoot
   const [brief, setBrief] = useState("");
   const [aiPrompt, setAiPrompt] = useState("");
+  // SEND MY WORDS AND NOTHING ELSE. The AI-prompt box is documented as
+  // "verbatim" and is not: the server still appends the build clause, the
+  // capture doctrine, the camera holder, the pose and the flaws. Measured on
+  // one brief, 520 characters in and 3,003 out. This is the escape hatch, and
+  // the character count below already shows what actually ships.
+  const [raw, setRaw] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
   const [resolution, setResolution] = useState("4K");
   const [aspect, setAspect] = useState("3:4");
@@ -246,6 +252,8 @@ export function useStudio(charParam) {
   // it was reassuring precisely when it should have warned.
   const shotBody = () => ({
     brief, aspect, prompt: pov ? null : (aiPrompt.trim() || null),
+    // Only meaningful with a prompt: raw gates the doctrine appended to it.
+    raw: raw && !pov && !!aiPrompt.trim(),
     wardrobe_id: selectedOutfit?.id || null, pose_ref_id: null,
     pose_id: selectedPose?.id || null, pose_text: null,
     nail_id: selectedNail?.id || null,
@@ -273,7 +281,7 @@ export function useStudio(charParam) {
     return () => clearTimeout(t);
     // Deps are the fields shotBody() reads, listed explicitly — shotBody itself
     // is recreated every render and would retrigger this on every keystroke.
-  }, [brief, aiPrompt, selectedOutfit?.id, selectedPose?.id, selectedNail?.id,
+  }, [brief, aiPrompt, raw, selectedOutfit?.id, selectedPose?.id, selectedNail?.id,
       resolution, aspect, faceAcc, bodyRef, pov, withChar?.id, bio?.reference,
       holder, flaws, optics, exposure, groomingState, clutter,
       safety, refBudget, useTimeline, shotDate]);
@@ -649,7 +657,7 @@ export function useStudio(charParam) {
     loading, err, setErr, charName, hasIdentity, bio, gallery, parts, refs, bodies, wardrobe,
     poseGroups, stats, refresh,
     // shoot
-    brief, setBrief, aiPrompt, setAiPrompt, aiBusy, onAiPrompt, resolution, setResolution,
+    brief, setBrief, aiPrompt, setAiPrompt, raw, setRaw, aiBusy, onAiPrompt, resolution, setResolution,
     aspect, setAspect, shotLib,
     holder, setHolder, flaws, setFlaws, optics, setOptics,
     exposure, setExposure, groomingState, setGroomingState,

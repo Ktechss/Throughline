@@ -32,7 +32,7 @@ from .registry import Purpose
 from . import (backup, config, db, describe, gate, generate, prompt as promptlib,
                prompter, timeline)
 from . import framing_data, getup_data, lighting_data
-from . import vlog, vlog_data
+from . import reel, vlog, vlog_data, voice
 from . import providers
 from .interactions_data import INTERACTIONS
 from .scenes_data import MOMENTS
@@ -2110,6 +2110,90 @@ def vlog_plate(req: PlateReq):
 
     return {"job": generate.start_job(f"plate: {brief[:40]}", run),
             "sanitised": sanitised}
+
+
+@app.get("/api/reel/scripts")
+def reel_scripts():
+    """Every script on disk."""
+    return {"scripts": reel.scripts()}
+
+
+@app.get("/api/reel/{name}")
+def reel_status(name: str):
+    """The whole pipeline for one script: done, todo, cost, and what is BLOCKED.
+
+    `blocked` is deliberately not folded into `todo`. Todo is work waiting to be
+    paid for; blocked is work that cannot be done at all — today, lipsync, because
+    no lipsync model is reachable on this account. Merging them is how a reel
+    ships with her mouth out of sync and nobody notices until playback.
+    """
+    try:
+        doc, scenes = reel.load(reel.script_path(Path(name).name))
+    except reel.ReelError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return {"status": reel.status(doc, scenes),
+            "actions": reel.next_actions(scenes),
+            "scenes": [{"n": s.n, "slug": s.slug, "camera": s.camera,
+                        "seconds": s.seconds, "at": s.at, "line": s.line,
+                        "gated": s.gated, "speaks": s.speaks,
+                        "needs_lipsync": s.needs_lipsync} for s in scenes]}
+
+
+class VlogVoiceReq(BaseModel):
+    """Lay her voice over an already-stitched vlog."""
+    file: str                              # the stitched .mp4 in her images dir
+    lines: list[dict]                      # [{"at": seconds, "text": "..."}]
+    character: str | None = None
+    name: str = "voiced"
+
+
+@app.post("/api/vlog/voice")
+def vlog_voice(req: VlogVoiceReq):
+    """Render her lines and lay them across the cut.
+
+    One track for the whole piece rather than one per clip, because in a real
+    vlog the voice runs ACROSS the cuts — that continuity is most of what makes
+    eight fragments read as one person's day. A line that overruns its own scene
+    carries into the next shot, which is what happens when someone is actually
+    talking while the picture changes.
+
+    The voice comes from her bio (voice.voice_of), never from the request: a
+    voice chosen per call drifts exactly the way a face chosen per shot does.
+    """
+    cid = req.character or config.get_active()
+    if not db.chars_get(cid):
+        raise HTTPException(404, f"no such character: {cid}")
+    src = config.char_base(cid) / "images" / Path(req.file).name
+    if not src.exists():
+        raise HTTPException(404, f"{req.file} is not on disk")
+    if not req.lines:
+        raise HTTPException(400, "no lines to say")
+
+    try:
+        cues = []
+        for ln in req.lines:
+            text = (ln.get("text") or "").strip()
+            if not text:
+                continue
+            cues.append((float(ln.get("at") or 0.0),
+                         voice.speak(text, character=cid)))
+        if not cues:
+            raise HTTPException(400, "every line was empty")
+
+        total = voice.duration(src)
+        track = config.char_base(cid) / "voice" / f"{Path(req.file).stem}-track.m4a"
+        voice.narrate(cues, track, total=total or None)
+
+        safe = re.sub(r"[^a-zA-Z0-9_-]+", "-", req.name).strip("-") or "voiced"
+        dest = config.char_base(cid) / "images" / f"{src.stem}-{safe}.mp4"
+        voice.mux(src, track, dest)
+    except voice.VoiceError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    return {"file": dest.name, "lines": len(cues),
+            "seconds": round(voice.duration(dest), 2),
+            "bytes": dest.stat().st_size, "character": cid,
+            "voice_id": voice.voice_of(cid)}
 
 
 class VlogStitchReq(BaseModel):
@@ -4841,6 +4925,25 @@ class ShotReq(BaseModel):
     brief: str = ""              # the ONLY thing the user writes
     prompt: str | None = None    # AI-written (Claude) prompt, edited by the user;
                                  # used VERBATIM when present instead of the template
+    # SEND MY WORDS AND NOTHING ELSE.
+    #
+    # `prompt` is called verbatim and is not: it still appends the build clause,
+    # the carry clause, the capture doctrine, the camera holder, the pose and the
+    # flaws. Measured on one brief — 520 characters in, 3003 out, so 83% of what
+    # reached the model was ours.
+    #
+    # Every one of those clauses earns its place on the daily shot. Stacked on a
+    # brief that wants something else they describe a different photograph: a
+    # request for a DISTANT mirror selfie showing the whole bedroom collected
+    # "the phone held at chest height", "front-camera optics at arm's length"
+    # and "She is the clear focal point" — three clauses each individually
+    # correct and collectively the opposite of what was asked for.
+    #
+    # So this is the escape hatch, and it is deliberately all-or-nothing: half a
+    # doctrine is how you get a prompt that argues with itself. Identity still
+    # rides on the attached reference, which is an image and not a sentence, so
+    # this does not reopen the measured 0.860-vs-0.531 rule.
+    raw: bool = False
     aspect: str = "3:4"
     seed: int | None = None
     with_character: str | None = None   # a COLLABORATION: her face rides as @image2
@@ -5207,42 +5310,51 @@ def shot(req: ShotReq):
         # moderation sanitiser so a trigger can't slip through. The reference
         # tags (@image1/2/3) are the user's/Claude's responsibility here.
         base = req.prompt.strip()
-        if build_text:
-            base = f"{base} {build_text}"
-        if carry_text:
-            base = f"{base} {carry_text}"
-        # Same treatment, and the most important instance of it. Claude writes
-        # the SCENE; the camera is ours. Left to itself it asked for "85mm" in 51
-        # prompts and "shallow depth of field" in 40 — the exact look camera.body
-        # forbids — because camera.body was not in the prompt to argue with it.
-        # Appended AFTER Claude's text so that when the two disagree, we win.
-        if capture_text:
-            base = f"{base} {capture_text}"
-        # Same treatment as the build clause: appended rather than handed to
-        # Claude. Who held the camera and how imperfect the frame is are
-        # photographic facts, and an AI prompt written before they were chosen
-        # would otherwise contradict them.
-        holder = (promptlib.CAMERA_HOLDERS.get(holder_id) or {}).get("text", "")
-        if holder:
-            base = f"{base} {holder}"
-        # A pose picked alongside an AI prompt must still take effect — otherwise a
-        # multi-pose batch reuses the one pose already frozen into the AI prompt and
-        # every image comes back in the same stance. Append the chosen pose as an
-        # explicit override so the picker wins over whatever pose the prompt describes.
-        pose_text = req.pose_text or promptlib.POSES_LIBRARY.get(req.pose_id or "", "")
-        if pose_text:
-            base = (f"{base} For THIS shot her body pose is: {pose_text} "
-                    "Use exactly this pose, overriding any other stance, gesture or "
-                    "body position described above; keep the same scene, framing, "
-                    "outfit, lighting and identity.")
-        # Flaws last, for the same reason as in compose_tagged: they qualify the
-        # sharpness the prompt above asks for, and the later line wins.
-        flaw = (promptlib.SNAPSHOT_FLAWS.get(flaws_id) or {}).get("text", "")
-        if flaw:
-            base = f"{base} {flaw}"
-        if collab_clause:
-            base = f"{collab_clause} {base}"
-        text, sanitised = promptlib.sanitise(base)
+        # RAW: send exactly what was written and nothing else.
+        #
+        # Everything below this branch is doctrine that earns its place on the
+        # daily shot and fights a brief that wants something else. Measured on
+        # one: 520 characters in, 3003 out. It is all-or-nothing because half a
+        # doctrine is how a prompt ends up arguing with itself.
+        if req.raw:
+            text, sanitised = promptlib.sanitise(base)
+        else:
+            if build_text:
+                base = f"{base} {build_text}"
+            if carry_text:
+                base = f"{base} {carry_text}"
+            # Same treatment, and the most important instance of it. Claude writes
+            # the SCENE; the camera is ours. Left to itself it asked for "85mm" in 51
+            # prompts and "shallow depth of field" in 40 — the exact look camera.body
+            # forbids — because camera.body was not in the prompt to argue with it.
+            # Appended AFTER Claude's text so that when the two disagree, we win.
+            if capture_text:
+                base = f"{base} {capture_text}"
+            # Same treatment as the build clause: appended rather than handed to
+            # Claude. Who held the camera and how imperfect the frame is are
+            # photographic facts, and an AI prompt written before they were chosen
+            # would otherwise contradict them.
+            holder = (promptlib.CAMERA_HOLDERS.get(holder_id) or {}).get("text", "")
+            if holder:
+                base = f"{base} {holder}"
+            # A pose picked alongside an AI prompt must still take effect — otherwise a
+            # multi-pose batch reuses the one pose already frozen into the AI prompt and
+            # every image comes back in the same stance. Append the chosen pose as an
+            # explicit override so the picker wins over whatever pose the prompt describes.
+            pose_text = req.pose_text or promptlib.POSES_LIBRARY.get(req.pose_id or "", "")
+            if pose_text:
+                base = (f"{base} For THIS shot her body pose is: {pose_text} "
+                        "Use exactly this pose, overriding any other stance, gesture or "
+                        "body position described above; keep the same scene, framing, "
+                        "outfit, lighting and identity.")
+            # Flaws last, for the same reason as in compose_tagged: they qualify the
+            # sharpness the prompt above asks for, and the later line wins.
+            flaw = (promptlib.SNAPSHOT_FLAWS.get(flaws_id) or {}).get("text", "")
+            if flaw:
+                base = f"{base} {flaw}"
+            if collab_clause:
+                base = f"{collab_clause} {base}"
+            text, sanitised = promptlib.sanitise(base)
     else:
         pose_text = req.pose_text or promptlib.POSES_LIBRARY.get(req.pose_id or "", "")
         text, sanitised = promptlib.compose_tagged(

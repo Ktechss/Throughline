@@ -228,6 +228,7 @@ export default function Studio() {
               <ShootTab
                 gens={s.gens} outfits={s.wardrobe} poseGroups={s.poseGroups}
                 brief={s.brief} setBrief={s.setBrief} aiPrompt={s.aiPrompt} setAiPrompt={s.setAiPrompt}
+                raw={s.raw} setRaw={s.setRaw}
                 aiBusy={s.aiBusy} onAiPrompt={s.onAiPrompt}
                 resolution={s.resolution} setResolution={s.setResolution}
                 aspect={s.aspect} setAspect={s.setAspect} shotLib={s.shotLib}
