@@ -225,7 +225,7 @@ def kie_upload(path: Path) -> str:
 
     mime = mimetypes.guess_type(path.name)[0] or "image/webp"
     raw = path.read_bytes()
-    if len(raw) > UPLOAD_RAW_MAX:
+    if len(raw) > UPLOAD_RAW_MAX and mime.startswith("image/"):
         try:
             import io
             from PIL import Image
@@ -854,6 +854,73 @@ POYO_VIDEO: dict[str, dict] = {
 # measure and therefore the one the owner decides. Left out of the catalogues so
 # it cannot be selected by accident; the runners still understand the model
 # strings if the decision is ever revisited.
+# MOTION CONTROL — a driving video plus her still, out comes her performing it.
+#
+# This is the thing creators mean by "motion control", and it is a different
+# SHAPE from everything else in this module: the second input is a VIDEO the
+# owner filmed, not an image the pipeline generated. That is also the point —
+# the motion is free and unlimited because it comes from a phone, and it carries
+# real weight and timing that a prompt-driven image-to-video never has.
+#
+# Probed against kie on 2026-09-08. wan/animate and viggle/animate are 422; the
+# names below are live. wan wants video_url + image_url + resolution and it
+# actually FETCHES the video to validate it, so a bad URL fails before billing.
+#
+# kling-2.6/motion-control and kling-3.0/motion-control are live too but answer
+# every probe with an unhelpful "This field is required" without naming the
+# field, so their schemas are not mapped yet and they stay out of this table.
+# Only kling-3.0 can keep her generated background (background_source) — 2.6
+# would put her in the room the driving video was filmed in.
+KIE_MOTION: dict[str, dict] = {
+    "wan-animate-move": {
+        "model": "wan/2-2-animate-move", "label": "Wan 2.2 Animate — Move (kie)",
+        # Published rates: 6 / 9.5 / 12.5 credits per SECOND. Billed per second,
+        # not per clip, which is why a 3s driver is the sane unit to test with.
+        "resolutions": ("480p", "580p", "720p"),
+        "credits_per_second": {"480p": 6.0, "580p": 9.5, "720p": 12.5},
+        "note": "retargets the driver's motion onto her",
+    },
+    "wan-animate-replace": {
+        "model": "wan/2-2-animate-replace", "label": "Wan 2.2 Animate — Replace (kie)",
+        "resolutions": ("480p", "580p", "720p"),
+        "credits_per_second": {"480p": 6.0, "580p": 9.5, "720p": 12.5},
+        "note": "replaces the person in the driver with her",
+    },
+}
+
+# AUDIO-DRIVEN: her still plus her voice, out comes her SAYING IT.
+#
+# This is real lipsync, and it is not a stage that runs after a clip — it
+# REPLACES image-to-video for a speaking shot. Kling animates a frame and has no
+# idea what the audio contains, so asking it for "talking" yields mouth movement
+# with no relationship to the words: measured on a Hindi line, not one syllable
+# matched. OmniHuman is conditioned on the audio itself.
+#
+# That is the whole reason voice is stage 1 of the reel pipeline. A pipeline
+# that renders audio last can bolt a voice track onto finished footage, but it
+# can never make the footage FROM the voice.
+#
+# Probed 2026-09-08. The name is bytedance/omni-human with the hyphen —
+# bytedance/omnihuman, omnihuman and bytedance/omnihuman-1-5 are all 422. It
+# takes `image` and `audio`, NOT the image_url/audio_url every other model here
+# uses; sending the _url spelling returns "image is required" while looking
+# perfectly well-formed.
+KIE_LIPSYNC: dict[str, dict] = {
+    "omni-human": {
+        "model": "bytedance/omni-human", "label": "OmniHuman (ByteDance)",
+        "image_key": "image", "audio_key": "audio",
+        "note": "audio-driven — generates the clip FROM the voice, real lipsync",
+    },
+}
+
+
+# A driving clip must be small enough to upload and short enough to be cheap.
+# Wan's documented ceiling is 10MB, and base64 adds 33% on top of whatever is
+# sent, so the real working limit is lower.
+DRIVER_MAX_BYTES = 9_000_000
+DRIVER_MAX_SECONDS = 10
+
+
 DEFAULT_VIDEO_MODEL = "kling-2.1"
 
 # Video renders in minutes, not seconds. The image budget would abandon a clip
@@ -1092,6 +1159,22 @@ KIE_VIDEO: dict[str, dict] = {
         "resolutions": ("1080p",),
         "duration_str": True, "label": "Wan 2.5 (Alibaba)",
     },
+    # HAPPYHORSE — owner asked for it by name (kie.ai/happyhorse-1-0), 2026-09-08.
+    #
+    # Every field probed against kie, and it does NOT follow this table's usual
+    # shape: image_urls is an ARRAY here where kling and hailuo take a bare
+    # image_url string, and duration is a string "5". Sending the wrong spelling
+    # would not error — it would render something unanchored and bill for it.
+    #
+    # EXPENSIVE. At a 283.5-credit balance kie answered 402 "Credits
+    # insufficient" for every parameter combination except duration "5", so one
+    # clip costs somewhere north of $1.42 — more than ten times kling-2.1. It is
+    # wired because it was asked for, not because it is a sensible default.
+    "happyhorse": {
+        "model": "happyhorse/image-to-video", "image_key": "image_urls",
+        "array": True, "durations": (5, 10), "resolutions": (),
+        "duration_str": True, "label": "HappyHorse 1.0",
+    },
     "kling-2.5-turbo-pro": {
         "model": "kling/v2-5-turbo-image-to-video-pro", "image_key": "image_url",
         "array": False, "durations": (5, 10), "resolutions": (),
@@ -1154,6 +1237,177 @@ def kie_video_model(name: str | None) -> dict:
         if spec["model"] == n:
             return spec
     raise ProviderError(f"kie has no video model {n!r} — known: {sorted(KIE_VIDEO)}")
+
+
+def prepare_driver(src: Path, dest: Path, *, seconds: int = 3,
+                   height: int = 1280) -> Path:
+    """Cut a phone clip down to something uploadable and cheap.
+
+    Two ceilings, and a phone clip breaks both. Wan bills PER SECOND, so a 30s
+    take costs ten times a 3s one for no extra information; and the upload cap
+    is ~10MB while base64 adds 33% on top. A raw 4K clip is far over.
+
+    Deliberately keeps the ORIGINAL aspect and drops audio: the driver is read
+    for motion only, its soundtrack is never used, and re-framing it here would
+    silently change what motion the model sees.
+    """
+    exe = shutil.which("ffmpeg")
+    if not exe:
+        raise ProviderError("ffmpeg is not on PATH — needed to prepare a driver")
+    if not Path(src).is_file():
+        raise ProviderError(f"no driving video at {src}")
+    seconds = max(1, min(int(seconds), DRIVER_MAX_SECONDS))
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [exe, "-y", "-i", str(src), "-t", str(seconds),
+           "-vf", f"scale=-2:{height}", "-r", "24",
+           "-c:v", "libx264", "-crf", "26", "-preset", "veryfast",
+           "-pix_fmt", "yuv420p", "-an", str(dest)]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
+    if r.returncode != 0 or not dest.exists():
+        tail = (r.stderr or "").strip().splitlines()[-4:]
+        raise ProviderError("could not prepare the driver: " + " | ".join(tail))
+    if dest.stat().st_size > DRIVER_MAX_BYTES:
+        raise ProviderError(
+            f"the prepared driver is {dest.stat().st_size/1e6:.1f}MB, over the "
+            f"{DRIVER_MAX_BYTES/1e6:.0f}MB cap — shorten it or lower the height")
+    return dest
+
+
+def _kie_await_video(task: str, key: str, label: str,
+                     progress: dict | None = None, **extra) -> dict:
+    """Wait for a kie video-shaped task and return its result envelope.
+
+    EXTRACTED BECAUSE ITS ABSENCE COST MONEY. kie_video had this loop inlined,
+    and when kie_lipsync was written it called a `_kie_poll_video` that did not
+    exist — the task submitted, kie billed 66 credits, and the NameError fired
+    before anything read the taskId back. The clip was rendered and paid for and
+    is unreachable, which is exactly the failure this module already warns about:
+    "abandoning a running task is the expensive failure — it finishes, it bills,
+    and nobody fetches it."
+
+    So the poll is a named function now, and every path that spends money on a
+    kie video shares it. A blip in the middle continues rather than abandoning,
+    and a genuine timeout raises ProviderTimeout carrying the task id so
+    /api/runs/reclaim can still finish the job.
+    """
+    t0 = time.time()
+    budget = poll_budget("poyo-video")
+    while time.time() - t0 < budget:
+        time.sleep(POLL_EVERY)
+        try:
+            st = (_get(f"{_KIE_POLL}?taskId={task}", key).get("data") or {})
+        except Exception:                                   # noqa: BLE001
+            continue                        # a blip must not abandon a paid render
+        state = st.get("state")
+        if state == "fail":
+            raise ProviderError(f"{label}: {st.get('failMsg') or 'failed'} "
+                                f"({st.get('failCode')})")
+        if state == "success":
+            urls = json.loads(st["resultJson"])["resultUrls"]
+            return {"video": {"url": urls[0]},
+                    "credits": st.get("creditsConsumed"),
+                    "seconds": round((st.get("costTime") or 0) / 1000, 1),
+                    **extra}
+        if progress is not None and state:
+            progress["stage"] = f"rendering ({state})"
+    raise ProviderTimeout(f"{label}: task {task} still running after {budget}s",
+                          provider="kie", task_id=task)
+
+
+def lipsync_model(name: str | None) -> dict:
+    n = name or "omni-human"
+    if n in KIE_LIPSYNC:
+        return KIE_LIPSYNC[n]
+    raise ProviderError(f"unknown lipsync model {n!r} — known: {sorted(KIE_LIPSYNC)}")
+
+
+def kie_lipsync(*, image: Path, audio: Path, model: str | None = None,
+                progress: dict | None = None) -> dict:
+    """Her still plus her voice, out comes her actually saying it.
+
+    Note this REPLACES kie_video for a speaking shot rather than post-processing
+    one — the motion is derived from the audio, so there is no earlier clip to
+    correct. See KIE_LIPSYNC for why that forces voice to be rendered first.
+    """
+    key = kie_key()
+    spec = lipsync_model(model)
+    for label, f in (("still", image), ("audio", audio)):
+        if not Path(f).is_file():
+            raise ProviderError(f"no {label} at {f}")
+
+    if progress is not None:
+        progress["stage"] = "uploading her still"
+    image_url = kie_upload(_video_safe_still(Path(image)))
+    if progress is not None:
+        progress["stage"] = "uploading her voice"
+    audio_url = kie_upload(Path(audio))
+
+    inp = {spec["image_key"]: image_url, spec["audio_key"]: audio_url}
+    if progress is not None:
+        progress["stage"] = f"lipsyncing on {spec['label']}"
+    d = _post(_KIE_CREATE, {"model": spec["model"], "input": inp}, key)
+    if d.get("code") != 200:
+        raise ProviderError(f"kie lipsync createTask: {d.get('msg')}")
+    return _kie_await_video(d["data"]["taskId"], key, spec["label"], progress,
+                            model=spec["model"])
+
+
+def motion_model(name: str | None) -> dict:
+    n = name or "wan-animate-move"
+    if n in KIE_MOTION:
+        return KIE_MOTION[n]
+    raise ProviderError(f"unknown motion model {n!r} — known: {sorted(KIE_MOTION)}")
+
+
+def motion_cost_usd(model: str | None, seconds: int, resolution: str) -> float:
+    """What this will cost BEFORE it is spent. Published per-second rate."""
+    spec = motion_model(model)
+    per = (spec["credits_per_second"] or {}).get(resolution)
+    if per is None:
+        raise ProviderError(f"{spec['label']} has no rate for {resolution}")
+    return round(per * max(1, seconds) * 0.005, 4)
+
+
+def kie_motion(*, driver: Path, image: Path, model: str | None = None,
+               resolution: str = "480p", prompt: str = "",
+               progress: dict | None = None) -> dict:
+    """Retarget a driving video's motion onto her still. Same envelope as kie_video.
+
+    The driver is uploaded as a VIDEO — kie_upload no longer tries to PIL-open
+    it — and kie fetches the URL to read its resolution, so a broken link fails
+    before anything is billed rather than after.
+    """
+    key = kie_key()
+    spec = motion_model(model)
+    if resolution not in spec["resolutions"]:
+        raise ProviderError(f"{spec['label']} supports {spec['resolutions']}")
+    for label, p in (("driving video", driver), ("still", image)):
+        if not Path(p).is_file():
+            raise ProviderError(f"no {label} at {p}")
+    if Path(driver).stat().st_size > DRIVER_MAX_BYTES:
+        raise ProviderError(
+            f"driver is {Path(driver).stat().st_size/1e6:.1f}MB — run "
+            f"prepare_driver() first")
+
+    if progress is not None:
+        progress["stage"] = "uploading the driving video"
+    video_url = kie_upload(Path(driver))
+    if progress is not None:
+        progress["stage"] = "uploading her still"
+    image_url = kie_upload(_video_safe_still(Path(image)))
+
+    inp = {"video_url": video_url, "image_url": image_url,
+           "resolution": resolution}
+    if prompt.strip():
+        inp["prompt"] = prompt.strip()
+
+    if progress is not None:
+        progress["stage"] = f"retargeting on {spec['label']}"
+    d = _post(_KIE_CREATE, {"model": spec["model"], "input": inp}, key)
+    if d.get("code") != 200:
+        raise ProviderError(f"kie motion createTask: {d.get('msg')}")
+    return _kie_await_video(d["data"]["taskId"], key, spec["label"], progress,
+                            model=spec["model"])
 
 
 def kie_video(*, prompt: str, image: Path, model: str | None = None,

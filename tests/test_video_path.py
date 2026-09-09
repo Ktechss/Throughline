@@ -17,6 +17,7 @@ gets far enough to make a decision about its inputs.
 from __future__ import annotations
 
 import ast
+import builtins
 import inspect
 from pathlib import Path
 
@@ -97,3 +98,49 @@ def test_every_video_provider_has_a_runner():
     from backend import providers
     for name in ("kie", "poyo"):
         assert name in providers.VIDEO_RUNNERS, f"{name} has no video runner"
+
+
+def test_no_money_spending_path_calls_a_function_that_does_not_exist():
+    """THE $0.33 TEST.
+
+    kie_lipsync called `_kie_poll_video`, a helper that was never written. The
+    task submitted, kie billed 66 credits, and the NameError fired before
+    anything read the taskId back — so a rendered, paid-for clip became
+    unreachable. The suite was green throughout, because no test drives a paid
+    path and none ever will.
+
+    So this checks statically: every name these functions call must resolve on
+    the module. It is cheap, it needs no key, and it is the only thing standing
+    between a typo and a wasted generation.
+    """
+    import ast
+    import inspect
+    from backend import providers
+
+    src = inspect.getsource(providers)
+    tree = ast.parse(src)
+    known = set(vars(providers)) | set(dir(builtins))
+    bad = []
+    for fn in ast.walk(tree):
+        if not (isinstance(fn, ast.FunctionDef) and fn.name in (
+                "kie_lipsync", "kie_motion", "kie_video", "poyo_video")):
+            continue
+        local = {a.arg for a in fn.args.args} | {a.arg for a in fn.args.kwonlyargs}
+        for n in ast.walk(fn):
+            if isinstance(n, ast.Assign):
+                local |= {t.id for t in n.targets if isinstance(t, ast.Name)}
+            elif isinstance(n, (ast.Import, ast.ImportFrom)):
+                local |= {(a.asname or a.name).split(".")[0] for a in n.names}
+            elif isinstance(n, ast.For) and isinstance(n.target, ast.Name):
+                local.add(n.target.id)
+            elif isinstance(n, (ast.comprehension,)) and isinstance(n.target, ast.Name):
+                local.add(n.target.id)
+            elif isinstance(n, ast.withitem) and isinstance(n.optional_vars, ast.Name):
+                local.add(n.optional_vars.id)
+            elif isinstance(n, ast.Tuple):
+                local |= {e.id for e in n.elts if isinstance(e, ast.Name)}
+        for n in ast.walk(fn):
+            if (isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                    and n.func.id not in known and n.func.id not in local):
+                bad.append(f"{fn.name}() calls undefined {n.func.id}()")
+    assert not bad, "a paid path calls something that does not exist: " + "; ".join(bad)
