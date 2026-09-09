@@ -66,20 +66,24 @@ export default function ShootTab({
                 <span className="text-[10px] text-zinc-600">Claude-written from brief + outfit + pose</span>
               </label>
               <div className="flex items-center gap-3">
-                {/* RAW. Only offered once there is a prompt to send, because it
-                    gates the doctrine appended to THAT box — with an empty box
-                    there is nothing for it to protect. */}
-                {aiPrompt.trim() && (
-                  <label className="flex items-center gap-1.5 cursor-pointer select-none"
-                         title="Send exactly this text. Skips her build, the skin/realism doctrine, the camera holder, pose and flaws — everything the house style normally appends. The reference images still apply, so it is still her.">
-                    <input type="checkbox" checked={!!raw}
-                      onChange={(e) => setRaw(e.target.checked)}
-                      className="h-3 w-3 accent-amber-400" />
-                    <span className={cn("text-[11px]", raw ? "text-amber-300" : "text-zinc-500")}>
-                      send exactly this
-                    </span>
-                  </label>
-                )}
+                {/* RAW. ALWAYS VISIBLE, even with an empty box.
+                    It was first shown only once something had been typed here,
+                    which hid the one control whose entire purpose is telling you
+                    that a house style you never asked for is being appended. A
+                    feature nobody can find does not exist; disabled-and-visible
+                    teaches, hidden does not. */}
+                <label className={cn("flex items-center gap-1.5 select-none",
+                                     aiPrompt.trim() ? "cursor-pointer" : "cursor-default opacity-45")}
+                       title={aiPrompt.trim()
+                         ? "Send exactly this text and nothing else. Skips her build, the skin and realism doctrine, the camera holder, the pose and the flaws — everything normally appended. The reference images still apply, so it is still her."
+                         : "Write or generate a prompt above, then this sends it exactly as typed — with none of the house style appended."}>
+                  <input type="checkbox" checked={!!raw} disabled={!aiPrompt.trim()}
+                    onChange={(e) => setRaw(e.target.checked)}
+                    className="h-3 w-3 accent-amber-400" />
+                  <span className={cn("text-[11px]", raw && aiPrompt.trim() ? "text-amber-300" : "text-zinc-500")}>
+                    send exactly this
+                  </span>
+                </label>
                 {aiPrompt && <button onClick={() => setAiPrompt("")} className="text-[11px] text-zinc-500 hover:text-zinc-300">clear → template</button>}
               </div>
             </div>
